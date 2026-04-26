@@ -1,26 +1,86 @@
 @import "tailwindcss";
 
-:root {
-  --background: #ffffff;
-  --foreground: #171717;
+/* ─────────────────────────────────────────────────────────────
+   Design tokens — Tailwind v4 @theme
+   All --color-* values become bg-*, text-*, border-* utilities.
+   All --radius-* values become rounded-* utilities.
+   All --shadow-* values become shadow-* utilities.
+   All --font-* values become font-* utilities.
+───────────────────────────────────────────────────────────── */
+@theme {
+  /* Brand colours */
+  --color-purple:       #5B4FCF;
+  --color-purple-light: #EDE9FF;
+  --color-purple-dark:  #4339A8;
+
+  --color-sage:         #4A7C5F;
+  --color-sage-light:   #E8F4ED;
+  --color-sage-dark:    #3A6249;
+
+  --color-amber:        #E8A838;
+  --color-amber-light:  #FFF4DC;
+
+  --color-warm-bg:      #FAF8F5;
+  --color-warm-outer:   #F0EDE8;
+
+  --color-text-primary: #1A1A2E;
+  --color-text-muted:   #6B7280;
+
+  /* Typography */
+  --font-sans:    'Plus Jakarta Sans', sans-serif;
+  --font-display: 'Lora', serif;
+
+  /* Border radius */
+  --radius-card:  20px;
+  --radius-input: 14px;
+  --radius-pill:  100px;
+
+  /* Shadows */
+  --shadow-card:       0 2px 12px rgba(0,0,0,0.07);
+  --shadow-card-hover: 0 4px 24px rgba(0,0,0,0.12);
+  --shadow-purple:     0 4px 20px rgba(91,79,207,0.35);
 }
 
-@theme inline {
-  --color-background: var(--background);
-  --color-foreground: var(--foreground);
-  --font-sans: var(--font-geist-sans);
-  --font-mono: var(--font-geist-mono);
+/* ── Flame flicker ── */
+@keyframes flicker {
+  0%, 100% { transform: scale(1) rotate(-1deg);   filter: brightness(1); }
+  25%       { transform: scale(1.06) rotate(1deg);  filter: brightness(1.1); }
+  50%       { transform: scale(0.97) rotate(-2deg); filter: brightness(0.93); }
+  75%       { transform: scale(1.04) rotate(1.5deg);filter: brightness(1.07); }
+}
+.flame-flicker { animation: flicker 1.8s ease-in-out infinite; }
+
+/* ── CTA pulse ring ── */
+@keyframes pulse-ring {
+  0%   { box-shadow: 0 0 0 0    rgba(91,79,207,0.45), 0 4px 20px rgba(91,79,207,0.35); }
+  70%  { box-shadow: 0 0 0 14px rgba(91,79,207,0),    0 4px 20px rgba(91,79,207,0.35); }
+  100% { box-shadow: 0 0 0 0    rgba(91,79,207,0),    0 4px 20px rgba(91,79,207,0.35); }
+}
+.cta-pulse { animation: pulse-ring 2.2s ease-out infinite; }
+
+/* ── Scrollbar hide ── */
+.scroll-hide { scrollbar-width: none; -ms-overflow-style: none; }
+.scroll-hide::-webkit-scrollbar { display: none; }
+
+/* ── Card — plain CSS so no @apply needed ── */
+.card {
+  background: #ffffff;
+  border-radius: 20px;
+  box-shadow: 0 2px 12px rgba(0,0,0,0.07);
 }
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
-  }
+/* ── Streak gradient ── */
+.streak-gradient {
+  background: linear-gradient(135deg, #5B4FCF 0%, #3D3190 100%);
 }
 
-body {
-  background: var(--background);
-  color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+/* ── Hero overlay ── */
+.hero-overlay {
+  background: linear-gradient(
+    to bottom,
+    rgba(0,0,0,0.15) 0%,
+    rgba(0,0,0,0.05) 40%,
+    rgba(26,26,46,0.65) 75%,
+    rgba(26,26,46,0.88) 100%
+  );
 }
