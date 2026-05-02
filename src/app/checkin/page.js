@@ -1,16 +1,16 @@
 'use client'
 
-// ── /checkin — Celebration screen ──
-// Updates 5: challenge tagging uses challengeId, creates post when content present.
-// "Share to community" removed — social lives in challenges only.
+// ── /checkin — Celebration + log screen ──
+// Part 5: fires sendStreakNotification after save, welcome notification on first check-in.
 
 import { useState } from 'react'
-import { useRouter, useSearchParams } from 'next/navigation'
+import { useRouter } from 'next/navigation'
 import { motion, AnimatePresence } from 'framer-motion'
 import { CheckCircle2, Flame, ChevronDown, ChevronUp, BookOpen, MessageSquare, Trophy } from 'lucide-react'
 import { useLocalStorage } from '../../hooks/useLocalStorage'
 import { useCheckin } from '../../hooks/useCheckin'
 import { ToastContainer, showToast } from '../../components/Toast'
+import { sendStreakNotification, sendMilestoneNotification, getNotificationSettings } from '../../lib/notifications'
 import { SEED_CHALLENGES } from '../../lib/constants'
 import Link from 'next/link'
 
@@ -19,7 +19,7 @@ const COLORS = ['#5B4FCF','#E8A838','#4A7C5F','#E84060','#F9C74F','#FF6B6B','#0B
 function generateConfetti(n = 48) {
   return Array.from({ length: n }, (_, i) => ({
     id: i, x: (Math.random()-0.5)*340, y: Math.random()*-280+20,
-    color: COLORS[i%COLORS.length], size: 6+Math.random()*7,
+    color: COLORS[i % COLORS.length], size: 6+Math.random()*7,
     delay: Math.random()*0.4, rotation: (Math.random()-0.5)*720,
   }))
 }
@@ -58,27 +58,41 @@ function CollapsibleCard({ title, icon: Icon, children, defaultOpen = true }) {
 export default function CheckinScreen() {
   const router       = useRouter()
   const [confetti]   = useState(() => generateConfetti())
-  const { performCheckin, streak } = useCheckin()
+  const { performCheckin, streak, checkins } = useCheckin()
 
   const [challenges] = useLocalStorage('dw_challenges', SEED_CHALLENGES)
   const joinedChallenges = (challenges || []).filter(c => c.joined)
 
-  // Pre-fill passage if arriving from /read (via query param)
-  const [passage,      setPassage]      = useState('')
-  const [reflection,   setReflection]   = useState('')
-  const [challengeId,  setChallengeId]  = useState(null) // Update 5: use id not tag
-  const [saving,       setSaving]       = useState(false)
+  const [passage,     setPassage]     = useState('')
+  const [reflection,  setReflection]  = useState('')
+  const [challengeId, setChallengeId] = useState(null)
+  const [saving,      setSaving]      = useState(false)
 
-  const today         = todayStr()
+  const today = new Date().toISOString().split('T')[0]
   const displayStreak = (streak?.current || 0) + (streak?.lastCheckinDate === today ? 0 : 1)
-
-  function todayStr() { return new Date().toISOString().split('T')[0] }
 
   async function handleSave() {
     setSaving(true)
     await new Promise(r => setTimeout(r, 300))
-    // performCheckin creates the Post in the challenge if challengeId + content provided
-    performCheckin({ passage, reflection, challengeId })
+
+    const isFirstEver = !(checkins?.length > 0)
+    const didSave = performCheckin({ passage, reflection, challengeId })
+
+    if (didSave) {
+      // Part 5: streak milestone notifications
+      const settings = getNotificationSettings()
+      if (settings.streakAlerts) {
+        sendStreakNotification(displayStreak)
+      }
+
+      // Part 5: welcome notification on first ever check-in
+      if (isFirstEver) {
+        setTimeout(() => {
+          sendMilestoneNotification('Great start! You\'ve logged your first Bible reading. Keep going!')
+        }, 2_000)
+      }
+    }
+
     setSaving(false)
     showToast('Saved!')
     setTimeout(() => router.push('/journey'), 700)
@@ -127,7 +141,6 @@ export default function CheckinScreen() {
             className="w-full border border-gray-200 rounded-input resize-none px-4 py-3 text-[15px] text-text-primary focus:outline-none focus:border-purple focus:ring-2 focus:ring-purple/20 transition-all placeholder:text-text-muted" />
         </CollapsibleCard>
 
-        {/* ── Update 5: Tag a challenge ── */}
         <CollapsibleCard title="Tag a challenge (optional)" icon={Trophy} defaultOpen>
           {joinedChallenges.length === 0 ? (
             <div className="flex flex-col gap-2">
@@ -160,16 +173,14 @@ export default function CheckinScreen() {
         </CollapsibleCard>
       </motion.div>
 
-      {/* Actions */}
+      {/* Save */}
       <motion.div initial={{ opacity:0 }} animate={{ opacity:1 }} transition={{ delay:0.6 }}
         className="relative z-10 px-4 mt-5 flex flex-col items-center gap-3">
         <button onClick={handleSave} disabled={saving}
           className="w-full bg-purple text-white rounded-pill py-4 text-[15px] font-bold tracking-wide shadow-purple transition-all hover:bg-purple-dark active:scale-[0.97] disabled:opacity-60">
-          {saving ? 'Saving...' : 'Save check-in'}
+          {saving ? 'Saving…' : 'Save check-in'}
         </button>
-        <p className="text-text-muted text-[12px] text-center px-4">
-          Your check-in is saved to your Journey.
-        </p>
+        <p className="text-text-muted text-[12px] text-center px-4">Your check-in is saved to your Journey.</p>
       </motion.div>
 
       <ToastContainer />

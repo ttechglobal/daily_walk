@@ -208,3 +208,36 @@ export function getChallengeProgress(challenge, checkins = []) {
   const uniqueDays = new Set(tagged.map(c => c.date)).size
   return { completed: uniqueDays, total: totalDays }
 }
+
+// ── Communities seed data (Update 2) ──
+export const SEED_COMMUNITIES = [
+  { id: 'cm1', name: 'Morning Readers',   category: 'Bible Study',    description: 'A community of early risers committed to starting every day in the Word.',                              memberCount: 234, joined: false, posts: [], challenges: [], members: [] },
+  { id: 'cm2', name: 'Prayer Warriors',   category: 'Prayer',         description: 'We believe in the power of prayer. Join us in daily intercession.',                                    memberCount: 189, joined: false, posts: [], challenges: [], members: [] },
+  { id: 'cm3', name: 'Young & Rooted',    category: 'Youth',          description: 'For young Christians navigating faith, life, and growth together.',                                    memberCount: 412, joined: false, posts: [], challenges: [], members: [] },
+  { id: 'cm4', name: 'Still Waters',      category: 'Mental Health',  description: 'A safe space for Christians dealing with anxiety, depression, and finding peace in God.',              memberCount: 97,  joined: false, posts: [], challenges: [], members: [] },
+  { id: 'cm5', name: 'Worship Together',  category: 'Worship',        description: 'For those who love deep worship. Share songs, reflections, and encounters.',                           memberCount: 156, joined: false, posts: [], challenges: [], members: [] },
+  { id: 'cm6', name: 'Daily Bread',       category: 'Bible Study',    description: 'Verse by verse. Chapter by chapter. Walking through Scripture together.',                             memberCount: 321, joined: false, posts: [], challenges: [], members: [] },
+]
+
+export const COMMUNITY_CATEGORIES = ['All', 'Bible Study', 'Prayer', 'Mental Health', 'Youth', 'Worship']
+
+// ── Events seed data (Update 3) ──
+export const SEED_EVENTS = [
+  { id: 'ev1', title: 'Kingdom Culture Conference', organiser: 'Dominion City',               date: '2026-05-17T09:00:00', location: 'Lagos, Nigeria',  category: 'Conference',   description: 'A gathering of believers to encounter God\'s presence and realign with Kingdom purpose.', online: false, interested: false },
+  { id: 'ev2', title: 'Online Prayer Summit',       organiser: 'Daily Walk Community',        date: '2026-05-24T06:00:00', location: 'Online',          category: 'Prayer Night', description: 'Join thousands worldwide for an early morning prayer summit. All are welcome.',           online: true,  interested: false },
+  { id: 'ev3', title: 'Youth Revival Night',        organiser: 'House on the Rock',           date: '2026-06-07T18:00:00', location: 'Abuja, Nigeria',  category: 'Revival',      description: 'A night of worship, fire, and encounter for young people.',                               online: false, interested: false },
+  { id: 'ev4', title: 'Scripture & Coffee',         organiser: 'Morning Readers Community',   date: '2026-05-31T08:00:00', location: 'Online',          category: 'Bible Study',  description: 'Casual, relaxed Bible discussion over coffee. Join us every last Saturday of the month.',  online: true,  interested: false },
+  { id: 'ev5', title: 'Voices of Praise Concert',   organiser: 'Worship Together Community',  date: '2026-06-21T17:00:00', location: 'London, UK',      category: 'Concert',      description: 'An evening of gospel music and worship from artists across the UK.',                      online: false, interested: false },
+]
+
+export const EVENT_CATEGORIES = ['Conference', 'Revival', 'Prayer Night', 'Bible Study', 'Concert', 'Other']
+
+/** Format event date nicely: "Sat, May 10 · 4:00 PM" */
+export function formatEventDate(isoStr) {
+  const d = new Date(isoStr)
+  const dayName = d.toLocaleDateString('en-US', { weekday: 'short' })
+  const month   = d.toLocaleDateString('en-US', { month: 'short' })
+  const day     = d.getDate()
+  const time    = d.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true })
+  return `${dayName}, ${month} ${day} · ${time}`
+}

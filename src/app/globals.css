@@ -1,44 +1,26 @@
 @import "tailwindcss";
 
-/* ─────────────────────────────────────────────────────────────
-   Design tokens — Tailwind v4 @theme
-   All --color-* values become bg-*, text-*, border-* utilities.
-   All --radius-* values become rounded-* utilities.
-   All --shadow-* values become shadow-* utilities.
-   All --font-* values become font-* utilities.
-───────────────────────────────────────────────────────────── */
 @theme {
-  /* Brand colours */
   --color-purple:       #5B4FCF;
   --color-purple-light: #EDE9FF;
   --color-purple-dark:  #4339A8;
-
   --color-sage:         #4A7C5F;
   --color-sage-light:   #E8F4ED;
   --color-sage-dark:    #3A6249;
-
   --color-amber:        #E8A838;
   --color-amber-light:  #FFF4DC;
-
   --color-warm-bg:      #FAF8F5;
   --color-warm-outer:   #F0EDE8;
-
   --color-text-primary: #1A1A2E;
   --color-text-muted:   #6B7280;
-
-  /* Typography */
-  --font-sans:    'Plus Jakarta Sans', sans-serif;
-  --font-display: 'Lora', serif;
-
-  /* Border radius */
-  --radius-card:  20px;
-  --radius-input: 14px;
-  --radius-pill:  100px;
-
-  /* Shadows */
-  --shadow-card:       0 2px 12px rgba(0,0,0,0.07);
-  --shadow-card-hover: 0 4px 24px rgba(0,0,0,0.12);
-  --shadow-purple:     0 4px 20px rgba(91,79,207,0.35);
+  --font-sans:          'Plus Jakarta Sans', sans-serif;
+  --font-display:       'Lora', serif;
+  --radius-card:        20px;
+  --radius-input:       14px;
+  --radius-pill:        100px;
+  --shadow-card:        0 2px 12px rgba(0,0,0,0.07);
+  --shadow-card-hover:  0 4px 24px rgba(0,0,0,0.12);
+  --shadow-purple:      0 4px 20px rgba(91,79,207,0.35);
 }
 
 /* ── Flame flicker ── */
@@ -58,11 +40,59 @@
 }
 .cta-pulse { animation: pulse-ring 2.2s ease-out infinite; }
 
+/* ── Character animations ── */
+@keyframes char-bounce {
+  0%, 100% { transform: translateY(0); }
+  50%       { transform: translateY(-4px); }
+}
+@keyframes char-sway {
+  0%, 100% { transform: rotate(-2deg); }
+  50%       { transform: rotate(2deg); }
+}
+@keyframes char-breathe {
+  0%, 100% { transform: scaleY(1); }
+  50%       { transform: scaleY(1.02); }
+}
+@keyframes char-droop-sway {
+  0%, 100% { transform: rotate(8deg); }
+  50%       { transform: rotate(12deg); }
+}
+@keyframes char-nod {
+  0%, 90%, 100% { transform: rotate(0deg); }
+  95%            { transform: rotate(8deg); }
+}
+@keyframes char-pulse-faint {
+  0%, 100% { transform: scaleX(1); }
+  50%       { transform: scaleX(1.008); }
+}
+@keyframes char-orbit {
+  from { transform: rotate(0deg) translateX(44px) rotate(0deg); }
+  to   { transform: rotate(360deg) translateX(44px) rotate(-360deg); }
+}
+@keyframes zzz-float {
+  0%   { opacity: 0; transform: translateY(0) translateX(0); }
+  20%  { opacity: 1; }
+  80%  { opacity: 0.7; }
+  100% { opacity: 0; transform: translateY(-28px) translateX(6px); }
+}
+@keyframes cross-pulse {
+  0%, 100% { opacity: 0.3; }
+  50%       { opacity: 0.6; }
+}
+
+.char-bounce      { animation: char-bounce      1.2s ease-in-out infinite; }
+.char-sway        { animation: char-sway        2s   ease-in-out infinite; }
+.char-breathe     { animation: char-breathe     3s   ease-in-out infinite; }
+.char-breathe-slow{ animation: char-breathe     4s   ease-in-out infinite; }
+.char-droop       { animation: char-droop-sway  3.5s ease-in-out infinite; }
+.char-nod         { animation: char-nod         5s   ease-in-out infinite; }
+.char-pulse-faint { animation: char-pulse-faint 4s   ease-in-out infinite; }
+
 /* ── Scrollbar hide ── */
 .scroll-hide { scrollbar-width: none; -ms-overflow-style: none; }
 .scroll-hide::-webkit-scrollbar { display: none; }
 
-/* ── Card — plain CSS so no @apply needed ── */
+/* ── Card ── */
 .card {
   background: #ffffff;
   border-radius: 20px;

@@ -1,15 +1,15 @@
 'use client'
 
-// ── BottomNav — Update 1 ──
-// Tabs: Home | Challenges | + (action sheet) | Journey | Profile
-// Community tab removed. + sheet: Nugget | Log reading | Post to challenge
-// Hidden on /read for immersive mode.
+// ── BottomNav — Final nav (Updates 2+3) ──
+// Tabs: Home | Communities | + (action sheet) | Events | Profile
+// Journey lives in Profile page as a tab.
+// Hidden on /read for immersive reading mode.
 
 import { useState } from 'react'
 import Link from 'next/link'
 import { useRouter, usePathname } from 'next/navigation'
 import { motion, AnimatePresence } from 'framer-motion'
-import { Home, Trophy, Plus, BookOpen, User, Lightbulb, X, CheckCircle2 } from 'lucide-react'
+import { Home, Users, Plus, CalendarDays, User, Lightbulb, X, CheckCircle2, BookOpen, Trophy } from 'lucide-react'
 import clsx from 'clsx'
 import { useLocalStorage } from '../hooks/useLocalStorage'
 import { useCheckin } from '../hooks/useCheckin'
@@ -17,12 +17,12 @@ import { ToastContainer, showToast } from './Toast'
 import { todayStr, SEED_CHALLENGES } from '../lib/constants'
 
 const LEFT_ITEMS  = [
-  { href: '/',           icon: Home,    label: 'Home'       },
-  { href: '/challenges', icon: Trophy,  label: 'Challenges' },
+  { href: '/',             icon: Home,          label: 'Home'        },
+  { href: '/communities',  icon: Users,         label: 'Communities' },
 ]
 const RIGHT_ITEMS = [
-  { href: '/journey', icon: BookOpen, label: 'Journey' },
-  { href: '/profile', icon: User,     label: 'Profile'  },
+  { href: '/events',   icon: CalendarDays, label: 'Events'  },
+  { href: '/profile',  icon: User,         label: 'Profile' },
 ]
 
 // ── Nugget modal ──
@@ -43,40 +43,46 @@ function NuggetModal({ onClose }) {
 
   return (
     <>
-      <motion.div className="fixed inset-0 bg-black/40 z-[60]" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} onClick={onClose} />
+      <motion.div className="fixed inset-0 bg-black/40 z-[60]" initial={{ opacity:0 }} animate={{ opacity:1 }} exit={{ opacity:0 }} onClick={onClose} />
       <motion.div className="fixed bottom-0 left-1/2 -translate-x-1/2 w-full max-w-[420px] bg-warm-bg rounded-t-[28px] z-[70] p-5 pb-10"
-        initial={{ y: '100%' }} animate={{ y: 0 }} exit={{ y: '100%' }} transition={{ type: 'spring', stiffness: 340, damping: 36 }}>
+        initial={{ y:'100%' }} animate={{ y:0 }} exit={{ y:'100%' }}
+        transition={{ type:'spring', stiffness:340, damping:36 }}>
         <div className="flex justify-center mb-4"><div className="w-10 h-1 bg-gray-200 rounded-full" /></div>
         <div className="flex items-center justify-between mb-3">
-          <div className="flex items-center gap-2"><Lightbulb size={18} className="text-amber" /><span className="font-bold text-text-primary text-[16px]">Add a nugget</span></div>
+          <div className="flex items-center gap-2">
+            <Lightbulb size={18} style={{ color: '#E8A838' }} />
+            <span className="font-bold text-text-primary text-[16px]">Add a nugget</span>
+          </div>
           <button onClick={onClose} className="w-8 h-8 rounded-full bg-gray-100 flex items-center justify-center text-text-muted"><X size={15} /></button>
         </div>
         <p className="text-text-muted text-[13px] mb-3">Saved privately to your Journey. Never auto-shared.</p>
         <textarea value={input} onChange={e => setInput(e.target.value)} placeholder="Something that spoke to you..." rows={4} autoFocus
           className="w-full border border-gray-200 rounded-input resize-none px-4 py-3 text-[14px] text-text-primary focus:outline-none focus:border-purple focus:ring-2 focus:ring-purple/20 transition-all placeholder:text-text-muted mb-3" />
-        <button onClick={save} disabled={!input.trim()} className="w-full bg-amber text-white rounded-pill py-3.5 font-bold text-[14px] disabled:opacity-40 transition-all active:scale-[0.97]">Save nugget</button>
+        <button onClick={save} disabled={!input.trim()}
+          className="w-full text-white rounded-pill py-3.5 font-bold text-[14px] disabled:opacity-40 transition-all active:scale-[0.97]"
+          style={{ background: '#E8A838' }}>
+          Save nugget
+        </button>
       </motion.div>
     </>
   )
 }
 
-// ── Challenge picker then post composer ──
+// ── Challenge post picker ──
 function ChallengePostModal({ onClose }) {
   const router = useRouter()
   const [challenges] = useLocalStorage('dw_challenges', SEED_CHALLENGES)
   const [user]       = useLocalStorage('dw_user', null)
-  const [step, setStep]               = useState('pick') // 'pick' | 'compose'
-  const [selectedId, setSelectedId]   = useState(null)
-  const [passage,    setPassage]       = useState('')
-  const [reflection, setReflection]   = useState('')
+  const [step, setStep]             = useState('pick')
+  const [selectedId, setSelectedId] = useState(null)
+  const [passage,    setPassage]    = useState('')
+  const [reflection, setReflection] = useState('')
+  const [challenges2, setChallenges2] = useLocalStorage('dw_challenges', SEED_CHALLENGES)
 
   const joined = (challenges || []).filter(c => c.joined)
-  const [challenges2, setChallenges2] = useLocalStorage('dw_challenges', SEED_CHALLENGES)
 
   function submit() {
     if (!passage.trim() && !reflection.trim()) { showToast('Add what you read or a reflection'); return }
-    const challenge = joined.find(c => c.id === selectedId)
-    if (!challenge) return
     const displayName = user?.name?.trim() || 'Anonymous'
     const post = {
       id: `post_${Date.now()}`, userId: 'local_user', displayName,
@@ -93,12 +99,12 @@ function ChallengePostModal({ onClose }) {
 
   return (
     <>
-      <motion.div className="fixed inset-0 bg-black/40 z-[60]" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} onClick={onClose} />
+      <motion.div className="fixed inset-0 bg-black/40 z-[60]" initial={{ opacity:0 }} animate={{ opacity:1 }} exit={{ opacity:0 }} onClick={onClose} />
       <motion.div
         className="fixed bottom-0 left-1/2 -translate-x-1/2 w-full max-w-[420px] bg-warm-bg rounded-t-[28px] z-[70] flex flex-col"
-        style={{ maxHeight: '88dvh' }}
-        initial={{ y: '100%' }} animate={{ y: 0 }} exit={{ y: '100%' }}
-        transition={{ type: 'spring', stiffness: 340, damping: 36 }}>
+        style={{ maxHeight:'88dvh' }}
+        initial={{ y:'100%' }} animate={{ y:0 }} exit={{ y:'100%' }}
+        transition={{ type:'spring', stiffness:340, damping:36 }}>
         <div className="flex justify-center pt-3"><div className="w-10 h-1 bg-gray-200 rounded-full" /></div>
 
         {step === 'pick' ? (
@@ -110,32 +116,32 @@ function ChallengePostModal({ onClose }) {
             {joined.length === 0 ? (
               <div className="text-center py-8 flex flex-col gap-3">
                 <p className="text-text-muted text-[14px]">You haven't joined any challenges yet.</p>
-                <Link href="/challenges" onClick={onClose} className="text-purple font-bold text-[14px] underline underline-offset-2">Browse challenges →</Link>
+                <Link href="/challenges" onClick={onClose} className="font-bold text-[14px] underline underline-offset-2" style={{ color: '#5B4FCF' }}>Browse challenges →</Link>
               </div>
-            ) : (
-              joined.map(c => (
-                <button key={c.id} onClick={() => { setSelectedId(c.id); setStep('compose') }}
-                  className="w-full text-left p-4 bg-white rounded-2xl shadow-card hover:shadow-card-hover transition-all active:scale-[0.98]">
-                  <p className="font-bold text-text-primary text-[14px]">{c.title}</p>
-                  <p className="text-text-muted text-[12px] mt-0.5">{c.description.slice(0, 60)}…</p>
-                </button>
-              ))
-            )}
+            ) : joined.map(c => (
+              <button key={c.id} onClick={() => { setSelectedId(c.id); setStep('compose') }}
+                className="w-full text-left p-4 bg-white rounded-2xl shadow-card hover:shadow-card-hover transition-all active:scale-[0.98]">
+                <p className="font-bold text-text-primary text-[14px]">{c.title}</p>
+                <p className="text-text-muted text-[12px] mt-0.5">{c.description.slice(0, 60)}…</p>
+              </button>
+            ))}
           </div>
         ) : (
           <div className="flex flex-col px-5 pb-8 gap-4 overflow-y-auto scroll-hide">
             <div className="flex items-center gap-3 py-3">
               <button onClick={() => setStep('pick')} className="text-text-muted hover:text-text-primary transition-colors text-[13px] font-semibold">← Back</button>
-              <span className="font-bold text-text-primary text-[15px] flex-1 truncate">
-                {joined.find(c => c.id === selectedId)?.title}
-              </span>
+              <span className="font-bold text-text-primary text-[15px] flex-1 truncate">{joined.find(c=>c.id===selectedId)?.title}</span>
               <button onClick={onClose} className="w-8 h-8 rounded-full bg-gray-100 flex items-center justify-center text-text-muted"><X size={15} /></button>
             </div>
-            <input type="text" value={passage} onChange={e => setPassage(e.target.value)} placeholder="What did you read? (e.g. Psalm 23)" autoFocus
+            <input type="text" value={passage} onChange={e => setPassage(e.target.value)} placeholder="What did you read?" autoFocus
               className="w-full border border-gray-200 rounded-input px-4 py-3 text-[14px] text-text-primary focus:outline-none focus:border-purple focus:ring-2 focus:ring-purple/20 transition-all placeholder:text-text-muted" />
-            <textarea value={reflection} onChange={e => setReflection(e.target.value)} placeholder="What stood out to you? (optional)" rows={3}
+            <textarea value={reflection} onChange={e => setReflection(e.target.value)} placeholder="What stood out? (optional)" rows={3}
               className="w-full border border-gray-200 rounded-input resize-none px-4 py-3 text-[14px] text-text-primary focus:outline-none focus:border-purple focus:ring-2 focus:ring-purple/20 transition-all placeholder:text-text-muted" />
-            <button onClick={submit} className="w-full bg-purple text-white rounded-pill py-4 text-[15px] font-bold shadow-purple hover:bg-purple-dark active:scale-[0.97] transition-all">Post →</button>
+            <button onClick={submit}
+              className="w-full text-white rounded-pill py-4 text-[15px] font-bold hover:opacity-90 active:scale-[0.97] transition-all"
+              style={{ background: '#5B4FCF' }}>
+              Post →
+            </button>
           </div>
         )}
       </motion.div>
@@ -143,23 +149,24 @@ function ChallengePostModal({ onClose }) {
   )
 }
 
-// ── Action sheet — Update 1 ──
+// ── Action sheet ──
 function ActionSheet({ onClose, onNugget, onLogReading, onChallengePost, isCheckedIn }) {
   const actions = [
     {
-      icon: Lightbulb, iconBg: 'bg-amber-light', iconColor: 'text-amber',
+      icon: Lightbulb, iconBg: 'bg-amber-light', iconColor: '#E8A838',
       title: 'Add a personal nugget', sub: 'Saved privately to your Journey',
       onClick: onNugget, disabled: false,
     },
     {
-      icon: BookOpen, iconBg: 'bg-purple-light', iconColor: 'text-purple',
+      icon: isCheckedIn ? CheckCircle2 : BookOpen,
+      iconBg: 'bg-purple-light', iconColor: '#5B4FCF',
       title: isCheckedIn ? 'Already checked in today ✓' : 'Log a Bible reading',
       sub: isCheckedIn ? 'Come back tomorrow' : 'Mark your reading for today',
       onClick: isCheckedIn ? null : onLogReading,
       disabled: isCheckedIn,
     },
     {
-      icon: Trophy, iconBg: 'bg-sage-light', iconColor: 'text-sage',
+      icon: Trophy, iconBg: 'bg-sage-light', iconColor: '#4A7C5F',
       title: 'Post to a challenge', sub: 'Share with your challenge group',
       onClick: onChallengePost, disabled: false,
     },
@@ -167,13 +174,13 @@ function ActionSheet({ onClose, onNugget, onLogReading, onChallengePost, isCheck
 
   return (
     <>
-      <motion.div className="fixed inset-0 bg-black/40 z-[55]" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} onClick={onClose} />
+      <motion.div className="fixed inset-0 bg-black/40 z-[55]" initial={{ opacity:0 }} animate={{ opacity:1 }} exit={{ opacity:0 }} onClick={onClose} />
       <motion.div
         className="fixed bottom-24 left-1/2 -translate-x-1/2 w-[calc(100%-32px)] max-w-[388px] bg-warm-bg rounded-[24px] z-[56] overflow-hidden shadow-xl"
-        initial={{ opacity: 0, y: 20, scale: 0.96 }}
-        animate={{ opacity: 1, y: 0, scale: 1 }}
-        exit={{ opacity: 0, y: 10, scale: 0.96 }}
-        transition={{ type: 'spring', stiffness: 380, damping: 34 }}>
+        initial={{ opacity:0, y:20, scale:0.96 }}
+        animate={{ opacity:1, y:0, scale:1 }}
+        exit={{ opacity:0, y:10, scale:0.96 }}
+        transition={{ type:'spring', stiffness:380, damping:34 }}>
         {actions.map((a, i) => (
           <button key={i} onClick={a.disabled ? undefined : a.onClick} disabled={a.disabled}
             className={clsx(
@@ -182,9 +189,7 @@ function ActionSheet({ onClose, onNugget, onLogReading, onChallengePost, isCheck
               a.disabled ? 'opacity-50 cursor-not-allowed' : 'hover:bg-gray-50'
             )}>
             <div className={`w-10 h-10 rounded-2xl ${a.iconBg} flex items-center justify-center flex-shrink-0`}>
-              {a.disabled && a.icon === BookOpen
-                ? <CheckCircle2 size={18} className="text-sage" />
-                : <a.icon size={18} className={a.iconColor} />}
+              <a.icon size={18} style={{ color: a.iconColor }} />
             </div>
             <div className="text-left">
               <p className="font-bold text-text-primary text-[14px]">{a.title}</p>
@@ -198,9 +203,9 @@ function ActionSheet({ onClose, onNugget, onLogReading, onChallengePost, isCheck
 }
 
 export default function BottomNav() {
-  const pathname  = usePathname()
-  const router    = useRouter()
-  const isRead    = pathname === '/read'
+  const pathname = usePathname()
+  const router   = useRouter()
+  const isRead   = pathname === '/read'
   const { isCheckedInToday } = useCheckin()
 
   const [sheet,         setSheet]         = useState(false)
@@ -219,7 +224,8 @@ export default function BottomNav() {
         {LEFT_ITEMS.map(({ href, icon: Icon, label }) => {
           const isActive = pathname === href || (href !== '/' && pathname?.startsWith(href))
           return (
-            <Link key={href} href={href} className={clsx('flex flex-col items-center gap-1 px-3 py-1 rounded-xl transition-colors', isActive ? 'text-purple' : 'text-text-muted hover:text-text-primary')}>
+            <Link key={href} href={href}
+              className={clsx('flex flex-col items-center gap-1 px-3 py-1 rounded-xl transition-colors', isActive ? 'text-purple' : 'text-text-muted hover:text-text-primary')}>
               <Icon size={22} strokeWidth={isActive ? 2.5 : 1.8} />
               <span className={clsx('text-[10px] font-semibold tracking-wide', isActive ? 'text-purple' : 'text-text-muted')}>{label}</span>
             </Link>
@@ -227,7 +233,8 @@ export default function BottomNav() {
         })}
 
         <button onClick={() => setSheet(v => !v)}
-          className="flex flex-col items-center justify-center -mt-5 w-14 h-14 rounded-full bg-purple shadow-purple text-white transition-transform active:scale-95 hover:bg-purple-dark"
+          className="flex flex-col items-center justify-center -mt-5 w-14 h-14 rounded-full text-white transition-transform active:scale-95 hover:opacity-90"
+          style={{ background: '#5B4FCF', boxShadow: '0 4px 20px rgba(91,79,207,0.4)' }}
           aria-label="Add content">
           <motion.div animate={{ rotate: sheet ? 45 : 0 }} transition={{ duration: 0.2 }}>
             <Plus size={26} strokeWidth={2} />
@@ -235,9 +242,10 @@ export default function BottomNav() {
         </button>
 
         {RIGHT_ITEMS.map(({ href, icon: Icon, label }) => {
-          const isActive = pathname === href
+          const isActive = pathname === href || (href !== '/' && pathname?.startsWith(href))
           return (
-            <Link key={href} href={href} className={clsx('flex flex-col items-center gap-1 px-3 py-1 rounded-xl transition-colors', isActive ? 'text-purple' : 'text-text-muted hover:text-text-primary')}>
+            <Link key={href} href={href}
+              className={clsx('flex flex-col items-center gap-1 px-3 py-1 rounded-xl transition-colors', isActive ? 'text-purple' : 'text-text-muted hover:text-text-primary')}>
               <Icon size={22} strokeWidth={isActive ? 2.5 : 1.8} />
               <span className={clsx('text-[10px] font-semibold tracking-wide', isActive ? 'text-purple' : 'text-text-muted')}>{label}</span>
             </Link>
@@ -247,16 +255,12 @@ export default function BottomNav() {
 
       <AnimatePresence>
         {sheet && (
-          <ActionSheet
-            onClose={() => setSheet(false)}
-            onNugget={openNugget}
-            onLogReading={openLogReading}
-            onChallengePost={openChallengePost}
-            isCheckedIn={isCheckedInToday}
-          />
+          <ActionSheet onClose={() => setSheet(false)} onNugget={openNugget}
+            onLogReading={openLogReading} onChallengePost={openChallengePost}
+            isCheckedIn={isCheckedInToday} />
         )}
-        {nuggetOpen    && <NuggetModal         onClose={() => setNuggetOpen(false)} />}
-        {challengePost && <ChallengePostModal  onClose={() => setChallengePost(false)} />}
+        {nuggetOpen    && <NuggetModal        onClose={() => setNuggetOpen(false)} />}
+        {challengePost && <ChallengePostModal onClose={() => setChallengePost(false)} />}
       </AnimatePresence>
 
       <ToastContainer />

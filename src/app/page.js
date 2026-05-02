@@ -1,190 +1,210 @@
 'use client'
 
-// ── Home screen — Updates 1 (profile avatar), 2 (music button), 3 (reading card) ──
+// ── Home screen — Update 1: full layout restructure ──
+// Removed: music button, challenges strip, community nudge counter
+// New layout: header bar → hero image (with verse overlay) → character card
+//             → check-in card → open bible card
 
-import { useState } from 'react'
+import { useMemo } from 'react'
 import Image from 'next/image'
 import Link from 'next/link'
 import { useRouter } from 'next/navigation'
-import { motion, AnimatePresence } from 'framer-motion'
-import { Flame, Globe, CheckCircle2, BookOpen, ChevronRight, UserCircle } from 'lucide-react'
+import { motion } from 'framer-motion'
+import { Bell, CheckCircle2, BookOpen, UserCircle, Flame } from 'lucide-react'
 import { useLocalStorage } from '../hooks/useLocalStorage'
 import { useCheckin } from '../hooks/useCheckin'
 import { ToastContainer, showToast } from '../components/Toast'
-import { MusicButton, MusicSheet } from '../components/MusicPlayer'
-import { HERO_IMAGES, getTodayVerse, getChallengeProgress, initials } from '../lib/constants'
+import SpiritualCharacter from '../components/SpiritualCharacter'
+import { HERO_IMAGES, getTodayVerse, initials, todayStr } from '../lib/constants'
+
+function calcDaysMissed(lastCheckinDate) {
+  if (!lastCheckinDate) return 7
+  const diff = new Date(todayStr()).getTime() - new Date(lastCheckinDate).getTime()
+  return Math.max(0, Math.floor(diff / 86_400_000))
+}
+
+function formatTodayLabel() {
+  return new Date().toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric' })
+}
 
 export default function HomeScreen() {
   const router = useRouter()
-
   const [user, , hydrated] = useLocalStorage('dw_user', null)
-  const [challenges]       = useLocalStorage('dw_challenges', [])
-  const [checkins]         = useLocalStorage('dw_checkins', [])
   const { isCheckedInToday, streak } = useCheckin()
 
-  const [communityCount] = useState(() => Math.floor(Math.random() * 41) + 40)
-
-  const dayOfWeek       = new Date().getDay()
-  const heroImg         = HERO_IMAGES[dayOfWeek]
-  const verse           = getTodayVerse()
-  const name            = user?.name || 'friend'
-  const hour            = new Date().getHours()
-  const greeting        = hour < 12 ? 'Good morning' : hour < 17 ? 'Good afternoon' : 'Good evening'
-  const joinedChallenges = (challenges || []).filter(c => c.joined)
-
-  // Update 1: avatar initials
+  const dayOfWeek    = new Date().getDay()
+  const heroImg      = HERO_IMAGES[dayOfWeek]
+  const verse        = getTodayVerse()
   const userInitials = user?.name ? initials(user.name) : null
+  const daysMissed   = useMemo(() => calcDaysMissed(streak?.lastCheckinDate), [streak?.lastCheckinDate])
 
   if (!hydrated) return null
 
   return (
     <div className="flex flex-col min-h-screen bg-warm-bg">
 
-      {/* ── HERO IMAGE ── */}
-      <div className="relative w-full" style={{ height: '52vw', maxHeight: 240 }}>
-        <Image src={heroImg} alt="Daily devotion" fill priority className="object-cover" sizes="420px" />
-        <div className="absolute inset-0" style={{ background: 'linear-gradient(to bottom, rgba(0,0,0,0.15), rgba(0,0,0,0.55))' }} />
-
-        {/* Top bar: wordmark | music button + profile avatar */}
-        <div className="absolute top-0 inset-x-0 flex items-center justify-between px-5 pt-5">
-          <div className="flex items-center gap-2">
-            <Flame size={20} className="text-amber flame-flicker" />
-            <span className="text-white font-bold text-[17px] tracking-tight">Daily Walk</span>
-          </div>
-
-          {/* Right side: Music + Profile */}
-          <div className="flex items-center gap-2">
-            {/* Update 2: music button — opens music sheet */}
-            <MusicButton />
-
-            {/* Update 1: profile avatar top-right */}
-            <Link
-              href="/profile"
-              className="w-9 h-9 rounded-full bg-white/20 backdrop-blur-sm flex items-center justify-center text-white hover:bg-white/30 transition-colors overflow-hidden"
-              aria-label="Profile"
-            >
-              {userInitials ? (
-                <span className="text-[13px] font-bold">{userInitials}</span>
-              ) : (
-                <UserCircle size={20} />
-              )}
-            </Link>
-          </div>
+      {/* ── 1. HEADER BAR ── */}
+      <div className="flex items-center justify-between px-4 pt-5 pb-3">
+        <span className="font-semibold text-[16px]" style={{ color: '#1A1A2E', fontFamily: 'var(--font-jakarta, sans-serif)' }}>
+          Daily Walk
+        </span>
+        <div className="flex items-center gap-2">
+          {/* Notification bell */}
+          <button
+            onClick={() => showToast('Notifications coming soon')}
+            className="w-9 h-9 rounded-full flex items-center justify-center hover:bg-gray-100 transition-colors"
+            style={{ color: '#6B7280' }}
+            aria-label="Notifications"
+          >
+            <Bell size={20} />
+          </button>
+          {/* Profile avatar */}
+          <Link
+            href="/profile"
+            className="w-9 h-9 rounded-full flex items-center justify-center text-white text-[13px] font-bold transition-colors hover:opacity-90"
+            style={{ background: '#5B4FCF' }}
+            aria-label="Profile"
+          >
+            {userInitials ? userInitials : <UserCircle size={20} />}
+          </Link>
         </div>
       </div>
 
-      {/* ── VERSE — no label ── */}
-      <div className="px-4 -mt-10 relative z-10">
+      {/* ── 2. HERO IMAGE with verse overlay ── */}
+      <div className="px-4">
         <motion.div
-          initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.4, delay: 0.1 }}
-          className="card border-l-4 border-purple px-5 py-4"
+          initial={{ opacity: 0, y: 8 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ duration: 0.4 }}
+          className="relative overflow-hidden"
+          style={{ height: 220, borderRadius: 20 }}
         >
-          <p className="font-display italic text-text-primary leading-relaxed text-[15px]">"{verse.text}"</p>
-          <p className="text-text-muted text-xs font-semibold mt-2">— {verse.ref}</p>
+          <Image
+            src={heroImg}
+            alt="Daily devotion"
+            fill
+            priority
+            className="object-cover"
+            sizes="420px"
+          />
+          {/* Gradient overlay */}
+          <div
+            className="absolute inset-0"
+            style={{ background: 'linear-gradient(to bottom, rgba(0,0,0,0.05), rgba(0,0,0,0.5))' }}
+          />
+          {/* Text overlay — bottom left */}
+          <div className="absolute bottom-0 left-0 right-0 px-4 pb-4">
+            <p className="text-white/70 text-[12px] font-semibold mb-1">{formatTodayLabel()}</p>
+            <p className="font-display italic text-white text-[14px] leading-snug line-clamp-2">
+              "{verse.text}"
+            </p>
+            <p className="text-white/60 text-[11px] mt-1">— {verse.ref}</p>
+          </div>
         </motion.div>
       </div>
 
-      {/* ── GREETING ── */}
-      <div className="px-4 mt-5">
-        <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.4, delay: 0.2 }}>
-          <h1 className="font-display text-[24px] font-semibold text-text-primary capitalize leading-snug">
-            {greeting}, {name}.
-          </h1>
-          <p className="text-text-muted text-[15px] mt-1 leading-relaxed">Have you spent time with God today?</p>
+      {/* ── 3. SPIRITUAL CHARACTER CARD ── */}
+      <div className="px-4 mt-4">
+        <motion.div
+          initial={{ opacity: 0, y: 10 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ delay: 0.12 }}
+          className="bg-white rounded-card shadow-card"
+          style={{ padding: 24 }}
+        >
+          <SpiritualCharacter streak={streak?.current || 0} daysMissed={daysMissed} />
         </motion.div>
+      </div>
 
-        {/* ── CTA ── */}
-        <div className="mt-5 flex flex-col gap-3">
+      {/* ── 4. CHECK-IN CARD ── */}
+      <div className="px-4 mt-4">
+        <motion.div
+          initial={{ opacity: 0, y: 10 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ delay: 0.2 }}
+          className="bg-white rounded-card shadow-card p-5"
+        >
           {isCheckedInToday ? (
-            <motion.div initial={{ opacity: 0, scale: 0.95 }} animate={{ opacity: 1, scale: 1 }} className="flex flex-col items-center gap-3 py-4">
-              <div className="w-16 h-16 rounded-full bg-sage-light flex items-center justify-center">
-                <CheckCircle2 size={36} className="text-sage" />
+            /* Already checked in */
+            <div className="flex flex-col items-center gap-3 py-2">
+              <div className="w-14 h-14 rounded-full flex items-center justify-center" style={{ background: '#E8F4ED' }}>
+                <CheckCircle2 size={30} style={{ color: '#4A7C5F' }} />
               </div>
-              <p className="font-display text-[18px] font-semibold text-text-primary text-center">You've checked in today</p>
-              {streak?.current > 0 && (
-                <div className="flex items-center gap-2 bg-amber-light px-4 py-2 rounded-pill">
-                  <Flame size={16} className="text-amber flame-flicker" />
-                  <span className="text-sm font-bold text-amber-700">Day {streak.current} streak</span>
+              <p className="font-display text-[17px] font-semibold text-center" style={{ color: '#1A1A2E' }}>
+                You've checked in today!
+              </p>
+              {(streak?.current || 0) > 0 && (
+                <div className="flex items-center gap-2 px-4 py-2 rounded-full" style={{ background: '#FFF4DC' }}>
+                  <Flame size={15} className="flame-flicker" style={{ color: '#E8A838' }} />
+                  <span className="text-sm font-bold" style={{ color: '#B07000' }}>
+                    Day {streak.current} streak
+                  </span>
                 </div>
               )}
-              <Link href="/journey" className="text-purple text-sm font-semibold underline underline-offset-2">View your journey →</Link>
-            </motion.div>
+              <Link
+                href="/profile"
+                className="text-sm font-semibold underline underline-offset-2"
+                style={{ color: '#5B4FCF' }}
+              >
+                View your journey →
+              </Link>
+            </div>
           ) : (
-            <>
-              <motion.div initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.3 }}>
-                <button
-                  onClick={() => router.push('/checkin')}
-                  className="cta-pulse block w-full text-center bg-purple text-white rounded-pill py-4 text-[15px] font-bold tracking-wide transition-all hover:bg-purple-dark active:scale-[0.97]"
-                >
-                  ✓  I read my Bible today
-                </button>
-              </motion.div>
-              <motion.button
-                initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ delay: 0.4 }}
+            /* Not checked in */
+            <div className="flex flex-col gap-4">
+              <div>
+                <h2 className="font-display text-[18px] font-semibold" style={{ color: '#1A1A2E' }}>
+                  Have you spent time with God today?
+                </h2>
+                <p className="text-[13px] mt-1" style={{ color: '#6B7280' }}>
+                  Tap below when you've read your Bible
+                </p>
+              </div>
+              <button
+                onClick={() => router.push('/checkin')}
+                className="cta-pulse w-full text-white rounded-pill py-4 text-[15px] font-bold tracking-wide transition-all active:scale-[0.97]"
+                style={{ background: '#5B4FCF' }}
+              >
+                ✓  I read my Bible today
+              </button>
+              <button
                 onClick={() => showToast("No worries. We'll be here when you're ready.")}
-                className="w-full border-2 border-purple/25 text-purple rounded-pill py-3.5 text-[15px] font-semibold hover:bg-purple-light transition-colors"
+                className="text-center text-[13px] font-semibold"
+                style={{ color: '#6B7280' }}
               >
                 Remind me later
-              </motion.button>
-            </>
+              </button>
+            </div>
           )}
-        </div>
+        </motion.div>
       </div>
 
-      {/* ── Update 3: OPEN THE BIBLE card ── */}
-      <div className="px-4 mt-4">
-        <motion.div initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.45 }} className="card p-5">
-          <div className="flex items-center justify-between mb-1">
-            <h2 className="font-display text-[18px] font-semibold text-text-primary">Open the Bible</h2>
-            <BookOpen size={20} className="text-purple flex-shrink-0" />
-          </div>
-          <p className="text-text-muted text-[13px] mb-4 leading-relaxed">
-            Start reading now and check in when you're done.
-          </p>
+      {/* ── 5. OPEN BIBLE CARD ── */}
+      <div className="px-4 mt-4 mb-8">
+        <motion.div
+          initial={{ opacity: 0, y: 10 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ delay: 0.28 }}
+        >
           <Link
             href="/read"
-            className="block w-full text-center bg-sage text-white rounded-pill py-3 text-[14px] font-bold transition-all hover:bg-sage-dark active:scale-[0.97]"
+            className="flex items-center gap-4 rounded-card p-5 transition-all active:scale-[0.98] hover:opacity-95"
+            style={{ background: '#4A7C5F' }}
           >
-            Start reading →
+            <div className="w-12 h-12 rounded-2xl bg-white/20 flex items-center justify-center flex-shrink-0">
+              <BookOpen size={26} className="text-white" />
+            </div>
+            <div>
+              <p className="font-display text-[17px] font-semibold text-white leading-snug">
+                Open the Bible
+              </p>
+              <p className="text-[13px] mt-0.5" style={{ color: 'rgba(255,255,255,0.75)' }}>
+                Start reading now
+              </p>
+            </div>
           </Link>
         </motion.div>
       </div>
-
-      {/* ── Update 1c: ACTIVE CHALLENGES STRIP ── */}
-      {joinedChallenges.length > 0 && (
-        <motion.div initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.5 }} className="mt-4">
-          <div className="px-4 mb-2 flex items-center justify-between">
-            <p className="text-[11px] font-bold text-text-muted uppercase tracking-widest">Your Challenges</p>
-            <Link href="/challenges" className="text-[12px] font-bold text-purple">See all</Link>
-          </div>
-          <div className="flex gap-3 px-4 overflow-x-auto scroll-hide pb-1">
-            {joinedChallenges.map(challenge => {
-              const { completed, total } = getChallengeProgress(challenge, checkins)
-              const pct = total > 0 ? Math.min((completed / total) * 100, 100) : 0
-              return (
-                <Link key={challenge.id} href={`/challenges/${challenge.id}`}
-                  className="flex-shrink-0 w-[180px] card p-3 flex flex-col gap-2">
-                  <p className="font-bold text-text-primary text-[13px] leading-snug line-clamp-2">{challenge.title}</p>
-                  <div className="w-full h-1.5 bg-gray-100 rounded-full overflow-hidden">
-                    <div className="h-full bg-purple rounded-full transition-all" style={{ width: `${pct}%` }} />
-                  </div>
-                  <div className="flex items-center justify-between">
-                    <p className="text-[11px] text-text-muted">{completed}/{total} days</p>
-                    <span className="text-[11px] font-bold text-purple flex items-center gap-0.5">Continue <ChevronRight size={11} /></span>
-                  </div>
-                </Link>
-              )
-            })}
-          </div>
-        </motion.div>
-      )}
-
-      {/* ── COMMUNITY NUDGE ── */}
-      <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ delay: 0.55 }}
-        className="flex items-center justify-center gap-2 mt-4 mb-6 px-4">
-        <Globe size={14} className="text-text-muted" />
-        <p className="text-text-muted text-[13px]">{communityCount} people have checked in today</p>
-      </motion.div>
 
       <ToastContainer />
     </div>
