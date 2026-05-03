@@ -5,23 +5,6 @@ import BottomNav from '../components/BottomNav'
 import InstallPrompt from '../components/InstallPrompt'
 import AppInit from '../components/AppInit'
 
-export const metadata = {
-  title: 'Daily Walk — Your daily devotion, together.',
-  description: 'A spiritual accountability app for Christians.',
-  manifest: '/manifest.json',
-  appleWebApp: {
-    capable: true,
-    statusBarStyle: 'default',
-    title: 'Daily Walk',
-  },
-}
-
-export const viewport = {
-  width: 'device-width',
-  initialScale: 1,
-  maximumScale: 1,
-  themeColor: '#5B4FCF',
-}
 
 export default function RootLayout({ children }) {
   return (
@@ -39,6 +22,7 @@ export default function RootLayout({ children }) {
         <meta name="apple-mobile-web-app-capable" content="yes" />
         <meta name="apple-mobile-web-app-status-bar-style" content="default" />
         <meta name="apple-mobile-web-app-title" content="Daily Walk" />
+        <script src="/sw-register.js" />
       </head>
       <body className="bg-warm-outer min-h-screen flex justify-center items-start">
         <div className="relative w-full max-w-[420px] min-h-screen bg-warm-bg flex flex-col shadow-2xl">
@@ -52,4 +36,5 @@ export default function RootLayout({ children }) {
       </body>
     </html>
   )
-}
+}// ── Root layout — Update 4: music player removed entirely ──
+
