@@ -241,3 +241,30 @@ export function formatEventDate(isoStr) {
   const time    = d.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true })
   return `${dayName}, ${month} ${day} · ${time}`
 }
+
+// ── Bible characters for character plan ──
+export const BIBLE_CHARACTERS = [
+  { name: 'David',    description: 'Shepherd, warrior, king, worshipper',           passages: 28 },
+  { name: 'Paul',     description: 'Apostle, missionary, theologian',               passages: 24 },
+  { name: 'Joseph',   description: 'Dreamer, slave, ruler of Egypt',                passages: 18 },
+  { name: 'Moses',    description: 'Deliverer, lawgiver, prophet',                  passages: 22 },
+  { name: 'Esther',   description: 'Queen who saved her people',                    passages: 10 },
+  { name: 'Ruth',     description: 'Loyalty, redemption, faithfulness',             passages: 8  },
+  { name: 'Daniel',   description: 'Prophet, statesman, man of prayer',             passages: 14 },
+  { name: 'Peter',    description: 'Fisherman, apostle, rock of the church',        passages: 16 },
+  { name: 'Mary',     description: 'Mother of Jesus, woman of faith',               passages: 12 },
+  { name: 'Abraham',  description: 'Father of faith, friend of God',                passages: 20 },
+  { name: 'Elijah',   description: 'Prophet of fire, man of prayer',                passages: 12 },
+  { name: 'Solomon',  description: 'Wisest king, builder of the temple',            passages: 14 },
+  { name: 'Job',      description: 'Suffering, faith, and restoration',             passages: 16 },
+  { name: 'Isaiah',   description: 'Prophet of redemption and hope',                passages: 18 },
+  { name: 'John',     description: 'Beloved disciple, apostle of love',             passages: 14 },
+  { name: 'Deborah',  description: 'Judge, prophetess, leader of Israel',           passages: 8  },
+]
+
+// ── Suggested topics for topic plan ──
+export const SUGGESTED_TOPICS = [
+  'Faith','Prayer','Anxiety','Marriage','Purity',
+  'Identity','Forgiveness','Purpose','Healing',
+  'Addiction','Holiness','Fear','Grief','Wisdom',
+]
