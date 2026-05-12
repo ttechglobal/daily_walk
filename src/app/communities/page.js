@@ -200,9 +200,11 @@ export default function CommunitiesPage() {
   if (!hydrated) return null
 
   const mine     = (communities || []).filter(c => c.joined)
+  // Private communities never appear in Explore — only in My Communities
+  const publicOnly = (communities || []).filter(c => c.visibility !== 'private' || c.joined)
   const filtered = filter === 'All'
-    ? (communities || [])
-    : (communities || []).filter(c => c.category === filter)
+    ? publicOnly
+    : publicOnly.filter(c => c.category === filter)
 
   return (
     <div className="flex flex-col min-h-screen bg-warm-bg">

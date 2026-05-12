@@ -92,3 +92,17 @@ export function calcEndDate(totalDays) {
 export function fmtDate(iso) {
   return new Date(iso).toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' })
 }
+
+/**
+ * prefetchPlanPassages — pre-fetch all plan passages on creation.
+ * Service worker caches each response (CacheFirst, 365 days).
+ * Runs in the background — UI is not blocked.
+ * If offline: silently skips, passages cache on first read instead.
+ */
+export async function prefetchPlanPassages(days) {
+  const promises = days.map(day =>
+    fetch(`https://bible-api.com/${encodeURIComponent(day.passage)}?translation=kjv`)
+      .catch(() => null) // silent fail — will cache on first read
+  )
+  await Promise.allSettled(promises)
+}

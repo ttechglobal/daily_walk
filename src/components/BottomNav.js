@@ -1,13 +1,13 @@
 'use client'
 
-// ── BottomNav — Final launch nav ──
-// Home | Communities | [BookOpen → /read] | Plans | Profile
-// Centre BookOpen button: large purple circle, raised, navigates to /read
-// Hidden on /read and /plans/*/day/* (focused reading mode)
+// ── BottomNav — Home | Communities | [BibleIcon→/read] | Plans | Profile ──
+// Centre button: custom BibleIcon, raised purple circle 56px, deep shadow.
+// Hidden on /read and /plans/*/day/* for focused reading mode.
 
 import Link from 'next/link'
 import { usePathname } from 'next/navigation'
-import { Home, Users, BookOpen, Map, User } from 'lucide-react'
+import { Home, Users, Map, User } from 'lucide-react'
+import { BibleIcon } from './icons/BibleIcon'
 import clsx from 'clsx'
 
 const LEFT_ITEMS = [
@@ -21,8 +21,6 @@ const RIGHT_ITEMS = [
 
 export default function BottomNav() {
   const pathname = usePathname()
-
-  // Hidden on focused reading pages
   const isHidden = pathname === '/read' || /^\/plans\/.+\/day\//.test(pathname || '')
   if (isHidden) return null
 
@@ -52,23 +50,19 @@ export default function BottomNav() {
         )
       })}
 
-      {/* ── Centre Bible button — the most important nav element ── */}
+      {/* ── Centre Bible button — the most important element in the nav ── */}
       <Link
         href="/read"
-        className="
-          flex flex-col items-center justify-center
-          -mt-4
-          w-14 h-14 rounded-full
-          text-white
-          transition-all active:scale-95 hover:opacity-90
-        "
+        className="flex items-center justify-center -mt-4 rounded-full text-white transition-all active:scale-95 hover:opacity-90"
         style={{
+          width: 56,
+          height: 56,
           background: '#5B4FCF',
-          boxShadow: '0 4px 16px rgba(91,79,207,0.45), 0 2px 6px rgba(91,79,207,0.25)',
+          boxShadow: '0 6px 20px rgba(91,79,207,0.5), 0 2px 8px rgba(91,79,207,0.3)',
         }}
         aria-label="Open Bible"
       >
-        <BookOpen size={24} strokeWidth={2} />
+        <BibleIcon size={28} color="white" />
       </Link>
 
       {RIGHT_ITEMS.map(({ href, icon: Icon, label }) => {

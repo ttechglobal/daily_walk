@@ -12,7 +12,7 @@ import { ArrowLeft, BookOpen, Layers, Users, Lock, Sparkles, Mountain, Wind } fr
 import { useLocalStorage } from '../../../hooks/useLocalStorage'
 import { ToastContainer, showToast } from '../../../components/Toast'
 import { BIBLE_BOOKS, todayStr } from '../../../lib/constants'
-import { buildBookPlanDays, calcEndDate, fmtDate, readPlans, writePlans } from '../../../lib/plans'
+import { buildBookPlanDays, calcEndDate, fmtDate, readPlans, writePlans, prefetchPlanPassages } from '../../../lib/plans'
 import { TOPICAL_PLANS } from '../../../lib/topical-plans'
 import { CHARACTERS } from '../../../lib/characters'
 

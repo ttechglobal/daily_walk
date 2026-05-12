@@ -1,0 +1,37 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <title>Daily Walk — Offline</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: 'Plus Jakarta Sans', system-ui, sans-serif;
+      display: flex; align-items: center; justify-content: center;
+      min-height: 100vh; background: #FAF8F5; color: #1A1A2E;
+      text-align: center; padding: 24px;
+    }
+    .icon { font-size: 56px; margin-bottom: 20px; }
+    h1 { font-size: 26px; font-weight: 700; margin-bottom: 10px; }
+    p { color: #6B7280; font-size: 15px; line-height: 1.6; margin-bottom: 28px; max-width: 280px; }
+    button {
+      background: #5B4FCF; color: white; border: none;
+      padding: 14px 32px; border-radius: 100px;
+      font-size: 15px; font-weight: 600; cursor: pointer;
+      box-shadow: 0 4px 16px rgba(91,79,207,0.35);
+      transition: opacity 0.15s;
+    }
+    button:hover { opacity: 0.9; }
+    .note { font-size: 13px; color: #9CA3AF; margin-top: 20px; }
+  </style>
+</head>
+<body>
+  <div>
+    <div class="icon">📖</div>
+    <h1>You're offline</h1>
+    <p>Daily Walk works offline for pages you've already visited. Your check-ins and plans are always saved locally.</p>
+    <button onclick="window.location.reload()">Try again</button>
+    <p class="note">Nothing is ever lost — your journey is stored on your device.</p>
+  </div>
+</body>
+</html>

@@ -1,10 +1,28 @@
-// ── Root layout — Update 4: music player removed entirely ──
+// ── Root layout — OfflineBanner added (Update 3c) ──
 
 import './globals.css'
 import BottomNav from '../components/BottomNav'
 import InstallPrompt from '../components/InstallPrompt'
 import AppInit from '../components/AppInit'
+import OfflineBanner from '../components/OfflineBanner'
 
+export const metadata = {
+  title: 'Daily Walk — Your daily devotion, together.',
+  description: 'A spiritual accountability app for Christians.',
+  manifest: '/manifest.json',
+  appleWebApp: {
+    capable: true,
+    statusBarStyle: 'default',
+    title: 'Daily Walk',
+  },
+}
+
+export const viewport = {
+  width: 'device-width',
+  initialScale: 1,
+  maximumScale: 1,
+  themeColor: '#5B4FCF',
+}
 
 export default function RootLayout({ children }) {
   return (
@@ -25,6 +43,8 @@ export default function RootLayout({ children }) {
         <script src="/sw-register.js" />
       </head>
       <body className="bg-warm-outer min-h-screen flex justify-center items-start">
+        {/* Offline banner — above everything, full width, amber ── */}
+        <OfflineBanner />
         <div className="relative w-full max-w-[420px] min-h-screen bg-warm-bg flex flex-col shadow-2xl">
           <main className="flex-1 overflow-y-auto pb-24">
             {children}
@@ -36,5 +56,4 @@ export default function RootLayout({ children }) {
       </body>
     </html>
   )
-}// ── Root layout — Update 4: music player removed entirely ──
-
+}

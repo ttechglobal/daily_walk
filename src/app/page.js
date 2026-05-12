@@ -12,6 +12,7 @@ import {
   Bell, CheckCircle2, BookOpen, UserCircle, Flame,
   BookMarked, Lightbulb, Plus, X, Trophy
 } from 'lucide-react'
+import { BibleIcon } from '../components/icons/BibleIcon'
 import { useLocalStorage } from '../hooks/useLocalStorage'
 import { useCheckin } from '../hooks/useCheckin'
 import { ToastContainer, showToast } from '../components/Toast'
@@ -329,7 +330,7 @@ export default function HomeScreen() {
             className="flex items-center gap-4 rounded-card p-5 active:scale-[0.98] hover:opacity-95 transition-all"
             style={{ background:'#4A7C5F' }}>
             <div className="w-12 h-12 rounded-2xl bg-white/20 flex items-center justify-center flex-shrink-0">
-              <BookOpen size={26} className="text-white" />
+              <BibleIcon size={26} color="white" />
             </div>
             <div>
               <p className="font-display text-[17px] font-semibold text-white">Open the Bible</p>
