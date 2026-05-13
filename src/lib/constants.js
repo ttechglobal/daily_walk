@@ -268,3 +268,45 @@ export const SUGGESTED_TOPICS = [
   'Identity','Forgiveness','Purpose','Healing',
   'Addiction','Holiness','Fear','Grief','Wisdom',
 ]
+
+// ─────────────────────────────────────────────────────────────
+//  Slug + shareable link utilities
+// ─────────────────────────────────────────────────────────────
+
+/** Turn a string into a URL-safe slug: "Morning Readers" → "morning-readers" */
+export function slugify(text) {
+  return (text || '')
+    .toLowerCase()
+    .replace(/[^a-z0-9\s-]/g, '')
+    .trim()
+    .replace(/\s+/g, '-')
+    .slice(0, 40)
+}
+
+/** 6-char random suffix for uniqueness */
+export function shortId() {
+  return Math.random().toString(36).slice(2, 8)
+}
+
+/** Build shareable slugs */
+export function communitySlug(name, id) {
+  return `${slugify(name)}-${id.slice(-6)}`
+}
+export function postSlug(id) {
+  return id.slice(-8)
+}
+export function planSlug(name, id) {
+  return `${slugify(name)}-${id.slice(-6)}`
+}
+
+/** Full share URLs */
+export const APP_DOMAIN = 'https://dailywalk.app'
+export function communityShareUrl(name, id) {
+  return `${APP_DOMAIN}/community/${communitySlug(name, id)}`
+}
+export function postShareUrl(id) {
+  return `${APP_DOMAIN}/post/${postSlug(id)}`
+}
+export function planShareUrl(name, id) {
+  return `${APP_DOMAIN}/plan/${planSlug(name, id)}`
+}

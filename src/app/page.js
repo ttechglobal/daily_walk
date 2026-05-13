@@ -10,7 +10,7 @@ import Link from 'next/link'
 import { useRouter } from 'next/navigation'
 import { motion, AnimatePresence } from 'framer-motion'
 import {
-  UserCircle, BookMarked, Lightbulb, Plus, X, CheckCircle2, Trophy
+  UserCircle, BookMarked, Lightbulb, Plus, X, CheckCircle2, Trophy, PenLine
 } from 'lucide-react'
 import { BibleIcon } from '../components/icons/BibleIcon'
 import { useLocalStorage } from '../hooks/useLocalStorage'
@@ -18,6 +18,7 @@ import { useCheckin } from '../hooks/useCheckin'
 import { ToastContainer, showToast } from '../components/Toast'
 import CharacterCompanion from '../components/CharacterCompanion'
 import { NotificationBell, NotificationPanel } from '../components/NotificationPanel'
+import PostComposer from '../components/PostComposer'
 import { HERO_IMAGES, getTodayVerse, initials, todayStr } from '../lib/constants'
 import { getTodaysPlan, getPlanProgress, markDayComplete, readPlans } from '../lib/plans'
 
@@ -205,7 +206,8 @@ export default function HomeScreen() {
   const router = useRouter()
   const [user, , hydrated]   = useLocalStorage('dw_user', null)
   const [plans, setPlans]    = useLocalStorage('dw_plans', [])
-  const [notifOpen, setNotifOpen] = useState(false)
+  const [notifOpen,  setNotifOpen]  = useState(false)
+  const [compose,    setCompose]    = useState(false)
   const { isCheckedInToday, streak, performCheckin } = useCheckin()
 
   const dayOfWeek    = new Date().getDay()
@@ -294,9 +296,21 @@ export default function HomeScreen() {
       {/* Home FAB */}
       <HomeFAB />
 
+      {/* Compose FAB — write a post from home */}
+      <button
+        onClick={() => setCompose(true)}
+        className="fixed bottom-40 right-4 w-12 h-12 rounded-full text-white flex items-center justify-center z-30 active:scale-95 transition-all"
+        style={{ background:'#4A7C5F', boxShadow:'0 4px 16px rgba(74,124,95,0.45)' }}
+        aria-label="Write a post">
+        <PenLine size={18} />
+      </button>
+
       {/* Notification panel */}
       <AnimatePresence>
         {notifOpen && <NotificationPanel onClose={() => setNotifOpen(false)} />}
+      </AnimatePresence>
+      <AnimatePresence>
+        {compose && <PostComposer onClose={() => setCompose(false)} />}
       </AnimatePresence>
 
       <ToastContainer />

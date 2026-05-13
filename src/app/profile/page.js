@@ -4,8 +4,9 @@
 // Profile | Journey tabs. Character picker in settings.
 
 import { useState } from 'react'
+import { useRouter } from 'next/navigation'
 import { motion, AnimatePresence } from 'framer-motion'
-import { Flame, Info, Shield, LogOut, ChevronRight, BookOpen, Lightbulb, Trash2 } from 'lucide-react'
+import { Flame, Info, Shield, LogOut, ChevronRight, BookOpen, Lightbulb, Trash2, Share2, PenLine } from 'lucide-react'
 import { useLocalStorage } from '../../hooks/useLocalStorage'
 import { ToastContainer, showToast } from '../../components/Toast'
 import NotificationSettings from '../../components/NotificationSettings'
@@ -352,6 +353,8 @@ function SettingsRow({ icon: Icon, iconBg, label, sub, danger, onClick }) {
 
 function ProfileView({ user, streak, checkins }) {
   const [mainTab,    setMainTab]    = useState('profile')
+  const [globalPosts]    = useLocalStorage('dw_global_posts', [])
+  const [communities2]   = useLocalStorage('dw_communities', [])
   const [pickerOpen, setPickerOpen] = useState(false)
   const [, setOnboarded] = useLocalStorage('dw_onboarding_complete', false)
   const [, setUser]      = useLocalStorage('dw_user', null)
@@ -453,6 +456,14 @@ function ProfileView({ user, streak, checkins }) {
             onConfirm={handleCompanionConfirm}
             onClose={() => setPickerOpen(false)}
           />
+        )}
+
+        {/* Posts tab */}
+        {mainTab === 'posts' && (
+          <motion.div key="posts" initial={{ opacity:0 }} animate={{ opacity:1 }} exit={{ opacity:0 }} transition={{ duration:0.15 }}
+            className="px-4 mt-4 pb-6">
+            <UserPostsTab globalPosts={globalPosts || []} communities={communities2 || []} />
+          </motion.div>
         )}
       </AnimatePresence>
 
