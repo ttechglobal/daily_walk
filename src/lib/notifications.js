@@ -141,3 +141,75 @@ export function saveNotificationSettings(settings) {
     localStorage.setItem('dw_notification_settings', JSON.stringify(settings))
   } catch {}
 }
+
+// ─────────────────────────────────────────────────────────────
+//  In-app notification store (dw_notifications in localStorage)
+// ─────────────────────────────────────────────────────────────
+
+function readNotifications() {
+  try { const r = localStorage.getItem('dw_notifications'); return r ? JSON.parse(r) : [] } catch { return [] }
+}
+function writeNotifications(n) {
+  try { localStorage.setItem('dw_notifications', JSON.stringify(n)) } catch {}
+}
+
+export function addAppNotification({ type, title, body, url = '/' }) {
+  if (typeof window === 'undefined') return
+  const n = {
+    id:        `notif_${Date.now()}`,
+    type,
+    title,
+    body,
+    url,
+    read:      false,
+    createdAt: new Date().toISOString(),
+  }
+  writeNotifications([n, ...readNotifications().slice(0, 49)]) // keep max 50
+}
+
+export function getAppNotifications() {
+  return readNotifications()
+}
+
+export function markAllRead() {
+  writeNotifications(readNotifications().map(n => ({ ...n, read: true })))
+}
+
+export function markRead(id) {
+  writeNotifications(readNotifications().map(n => n.id === id ? { ...n, read: true } : n))
+}
+
+export function getUnreadCount() {
+  return readNotifications().filter(n => !n.read).length
+}
+
+// ─────────────────────────────────────────────────────────────
+//  Push subscription registration
+// ─────────────────────────────────────────────────────────────
+
+export async function subscribeToPush() {
+  if (typeof window === 'undefined') return false
+  if (!('serviceWorker' in navigator) || !('PushManager' in window)) return false
+
+  const permission = await Notification.requestPermission()
+  if (permission !== 'granted') return false
+
+  try {
+    const registration = await navigator.serviceWorker.ready
+    const vapidKey     = process.env.NEXT_PUBLIC_VAPID_PUBLIC_KEY
+    if (!vapidKey || vapidKey === 'your_vapid_public_key') return false
+
+    const subscription = await registration.pushManager.subscribe({
+      userVisibleOnly:      true,
+      applicationServerKey: vapidKey,
+    })
+
+    await fetch('/api/push/subscribe', {
+      method:  'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body:    JSON.stringify({ subscription }),
+    })
+
+    return true
+  } catch { return false }
+}

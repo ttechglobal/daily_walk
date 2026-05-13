@@ -5,6 +5,7 @@ import BottomNav from '../components/BottomNav'
 import InstallPrompt from '../components/InstallPrompt'
 import AppInit from '../components/AppInit'
 import OfflineBanner from '../components/OfflineBanner'
+import '../lib/pwa' // registers beforeinstallprompt at module level
 
 export const metadata = {
   title: 'Daily Walk — Your daily devotion, together.',
