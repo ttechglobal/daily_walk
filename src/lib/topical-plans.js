@@ -127,3 +127,38 @@ export const TOPICAL_PLANS = [
     ],
   },
 ]
+
+// ─────────────────────────────────────────────────────────────
+//  getTopicalPlans — Supabase first, fallback to hardcoded
+// ─────────────────────────────────────────────────────────────
+export async function getTopicalPlans() {
+  try {
+    const { createClient } = await import('./supabase/client')
+    const sb = createClient()
+    if (sb) {
+      const { data, error } = await sb
+        .from('topical_plans')
+        .select('*')
+        .eq('is_active', true)
+        .order('created_at', { ascending: true })
+      if (!error && data && data.length > 0) return data
+    }
+  } catch {}
+  return TOPICAL_PLANS
+}
+
+// SQL for topical_plans table — run in Supabase SQL editor:
+// create table public.topical_plans (
+//   id text primary key,
+//   name text not null,
+//   description text,
+//   theme text,
+//   color text default '#5B4FCF',
+//   icon text default 'BookOpen',
+//   duration integer not null,
+//   days jsonb not null default '[]',
+//   is_active boolean default true,
+//   created_at timestamptz default now()
+// );
+// alter table public.topical_plans enable row level security;
+// create policy "Plans visible to everyone" on public.topical_plans for select using (is_active = true);

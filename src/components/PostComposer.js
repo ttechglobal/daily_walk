@@ -13,7 +13,8 @@ import {
 } from 'lucide-react'
 import { useLocalStorage } from '../hooks/useLocalStorage'
 import { showToast } from './Toast'
-import { SEED_COMMUNITIES, initials, todayStr, postShareUrl, postSlug } from '../lib/constants'
+import { SEED_COMMUNITIES, initials, todayStr } from '../lib/constants'
+import { createShareUrl } from '../lib/config'
 import { fetchLinkPreview, extractUrl } from '../lib/link-preview'
 import { useCheckin } from '../hooks/useCheckin'
 
@@ -89,7 +90,7 @@ export default function PostComposer({ onClose, defaultCommunityId = null }) {
   }, [content])
 
   function buildShareUrl(post) {
-    const base   = postShareUrl(post.id)
+    const base   = createShareUrl(`/post/${post.id}`)
     const params = new URLSearchParams({
       content: content.slice(0, 200),
       author:  displayName,

@@ -4,6 +4,7 @@ import './globals.css'
 import BottomNav from '../components/BottomNav'
 import InstallPrompt from '../components/InstallPrompt'
 import AppInit from '../components/AppInit'
+import Script from 'next/script'
 import OfflineBanner from '../components/OfflineBanner'
 import '../lib/pwa' // registers beforeinstallprompt at module level
 
@@ -41,7 +42,7 @@ export default function RootLayout({ children }) {
         <meta name="apple-mobile-web-app-capable" content="yes" />
         <meta name="apple-mobile-web-app-status-bar-style" content="default" />
         <meta name="apple-mobile-web-app-title" content="Daily Walk" />
-        <script src="/sw-register.js" />
+        <Script src="/sw-register.js" strategy="afterInteractive" />
       </head>
       <body className="bg-warm-outer min-h-screen flex justify-center items-start">
         {/* Offline banner — above everything, full width, amber ── */}

@@ -1,34 +1,40 @@
 // ─────────────────────────────────────────────────────────────
 //  lib/plans.js — Plans feature helpers
+//  Update 3: proper completion state — don't advance day until next day
 // ─────────────────────────────────────────────────────────────
 
-/** Read plans array from localStorage safely */
-export function readPlans() {
-  try {
-    const raw = localStorage.getItem('dw_plans')
-    return raw ? JSON.parse(raw) : []
-  } catch { return [] }
-}
+function today() { return new Date().toISOString().split('T')[0] }
 
-/** Write plans array to localStorage */
+export function readPlans() {
+  try { const r = localStorage.getItem('dw_plans'); return r ? JSON.parse(r) : [] } catch { return [] }
+}
 export function writePlans(plans) {
   try { localStorage.setItem('dw_plans', JSON.stringify(plans)) } catch {}
 }
 
-/** Returns the first active plan that has today's reading incomplete */
+/** Returns the first active plan whose current day is NOT completed today */
 export function getTodaysPlan(plans) {
-  const today = new Date().toISOString().split('T')[0]
   return (plans || []).find(p => {
     if (p.status !== 'active') return false
     const day = p.days[p.currentDay - 1]
     if (!day) return false
-    return !day.completedAt
+    // Show plan if not yet completed today
+    return !day.completedAt || !day.completedAt.startsWith(today())
   }) || null
 }
 
-/** Mark a specific day complete, advance currentDay, complete plan if done */
+/** True if current day is already marked complete today */
+export function isPlanCompletedToday(plan) {
+  if (!plan) return false
+  const day = plan.days[plan.currentDay - 1]
+  if (!day) return false
+  return !!day.completedAt && day.completedAt.startsWith(today())
+}
+
+/** Mark today's day complete — DO NOT advance currentDay here.
+ *  Advancement happens next day via advancePlanIfNeeded(). */
 export function markDayComplete(planId, dayNumber, reflection = '') {
-  const plans = readPlans()
+  const plans   = readPlans()
   const updated = plans.map(p => {
     if (p.id !== planId) return p
     const days = p.days.map(d =>
@@ -36,41 +42,61 @@ export function markDayComplete(planId, dayNumber, reflection = '') {
         ? { ...d, completedAt: new Date().toISOString(), reflection }
         : d
     )
-    const nextDay     = Math.min(p.currentDay + 1, p.totalDays + 1)
-    const allDone     = days.every(d => d.completedAt)
-    return {
-      ...p,
-      days,
-      currentDay: nextDay,
-      status: allDone ? 'completed' : p.status,
-    }
+    const allDone = days.every(d => d.completedAt)
+    return { ...p, days, status: allDone ? 'completed' : p.status }
   })
   writePlans(updated)
 }
 
-/** Adjust pace — recalculate estimated end date */
-export function adjustPace(planId, newPace) {
+/** Call on app load / plans page open.
+ *  If current day was completed before today → advance currentDay.  */
+export function advancePlanIfNeeded(planId) {
   const plans = readPlans()
+  const plan  = plans.find(p => p.id === planId)
+  if (!plan || plan.status !== 'active') return
+
+  const currentDay = plan.days[plan.currentDay - 1]
+  if (!currentDay?.completedAt) return
+
+  const completedDate = currentDay.completedAt.split('T')[0]
+  if (completedDate < today() && plan.currentDay < plan.totalDays) {
+    const updated = plans.map(p => {
+      if (p.id !== planId) return p
+      const nextDay = p.currentDay + 1
+      return {
+        ...p,
+        currentDay: nextDay,
+        status: nextDay > p.totalDays ? 'completed' : p.status,
+      }
+    })
+    writePlans(updated)
+  }
+}
+
+/** Advance all active plans that need it — call once on app load */
+export function advanceAllPlans() {
+  const plans = readPlans()
+  plans.forEach(p => { if (p.status === 'active') advancePlanIfNeeded(p.id) })
+}
+
+export function adjustPace(planId, newPace) {
+  const plans   = readPlans()
   const updated = plans.map(p => {
     if (p.id !== planId) return p
-    const remaining   = p.totalDays - p.currentDay + 1
-    const end         = new Date()
+    const remaining = p.totalDays - p.currentDay + 1
+    const end       = new Date()
     end.setDate(end.getDate() + remaining)
     return { ...p, pace: newPace, estimatedEndDate: end.toISOString().split('T')[0] }
   })
   writePlans(updated)
 }
 
-/** Returns 0–100 completion percentage */
 export function getPlanProgress(plan) {
   if (!plan?.days?.length) return 0
-  const done = plan.days.filter(d => d.completedAt).length
-  return Math.round((done / plan.totalDays) * 100)
+  return Math.round((plan.days.filter(d => d.completedAt).length / plan.totalDays) * 100)
 }
 
-/** Build a Book plan's days array from BIBLE_BOOKS data */
-export function buildBookPlanDays(book, paceLabel) {
-  // Each day = one chapter for simplicity; pace adjusts estimatedEndDate
+export function buildBookPlanDays(book, pace) {
   return Array.from({ length: book.chapters }, (_, i) => ({
     day:         i + 1,
     passage:     `${book.name} ${i + 1}`,
@@ -81,28 +107,19 @@ export function buildBookPlanDays(book, paceLabel) {
   }))
 }
 
-/** Calculate estimated end date given totalDays from today */
 export function calcEndDate(totalDays) {
   const d = new Date()
   d.setDate(d.getDate() + totalDays - 1)
   return d.toISOString().split('T')[0]
 }
 
-/** Format a date string as "May 24, 2026" */
 export function fmtDate(iso) {
-  return new Date(iso).toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' })
+  return new Date(iso).toLocaleDateString('en-US', { month:'long', day:'numeric', year:'numeric' })
 }
 
-/**
- * prefetchPlanPassages — pre-fetch all plan passages on creation.
- * Service worker caches each response (CacheFirst, 365 days).
- * Runs in the background — UI is not blocked.
- * If offline: silently skips, passages cache on first read instead.
- */
 export async function prefetchPlanPassages(days) {
   const promises = days.map(day =>
-    fetch(`https://bible-api.com/${encodeURIComponent(day.passage)}?translation=kjv`)
-      .catch(() => null) // silent fail — will cache on first read
+    fetch(`https://bible-api.com/${encodeURIComponent(day.passage)}?translation=kjv`).catch(() => null)
   )
   await Promise.allSettled(promises)
 }

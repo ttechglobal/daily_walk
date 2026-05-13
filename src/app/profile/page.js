@@ -6,7 +6,7 @@
 import { useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { motion, AnimatePresence } from 'framer-motion'
-import { Flame, Info, Shield, LogOut, ChevronRight, BookOpen, Lightbulb, Trash2, Share2, PenLine } from 'lucide-react'
+import { Flame, Info, Shield, LogOut, ChevronRight, BookOpen, Lightbulb, Trash2, Share2, PenLine, Heart, MessageCircle } from 'lucide-react'
 import { useLocalStorage } from '../../hooks/useLocalStorage'
 import { ToastContainer, showToast } from '../../components/Toast'
 import NotificationSettings from '../../components/NotificationSettings'
@@ -331,6 +331,114 @@ function JourneySection({ checkins, streak, user }) {
   )
 }
 
+
+// ─────────────────────────────────────────────
+//  UserPostsTab — all posts the user has made
+// ─────────────────────────────────────────────
+function UserPostsTab({ globalPosts, communities }) {
+  const [expandedId, setExpandedId] = useState(null)
+
+  const typeColor = { general:'#888780', reading:'#5B4FCF', prayer:'#4A7C5F', encouragement:'#E8A838' }
+  const CAT_COLORS = {
+    'Bible Study':'#5B4FCF','Prayer':'#4A7C5F','Mental Health':'#7CB9E8',
+    'Youth':'#E8A838','Worship':'#C77DFF','General':'#888780',
+  }
+
+  // Collect all posts authored by local_user across global + communities
+  const allPosts = []
+
+  ;(globalPosts || []).forEach(p => {
+    if (p.authorId === 'local_user' || p.authorId === 'anonymous') {
+      allPosts.push({ ...p, _source: p.communityName || 'Daily Walk', _sourceColor: '#5B4FCF' })
+    }
+  })
+
+  const seen = new Set(allPosts.map(p => p.id))
+  ;(communities || []).forEach(c => {
+    ;(c.posts || []).forEach(p => {
+      if ((p.authorId === 'local_user' || p.authorId === 'anonymous') && !seen.has(p.id)) {
+        seen.add(p.id)
+        allPosts.push({ ...p, _source: c.name, _sourceColor: CAT_COLORS[c.category] || '#888780' })
+      }
+    })
+  })
+
+  allPosts.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())
+
+  if (allPosts.length === 0) {
+    return (
+      <motion.div initial={{ opacity:0 }} animate={{ opacity:1 }}
+        className="flex flex-col items-center gap-3 text-center py-12">
+        <div className="w-14 h-14 rounded-full flex items-center justify-center" style={{ background:'#EDE9FF' }}>
+          <PenLine size={24} style={{ color:'#5B4FCF' }} />
+        </div>
+        <p className="font-display text-[17px] font-semibold" style={{ color:'#1A1A2E' }}>No posts yet</p>
+        <p className="text-[13px] leading-relaxed" style={{ color:'#6B7280' }}>
+          Share what you're reading with the community
+        </p>
+      </motion.div>
+    )
+  }
+
+  return (
+    <div className="flex flex-col gap-3">
+      {allPosts.map((post, idx) => {
+        const tc      = typeColor[post.type] || '#888780'
+        const isLong  = post.content.length > 160
+        const expanded = expandedId === post.id
+        const date    = new Date(post.createdAt).toLocaleDateString('en-US', {
+          month:'short', day:'numeric', year:'numeric'
+        })
+
+        return (
+          <motion.div key={post.id} initial={{ opacity:0, y:10 }} animate={{ opacity:1, y:0 }}
+            transition={{ delay: idx * 0.04 }}
+            className="bg-white rounded-[16px] overflow-hidden"
+            style={{ boxShadow:'0 2px 10px rgba(0,0,0,0.07)' }}>
+
+            {/* Source + date */}
+            <div className="flex items-center justify-between px-4 pt-3 pb-1"
+              style={{ borderBottom:'1px solid #F5F5F5' }}>
+              <span className="text-[11px] font-bold" style={{ color: post._sourceColor }}>
+                {post._source}
+              </span>
+              <span className="text-[11px]" style={{ color:'#9CA3AF' }}>{date}</span>
+            </div>
+
+            <div className="px-4 py-3">
+              {post.passage && (
+                <p className="text-[12px] font-bold mb-1" style={{ color:'#5B4FCF' }}>{post.passage}</p>
+              )}
+              <span className="text-[11px] font-bold px-1.5 py-0.5 rounded-full inline-block mb-1.5"
+                style={{ background:`${tc}18`, color:tc }}>{post.type}</span>
+              <p className="text-[14px] leading-[1.7]" style={{ color:'#1A1A2E' }}>
+                {isLong && !expanded ? `${post.content.slice(0, 160)}…` : post.content}
+              </p>
+              {isLong && (
+                <button onClick={() => setExpandedId(expanded ? null : post.id)}
+                  className="text-[12px] font-semibold mt-1" style={{ color:'#5B4FCF' }}>
+                  {expanded ? 'Show less' : 'Read more'}
+                </button>
+              )}
+
+              <div className="flex items-center gap-4 mt-2 pt-2 border-t border-gray-100">
+                <div className="flex items-center gap-1" style={{ color:'#C4C1BC' }}>
+                  <Heart size={13} />
+                  <span className="text-[12px]">{post.likedBy?.length || 0}</span>
+                </div>
+                <div className="flex items-center gap-1" style={{ color:'#C4C1BC' }}>
+                  <MessageCircle size={13} />
+                  <span className="text-[12px]">{post.comments?.length || 0}</span>
+                </div>
+              </div>
+            </div>
+          </motion.div>
+        )
+      })}
+    </div>
+  )
+}
+
 // ─────────────────────────────────────────────
 //  Profile view (post-onboarding)
 // ─────────────────────────────────────────────
@@ -412,7 +520,7 @@ function ProfileView({ user, streak, checkins }) {
       {/* Profile | Journey tabs */}
       <div className="px-4 pt-4">
         <div className="flex gap-1 p-1 rounded-full" style={{ background:'#EDE9FF' }}>
-          {[{k:'profile',l:'Profile'},{k:'journey',l:'Journey'}].map(t => (
+          {[{k:'profile',l:'Profile'},{k:'journey',l:'Journey'},{k:'posts',l:'Posts'}].map(t => (
             <button key={t.k} onClick={() => setMainTab(t.k)}
               className="relative flex-1 py-2 rounded-full text-[13px] font-bold transition-all"
               style={mainTab===t.k?{color:'#5B4FCF'}:{color:'#6B7280'}}>
