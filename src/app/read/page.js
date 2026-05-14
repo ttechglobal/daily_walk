@@ -1,5 +1,7 @@
 'use client'
 
+export const dynamic = 'force-dynamic'
+
 // ── /read — Bible Reader ──
 // Uses YouVersion Platform SDK (@youversion/platform-core)
 // Requires: NEXT_PUBLIC_YOUVERSION_APP_KEY in .env.local
