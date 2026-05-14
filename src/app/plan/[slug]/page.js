@@ -1,27 +1,38 @@
 // ── /plan/[slug] — Plan share landing page ──
-// OG meta from query params. Shows plan name, description, 3-day preview, CTA.
+// Slug format: {plan-name}-{8-char-id}
+// OG meta generated server-side. Client reads preview from localStorage.
 
-export async function generateMetadata({ params, searchParams: sp }) {
-  const name = sp.name || 'A Bible Reading Plan'
-  const desc = sp.desc || 'A personal Bible study plan on Daily Walk'
-  const days = sp.days || '30'
+export async function generateMetadata({ params }) {
   const appUrl = process.env.NEXT_PUBLIC_APP_URL || 'https://dailywalkapp.vercel.app'
+  // Extract a readable name from slug for OG title
+  const parts = params.slug.split('-')
+  const shortId = parts[parts.length - 1]
+  const name = parts.slice(0, -1).map(w => w.charAt(0).toUpperCase() + w.slice(1)).join(' ') || 'Bible Reading Plan'
 
   return {
     title: `${name} — Daily Walk`,
-    description: `${days}-day plan: ${desc}`,
+    description: `A Bible reading plan on Daily Walk. Click to start reading.`,
     openGraph: {
       title:       `${name} — Daily Walk`,
-      description: `${days}-day Bible reading plan · ${desc}`,
+      description: 'A personal Bible reading plan. Join me on Daily Walk.',
       url:         `${appUrl}/plan/${params.slug}`,
       siteName:    'Daily Walk',
-      images: [{ url:`${appUrl}/og-image.png`, width:1200, height:630 }],
+      images: [{
+        url:    `${appUrl}/api/og/plan?slug=${encodeURIComponent(params.slug)}&name=${encodeURIComponent(name)}`,
+        width:  1200,
+        height: 630,
+        alt:    `${name} — Daily Walk`,
+      }],
     },
-    twitter: { card:'summary_large_image', title:`${name} — Daily Walk`, description: desc },
+    twitter: {
+      card:        'summary_large_image',
+      title:       `${name} — Daily Walk`,
+      description: 'A personal Bible reading plan.',
+    },
   }
 }
 
 import PlanLandingClient from './PlanLandingClient'
-export default function PlanPage({ params, searchParams: sp }) {
-  return <PlanLandingClient slug={params.slug} sp={sp} />
+export default function PlanPage({ params }) {
+  return <PlanLandingClient slug={params.slug} />
 }

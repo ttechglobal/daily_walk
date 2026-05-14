@@ -23,7 +23,7 @@ export async function generateMetadata({ params, searchParams: sp }) {
       url:         `${appUrl}/post/${params.slug}`,
       siteName:    'Daily Walk',
       type:        'article',
-      images: [{ url:`${appUrl}/og-image.png`, width:1200, height:630, alt:'Daily Walk' }],
+      images: [{ url:`${appUrl}/api/og/post?author=${encodeURIComponent(author)}&type=${type}`, width:1200, height:630, alt:`${author} on Daily Walk` }],
     },
     twitter: { card:'summary', title:`${author} on Daily Walk`, description: desc },
   }

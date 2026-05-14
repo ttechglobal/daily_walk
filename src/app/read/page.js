@@ -1,380 +1,402 @@
 'use client'
 
-// ── /read — Bible reader (Updates 4a 4b 4c 4d) ──
-// 4a: BottomNav hidden via useIsReadPage() in BottomNav itself
-// 4b: Custom dropdown components (no native <select>)
-// 4c: Floating Lightbulb FAB for nuggets (no + in header)
-// 4d: Prev/Next with scroll-to-top + disabled states
+// ── /read — Bible Reader ──
+// Uses YouVersion Platform SDK (@youversion/platform-core)
+// Requires: NEXT_PUBLIC_YOUVERSION_APP_KEY in .env.local
+// KJV (id:1) is default. All chapters cached in localStorage.
 
-import { useState, useEffect, useRef, useCallback } from 'react'
-import { useRouter } from 'next/navigation'
+import { useState, useEffect, useCallback } from 'react'
+import { useRouter, useSearchParams } from 'next/navigation'
 import { motion, AnimatePresence } from 'framer-motion'
-import { ArrowLeft, ChevronLeft, ChevronRight, ChevronDown, X, CheckCircle2, Lightbulb } from 'lucide-react'
-import { useCheckin } from '../../hooks/useCheckin'
-import { useLocalStorage } from '../../hooks/useLocalStorage'
-import { ToastContainer, showToast } from '../../components/Toast'
-import { BIBLE_BOOKS, BIBLE_TRANSLATIONS, todayStr } from '../../lib/constants'
+import { ChevronLeft, ChevronRight, ArrowLeft, WifiOff, Download, Check, BookOpen, X } from 'lucide-react'
+import { useOnlineStatus } from '../../hooks/useOnlineStatus'
+import {
+  getChapter, getAvailableVersions,
+  getPreferredVersionId, setPreferredVersionId,
+  isVersionDownloaded, downloadVersion,
+  seedDefaultVersionIfNeeded,
+  DEFAULT_VERSION_ID, BIBLE_BOOK_LIST,
+} from '../../lib/bible'
 
 // ─────────────────────────────────────────────
-//  Custom Dropdown — Update 4b
+//  Book / chapter navigator
 // ─────────────────────────────────────────────
-function Dropdown({ value, options, onChange, label, className = '' }) {
-  const [open, setOpen]   = useState(false)
-  const ref               = useRef(null)
-
-  // Close when clicking outside
-  useEffect(() => {
-    function handler(e) {
-      if (ref.current && !ref.current.contains(e.target)) setOpen(false)
-    }
-    document.addEventListener('mousedown', handler)
-    return () => document.removeEventListener('mousedown', handler)
-  }, [])
-
-  const selected = options.find(o => o.value === value)
-
-  return (
-    <div ref={ref} className={`relative ${className}`}>
-      <button
-        onClick={() => setOpen(v => !v)}
-        className={`w-full flex items-center justify-between gap-1 bg-white border rounded-[12px] px-3 py-2.5 text-[13px] font-semibold text-text-primary transition-all ${
-          open ? 'border-purple ring-2 ring-purple/20' : 'border-gray-200 hover:border-gray-300'
-        }`}
-      >
-        <span className="truncate">{selected?.label ?? label}</span>
-        <motion.div animate={{ rotate: open ? 180 : 0 }} transition={{ duration: 0.18 }}>
-          <ChevronDown size={14} className="text-text-muted flex-shrink-0" />
-        </motion.div>
-      </button>
-
-      <AnimatePresence>
-        {open && (
-          <motion.div
-            initial={{ opacity: 0, y: -6 }}
-            animate={{ opacity: 1, y: 0 }}
-            exit={{ opacity: 0, y: -4 }}
-            transition={{ duration: 0.15 }}
-            className="absolute top-full left-0 right-0 mt-1 bg-white border border-gray-200 rounded-[12px] shadow-card-hover z-30 overflow-hidden"
-          >
-            <div className="overflow-y-auto scroll-hide" style={{ maxHeight: 240 }}>
-              {options.map(opt => (
-                <button
-                  key={opt.value}
-                  onClick={() => { onChange(opt.value); setOpen(false) }}
-                  className={`w-full text-left px-3 py-2.5 text-[13px] transition-colors ${
-                    opt.value === value
-                      ? 'bg-purple text-white font-bold'
-                      : 'text-text-primary hover:bg-gray-50 font-medium'
-                  }`}
-                >
-                  {opt.label}
-                </button>
-              ))}
-            </div>
-          </motion.div>
-        )}
-      </AnimatePresence>
-    </div>
-  )
-}
-
-// ─────────────────────────────────────────────
-//  Skeleton
-// ─────────────────────────────────────────────
-function Skeleton() {
-  return (
-    <div className="flex flex-col gap-3 px-5 py-4 animate-pulse">
-      {[80, 95, 70, 88, 60, 92, 75, 84, 66].map((w, i) => (
-        <div key={i} className="h-4 bg-gray-200 rounded-full" style={{ width: `${w}%` }} />
-      ))}
-    </div>
-  )
-}
-
-// ─────────────────────────────────────────────
-//  Nugget modal — Update 4c
-// ─────────────────────────────────────────────
-function NuggetModal({ source, onClose }) {
-  const [text, setText]       = useState('')
-  const [nuggets, setNuggets] = useLocalStorage('dw_nuggets', [])
-
-  function save() {
-    const trimmed = text.trim()
-    if (!trimmed) return
-    setNuggets(prev => [{
-      id: `nug_${Date.now()}`, date: todayStr(),
-      text: trimmed, source, createdAt: new Date().toISOString(),
-    }, ...(prev || [])])
-    showToast('Nugget saved!')
-    onClose()
-  }
+function NavigatorSheet({ currentBook, currentChapter, onSelect, onClose }) {
+  const [search,  setSearch]  = useState('')
+  const [selBook, setSelBook] = useState(currentBook || 'John')
+  const filtered     = BIBLE_BOOK_LIST.filter(b => b.name.toLowerCase().includes(search.toLowerCase()))
+  const chapterCount = BIBLE_BOOK_LIST.find(b => b.name === selBook)?.chapters || 1
 
   return (
     <>
-      <motion.div className="fixed inset-0 bg-black/40 z-[60]" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} onClick={onClose} />
-      <motion.div
-        className="fixed bottom-0 left-1/2 -translate-x-1/2 w-full max-w-[420px] bg-warm-bg rounded-t-[28px] z-[70] p-5 pb-10"
-        initial={{ y: '100%' }} animate={{ y: 0 }} exit={{ y: '100%' }}
-        transition={{ type: 'spring', stiffness: 340, damping: 36 }}
-      >
-        <div className="flex justify-center mb-4"><div className="w-10 h-1 bg-gray-200 rounded-full" /></div>
-        <div className="flex items-center justify-between mb-1">
-          <div className="flex items-center gap-2">
-            <Lightbulb size={16} className="text-amber" />
-            <p className="font-bold text-text-primary text-[16px]">Add a nugget</p>
-          </div>
-          <button onClick={onClose} className="w-8 h-8 rounded-full bg-gray-100 flex items-center justify-center text-text-muted"><X size={15} /></button>
+      <motion.div className="fixed inset-0 bg-black/40 z-[60]"
+        initial={{ opacity:0 }} animate={{ opacity:1 }} exit={{ opacity:0 }} onClick={onClose} />
+      <motion.div className="fixed bottom-0 left-1/2 -translate-x-1/2 w-full max-w-[420px] bg-white rounded-t-[28px] z-[70] flex flex-col"
+        style={{ height:'78dvh' }}
+        initial={{ y:'100%' }} animate={{ y:0 }} exit={{ y:'100%' }}
+        transition={{ type:'spring', stiffness:340, damping:36 }}>
+        <div className="flex justify-center pt-3"><div className="w-10 h-1 bg-gray-200 rounded-full" /></div>
+        <div className="flex items-center justify-between px-5 py-3">
+          <p className="font-bold text-[16px]" style={{ color:'#1A1A2E' }}>Go to</p>
+          <button onClick={onClose} className="w-8 h-8 rounded-full bg-gray-100 flex items-center justify-center"><X size={15} /></button>
         </div>
-        {source && <p className="text-text-muted text-[12px] mb-3">From {source} — saved to your Journey</p>}
-        <textarea
-          value={text} onChange={e => setText(e.target.value)}
-          placeholder="Write a nugget from this passage..."
-          rows={4} autoFocus
-          className="w-full border border-gray-200 rounded-input resize-none px-4 py-3 text-[14px] text-text-primary focus:outline-none focus:border-purple focus:ring-2 focus:ring-purple/20 transition-all placeholder:text-text-muted mb-3"
-        />
-        <button onClick={save} disabled={!text.trim()}
-          className="w-full bg-purple text-white rounded-pill py-3.5 font-bold text-[14px] disabled:opacity-40 transition-all active:scale-[0.97]">
-          Save nugget
-        </button>
+        <div className="px-4 mb-2">
+          <input value={search} onChange={e => setSearch(e.target.value)} placeholder="Search books..." autoFocus
+            className="w-full border border-gray-200 rounded-full px-4 py-2.5 text-[14px] focus:outline-none focus:border-purple"
+            style={{ color:'#1A1A2E' }} />
+        </div>
+        <div className="flex flex-1 overflow-hidden">
+          <div className="w-1/2 overflow-y-auto border-r border-gray-100 scroll-hide">
+            {filtered.map(b => (
+              <button key={b.name} onClick={() => setSelBook(b.name)}
+                className="w-full text-left px-4 py-2.5 text-[13px] transition-colors"
+                style={{ background:selBook===b.name?'#EDE9FF':'transparent', color:selBook===b.name?'#5B4FCF':'#1A1A2E', fontWeight:selBook===b.name?700:400 }}>
+                {b.name}
+              </button>
+            ))}
+          </div>
+          <div className="w-1/2 overflow-y-auto px-3 py-2 scroll-hide">
+            <div className="grid grid-cols-4 gap-1.5">
+              {Array.from({ length: chapterCount }, (_, i) => i+1).map(ch => (
+                <button key={ch} onClick={() => { onSelect(selBook, ch); onClose() }}
+                  className="aspect-square rounded-xl flex items-center justify-center text-[13px] font-semibold transition-all active:scale-95"
+                  style={{ background:(selBook===currentBook&&ch===currentChapter)?'#5B4FCF':'#F5F5F5', color:(selBook===currentBook&&ch===currentChapter)?'white':'#1A1A2E' }}>
+                  {ch}
+                </button>
+              ))}
+            </div>
+          </div>
+        </div>
       </motion.div>
     </>
   )
 }
 
 // ─────────────────────────────────────────────
-//  Main page
+//  Version picker
 // ─────────────────────────────────────────────
-export default function ReadPage() {
-  const router = useRouter()
-  const { performCheckin, isCheckedInToday } = useCheckin()
+function VersionSheet({ currentId, onSelect, onClose }) {
+  const [versions,    setVersions]    = useState([])
+  const [loading,     setLoading]     = useState(true)
+  const [downloading, setDownloading] = useState({}) // { [id]: 0-100 }
+  const [downloaded,  setDownloaded]  = useState({}) // { [id]: true }
+  const isOnline = useOnlineStatus()
 
-  const [bookIdx,  setBookIdx]  = useState(42) // John
-  const [chapter,  setChapter]  = useState(1)
-  const [transIdx, setTransIdx] = useState(0)  // KJV
-
-  const [verses,  setVerses]  = useState(null)
-  const [ref,     setRef]     = useState('')
-  const [loading, setLoading] = useState(false)
-  const [error,   setError]   = useState(null)
-  const [nuggetOpen, setNuggetOpen] = useState(false)
-
-  // Ref for scroll-to-top on chapter nav — Update 4d
-  const scrollRef = useRef(null)
-
-  const currentBook = BIBLE_BOOKS[bookIdx]
-  const translation = BIBLE_TRANSLATIONS[transIdx]
-  const passageRef  = `${currentBook.name} ${chapter}`
-
-  // Derived disabled states — Update 4d
-  const isFirstChapter = bookIdx === 0 && chapter === 1
-  const isLastChapter  = bookIdx === BIBLE_BOOKS.length - 1 && chapter === currentBook.chapters
-
-  useEffect(() => { fetchPassage(bookIdx, chapter, transIdx) }, [])
-
-  const fetchPassage = useCallback(async (bIdx, ch, tIdx) => {
-    const book  = BIBLE_BOOKS[bIdx]
-    const trans = BIBLE_TRANSLATIONS[tIdx]
-    const query = encodeURIComponent(`${book.name} ${ch}`)
-    setLoading(true); setError(null); setVerses(null)
+  useEffect(() => {
+    // Check which are already downloaded
+    const dl = {}
     try {
-      const res  = await fetch(`https://bible-api.com/${query}?translation=${trans.value}`)
-      if (!res.ok) throw new Error('not found')
-      const data = await res.json()
-      if (data.error) throw new Error(data.error)
-      setVerses(data.verses || [])
-      setRef(data.reference || `${book.name} ${ch}`)
-    } catch {
-      setError("Couldn't load this passage. Check your connection and try again.")
-    } finally {
-      setLoading(false)
-    }
+      for (let i = 0; i < localStorage.length; i++) {
+        const k = localStorage.key(i)
+        if (k?.startsWith('dw_yv_downloaded_')) {
+          dl[k.replace('dw_yv_downloaded_', '')] = true
+        }
+      }
+    } catch {}
+    setDownloaded(dl)
+
+    getAvailableVersions().then(list => { setVersions(list); setLoading(false) })
   }, [])
 
-  // Update 4b: selecting chapter auto-fetches immediately
-  function handleBookChange(idx) {
-    const newIdx = Number(idx)
-    setBookIdx(newIdx)
-    setChapter(1)
-    fetchPassage(newIdx, 1, transIdx)
+  async function handleDownload(e, id) {
+    e.stopPropagation()
+    if (!isOnline) { alert('Connect to the internet to download'); return }
+    setDownloading(p => ({ ...p, [id]: 0 }))
+    await downloadVersion(id, (done, total) => {
+      setDownloading(p => ({ ...p, [id]: Math.round((done/total)*100) }))
+    })
+    setDownloaded(p => ({ ...p, [id]: true }))
+    setDownloading(p => { const n = {...p}; delete n[id]; return n })
   }
-
-  function handleChapterChange(ch) {
-    const newCh = Number(ch)
-    setChapter(newCh)
-    fetchPassage(bookIdx, newCh, transIdx)  // auto-fetch on chapter select
-  }
-
-  function handleVersionChange(idx) {
-    const newIdx = Number(idx)
-    setTransIdx(newIdx)
-    // Version only fetches on Go (or chapter change) per spec — don't auto-fetch here
-  }
-
-  function handleGo() { fetchPassage(bookIdx, chapter, transIdx) }
-
-  // Update 4d: scroll to top on navigation
-  function prevChapter() {
-    if (isFirstChapter) return
-    let b = bookIdx, c = chapter - 1
-    if (c < 1) { b = bookIdx - 1; c = BIBLE_BOOKS[b].chapters }
-    setBookIdx(b); setChapter(c)
-    fetchPassage(b, c, transIdx)
-    scrollRef.current?.scrollTo({ top: 0, behavior: 'smooth' })
-  }
-
-  function nextChapter() {
-    if (isLastChapter) return
-    let b = bookIdx, c = chapter + 1
-    if (c > BIBLE_BOOKS[b].chapters) { b = bookIdx + 1; c = 1 }
-    setBookIdx(b); setChapter(c)
-    fetchPassage(b, c, transIdx)
-    scrollRef.current?.scrollTo({ top: 0, behavior: 'smooth' })
-  }
-
-  function handleMarkRead() {
-    const did = performCheckin({ passage: passageRef, shared: false })
-    if (did) {
-      showToast('Marked as read!')
-      setTimeout(() => router.push('/checkin'), 400)
-    } else {
-      showToast('Already checked in today')
-    }
-  }
-
-  // Dropdown option arrays
-  const bookOptions    = BIBLE_BOOKS.map((b, i) => ({ value: i, label: b.name }))
-  const chapterOptions = Array.from({ length: currentBook.chapters }, (_, i) => ({ value: i + 1, label: `${i + 1}` }))
-  const versionOptions = BIBLE_TRANSLATIONS.map((t, i) => ({ value: i, label: t.label }))
 
   return (
-    <div className="flex flex-col min-h-screen bg-warm-bg overflow-x-hidden">
+    <>
+      <motion.div className="fixed inset-0 bg-black/40 z-[60]"
+        initial={{ opacity:0 }} animate={{ opacity:1 }} exit={{ opacity:0 }} onClick={onClose} />
+      <motion.div className="fixed bottom-0 left-1/2 -translate-x-1/2 w-full max-w-[420px] bg-white rounded-t-[28px] z-[70] flex flex-col"
+        style={{ maxHeight:'80dvh' }}
+        initial={{ y:'100%' }} animate={{ y:0 }} exit={{ y:'100%' }}
+        transition={{ type:'spring', stiffness:340, damping:36 }}>
+        <div className="flex justify-center pt-3"><div className="w-10 h-1 bg-gray-200 rounded-full" /></div>
+        <div className="flex items-center justify-between px-5 py-3 border-b border-gray-100">
+          <div>
+            <p className="font-bold text-[16px]" style={{ color:'#1A1A2E' }}>Bible Version</p>
+            <p className="text-[12px] mt-0.5" style={{ color:'#9CA3AF' }}>Tap a version to switch · Download for offline</p>
+          </div>
+          <button onClick={onClose} className="w-8 h-8 rounded-full bg-gray-100 flex items-center justify-center"><X size={15} /></button>
+        </div>
+        <div className="overflow-y-auto scroll-hide pb-8">
+          {loading && (
+            <div className="flex items-center justify-center py-10">
+              <motion.div animate={{ rotate:360 }} transition={{ duration:1, repeat:Infinity, ease:'linear' }}>
+                <Download size={20} style={{ color:'#9CA3AF' }} />
+              </motion.div>
+            </div>
+          )}
+          {versions.map(v => {
+            const isCurrent  = v.id === currentId
+            const isDl       = downloaded[String(v.id)] || v.id === DEFAULT_VERSION_ID
+            const dlProgress = downloading[v.id]
+            return (
+              <button key={v.id} onClick={() => { onSelect(v.id); onClose() }}
+                className="w-full flex items-center px-5 py-3.5 border-b hover:bg-gray-50 transition-colors gap-3 text-left"
+                style={{ borderColor:'#F5F5F5' }}>
+                {/* Selected radio */}
+                <div className="w-5 h-5 rounded-full border-2 flex items-center justify-center flex-shrink-0"
+                  style={{ borderColor:isCurrent?'#5B4FCF':'#E5E7EB' }}>
+                  {isCurrent && <div className="w-2.5 h-2.5 rounded-full" style={{ background:'#5B4FCF' }} />}
+                </div>
+                <div className="flex-1 min-w-0">
+                  <div className="flex items-center gap-2">
+                    <p className="font-bold text-[14px]" style={{ color:isCurrent?'#5B4FCF':'#1A1A2E' }}>
+                      {v.abbreviation}
+                    </p>
+                    {isDl && !dlProgress && (
+                      <span className="text-[10px] font-bold px-1.5 py-0.5 rounded-full"
+                        style={{ background:'#E8F4ED', color:'#4A7C5F' }}>✓ Offline</span>
+                    )}
+                  </div>
+                  <p className="text-[12px] truncate" style={{ color:'#6B7280' }}>{v.name}</p>
+                  {typeof dlProgress === 'number' && (
+                    <div className="mt-1.5 w-full h-1 rounded-full overflow-hidden" style={{ background:'#E8E5E0' }}>
+                      <motion.div className="h-full rounded-full" style={{ background:'#5B4FCF', width:`${dlProgress}%` }} />
+                    </div>
+                  )}
+                </div>
+                {/* Download button — only if not downloaded and not downloading */}
+                {!isDl && typeof dlProgress === 'undefined' && (
+                  <button
+                    onClick={e => handleDownload(e, v.id)}
+                    className="text-[12px] font-bold px-3 py-1.5 rounded-full flex-shrink-0 transition-all active:scale-95"
+                    style={{ color:'#5B4FCF', background:'#EDE9FF' }}>
+                    Download
+                  </button>
+                )}
+              </button>
+            )
+          })}
+        </div>
+      </motion.div>
+    </>
+  )
+}
 
-      {/* ── HEADER — back arrow + title, no + button (Update 4c) ── */}
-      <div className="flex items-center justify-between px-4 pt-5 pb-3">
-        <button
-          onClick={() => router.back()}
-          className="w-9 h-9 rounded-full bg-white shadow-card flex items-center justify-center text-text-primary hover:bg-gray-50 transition-colors"
-          aria-label="Back"
-        >
+// ─────────────────────────────────────────────
+//  Main reader
+// ─────────────────────────────────────────────
+export default function BibleReaderPage() {
+  const router       = useRouter()
+  const searchParams = useSearchParams()
+  const isOnline     = useOnlineStatus()
+
+  const [book,       setBook]      = useState(searchParams?.get('book')    || 'John')
+  const [chapter,    setChapter]   = useState(parseInt(searchParams?.get('chapter') || '1'))
+  const [versionId,  setVersionId] = useState(DEFAULT_VERSION_ID)
+  const [versionAbbr,setAbbr]      = useState('KJV')
+  const [data,       setData]      = useState(null)
+  const [loading,    setLoading]   = useState(true)
+  const [error,      setError]     = useState(null)
+  const [isOffline,  setIsOffline] = useState(false)
+  const [fromCache,  setFromCache] = useState(false)
+  const [showNav,    setShowNav]   = useState(false)
+  const [showVer,    setShowVer]   = useState(false)
+  const [fontSize,   setFontSize]  = useState(17)
+
+  useEffect(() => {
+    const id = getPreferredVersionId()
+    setVersionId(id)
+    seedDefaultVersionIfNeeded()
+  }, [])
+
+  const load = useCallback(async (b, ch, vid) => {
+    setLoading(true); setError(null); setIsOffline(false)
+    const result = await getChapter(vid, b, ch)
+    if (result.error) {
+      setError(result.error)
+      setIsOffline(!!result.offline)
+    } else {
+      setData(result)
+      setFromCache(!!result.fromCache)
+    }
+    setLoading(false)
+  }, [])
+
+  useEffect(() => { load(book, chapter, versionId) }, [book, chapter, versionId, load])
+
+  function selectVersion(id) {
+    setPreferredVersionId(id)
+    setVersionId(id)
+    // Update abbreviation display
+    getAvailableVersions().then(list => {
+      const found = list.find(v => v.id === id)
+      if (found) setAbbr(found.abbreviation)
+    })
+  }
+
+  function navigate(b, ch) { setBook(b); setChapter(ch) }
+
+  function goNext() {
+    const bookData = BIBLE_BOOK_LIST.find(b => b.name === book)
+    if (bookData && chapter < bookData.chapters) setChapter(c => c + 1)
+  }
+  function goPrev() {
+    if (chapter > 1) setChapter(c => c - 1)
+  }
+
+  const verses      = data?.verses   || []
+  const content     = data?.content  || ''
+  const reference   = data?.reference || `${book} ${chapter}`
+  const bookData    = BIBLE_BOOK_LIST.find(b => b.name === book)
+  const totalChapters = bookData?.chapters || 1
+
+  return (
+    <div className="flex flex-col h-screen" style={{ background:'#FAF8F5' }}>
+
+      {/* Header */}
+      <div className="flex items-center justify-between px-4 pt-4 pb-3 flex-shrink-0">
+        <button onClick={() => router.back()}
+          className="w-9 h-9 rounded-full bg-white flex items-center justify-center shadow-sm"
+          style={{ color:'#1A1A2E' }}>
           <ArrowLeft size={18} />
         </button>
-        <h1 className="font-bold text-text-primary text-[16px]">Read</h1>
-        {/* Spacer to keep title centred */}
-        <div className="w-9" />
-      </div>
 
-      {/* ── Update 4b: CUSTOM DROPDOWNS ── */}
-      <div className="px-4 pb-3">
-        <div className="flex gap-2 items-start">
-          {/* Book — wider */}
-          <Dropdown
-            className="flex-1"
-            value={bookIdx}
-            options={bookOptions}
-            onChange={handleBookChange}
-            label="Book"
-          />
-          {/* Chapter */}
-          <Dropdown
-            className="w-[72px]"
-            value={chapter}
-            options={chapterOptions}
-            onChange={handleChapterChange}
-            label="Ch"
-          />
-          {/* Version */}
-          <Dropdown
-            className="w-[72px]"
-            value={transIdx}
-            options={versionOptions}
-            onChange={handleVersionChange}
-            label="Ver"
-          />
-          {/* Go button — triggers fetch for version changes */}
-          <button
-            onClick={handleGo}
-            className="bg-purple text-white rounded-[12px] px-4 py-2.5 text-[13px] font-bold hover:bg-purple-dark active:scale-95 transition-all flex-shrink-0 h-[42px]"
-          >
-            Go
+        <button onClick={() => setShowNav(true)}
+          className="flex items-center gap-1.5 px-4 py-2 rounded-full bg-white shadow-sm active:bg-gray-100">
+          <BookOpen size={14} style={{ color:'#5B4FCF' }} />
+          <span className="font-bold text-[15px]" style={{ color:'#1A1A2E' }}>{book}</span>
+          <span className="text-[15px]" style={{ color:'#9CA3AF' }}>{chapter}</span>
+        </button>
+
+        <div className="flex items-center gap-2">
+          <button onClick={() => setShowVer(true)}
+            className="px-3 py-1.5 rounded-full bg-white shadow-sm text-[13px] font-bold active:bg-gray-100"
+            style={{ color:'#5B4FCF' }}>
+            {versionAbbr}
+          </button>
+          <button onClick={() => setFontSize(f => f===17?20:f===20?14:17)}
+            className="w-9 h-9 rounded-full bg-white shadow-sm flex items-center justify-center text-[12px] font-bold"
+            style={{ color:'#6B7280' }}>
+            Aa
           </button>
         </div>
       </div>
 
-      {/* ── PASSAGE CONTENT ── */}
-      <div ref={scrollRef} className="flex-1 overflow-y-auto scroll-hide">
-        {loading && <Skeleton />}
+      {/* Offline cached indicator */}
+      {fromCache && (
+        <div className="mx-4 mb-1 self-start flex items-center gap-1.5 px-3 py-1 rounded-full"
+          style={{ background:'#E8F4ED' }}>
+          <Check size={11} style={{ color:'#4A7C5F' }} />
+          <span className="text-[11px] font-semibold" style={{ color:'#4A7C5F' }}>Saved offline</span>
+        </div>
+      )}
 
-        {error && !loading && (
-          <div className="px-5 py-10 text-center">
-            <p className="text-text-muted text-[14px] leading-relaxed">{error}</p>
+      {/* Content */}
+      <div className="flex-1 overflow-y-auto px-5 pb-4 scroll-hide">
+
+        {loading && (
+          <div className="flex flex-col items-center justify-center py-20 gap-3">
+            <motion.div animate={{ rotate:360 }} transition={{ duration:1.2, repeat:Infinity, ease:'linear' }}>
+              <BookOpen size={24} style={{ color:'#C4C1BC' }} />
+            </motion.div>
+            <p className="text-[13px]" style={{ color:'#9CA3AF' }}>Loading {book} {chapter}...</p>
           </div>
         )}
 
-        {verses && !loading && (
-          <motion.div key={ref} initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} className="px-5 py-2 pb-28">
-            <p className="font-bold text-purple text-[13px] mb-4">{ref} · {translation.label}</p>
-            {verses.map(v => (
-              <p key={v.verse} className="font-display text-[17px] leading-[1.9] text-text-primary mb-1">
-                <span className="text-[12px] text-text-muted font-sans mr-2 select-none">{v.verse}</span>
-                {v.text}
+        {!loading && error && isOffline && (
+          <div className="flex flex-col items-center gap-4 py-16 text-center px-4">
+            <div className="w-14 h-14 rounded-full flex items-center justify-center" style={{ background:'#FFF4DC' }}>
+              <WifiOff size={24} style={{ color:'#E8A838' }} />
+            </div>
+            <p className="font-bold text-[17px]" style={{ color:'#1A1A2E' }}>You're offline</p>
+            <p className="text-[14px] leading-relaxed" style={{ color:'#6B7280' }}>
+              This chapter hasn't been cached yet. Connect once and it will be saved forever.
+            </p>
+          </div>
+        )}
+
+        {!loading && error && !isOffline && (
+          <div className="text-center py-16 flex flex-col items-center gap-3">
+            <p className="text-[15px] font-semibold" style={{ color:'#1A1A2E' }}>Couldn't load passage</p>
+            <p className="text-[13px] px-4" style={{ color:'#9CA3AF' }}>{error}</p>
+            {error.includes('APP_KEY') && (
+              <p className="text-[12px] px-6 py-3 rounded-[14px]" style={{ background:'#FFF4DC', color:'#B07000' }}>
+                Add NEXT_PUBLIC_YOUVERSION_APP_KEY to .env.local and restart.
+                Get your key at platform.youversion.com
               </p>
-            ))}
-          </motion.div>
-        )}
-      </div>
-
-      {/* ── Update 4d: CHAPTER NAV with disabled states ── */}
-      <div className="px-4 py-3 flex items-center justify-between border-t border-gray-100 bg-warm-bg">
-        <button
-          onClick={prevChapter}
-          disabled={isFirstChapter}
-          className="flex items-center gap-1 font-semibold text-[13px] transition-colors disabled:opacity-30 disabled:cursor-not-allowed text-text-muted hover:text-purple"
-        >
-          <ChevronLeft size={16} /> Prev
-        </button>
-        <span className="text-text-muted text-[12px] font-semibold">{passageRef}</span>
-        <button
-          onClick={nextChapter}
-          disabled={isLastChapter}
-          className="flex items-center gap-1 font-semibold text-[13px] transition-colors disabled:opacity-30 disabled:cursor-not-allowed text-text-muted hover:text-purple"
-        >
-          Next <ChevronRight size={16} />
-        </button>
-      </div>
-
-      {/* ── MARK AS READ ── */}
-      <div className="px-4 py-3 border-t border-gray-100 bg-warm-bg pb-8">
-        {isCheckedInToday ? (
-          <div className="w-full flex items-center justify-center gap-2 bg-sage-light text-sage rounded-pill py-4 font-bold text-[15px]">
-            <CheckCircle2 size={18} />
-            Already checked in today
+            )}
+            <button onClick={() => load(book, chapter, versionId)}
+              className="text-[14px] font-semibold px-5 py-2.5 rounded-full text-white"
+              style={{ background:'#5B4FCF' }}>
+              Try again
+            </button>
           </div>
-        ) : (
-          <button
-            onClick={handleMarkRead}
-            disabled={!verses}
-            className="w-full bg-purple text-white rounded-pill py-4 text-[15px] font-bold shadow-purple hover:bg-purple-dark active:scale-[0.97] transition-all disabled:opacity-40"
-          >
-            ✓  Mark as read for today
-          </button>
+        )}
+
+        {!loading && !error && (
+          <AnimatePresence mode="wait">
+            <motion.div key={`${book}-${chapter}-${versionId}`}
+              initial={{ opacity:0 }} animate={{ opacity:1 }} exit={{ opacity:0 }}
+              transition={{ duration:0.2 }} className="pt-5 pb-6">
+
+              <p className="text-[12px] font-bold uppercase tracking-widest mb-5"
+                style={{ color:'#9CA3AF' }}>
+                {reference} · {versionAbbr}
+              </p>
+
+              {/* Verse-by-verse if we have numbered verses */}
+              {verses.length > 0 && verses[0].number > 0 ? (
+                <div style={{ fontSize }}>
+                  {verses.map((v, i) => (
+                    <span key={i}>
+                      <sup className="text-[10px] font-bold mr-1 select-none"
+                        style={{ color:'#5B4FCF', verticalAlign:'super' }}>
+                        {v.number}
+                      </sup>
+                      <span style={{ color:'#1A1A2E', lineHeight:2 }}>{v.text} </span>
+                    </span>
+                  ))}
+                </div>
+              ) : (
+                /* Full content block when verse splitting isn't clean */
+                <p className="leading-[2]" style={{ fontSize, color:'#1A1A2E' }}>
+                  {content}
+                </p>
+              )}
+
+              {/* Copyright attribution — required by YouVersion license */}
+              <p className="mt-8 text-[11px] text-center" style={{ color:'#C4C1BC' }}>
+                Scripture taken from the {versionAbbr} Bible
+              </p>
+            </motion.div>
+          </AnimatePresence>
         )}
       </div>
 
-      {/* ── Update 4c: FLOATING LIGHTBULB FAB ── */}
-      <button
-        onClick={() => setNuggetOpen(true)}
-        className="fixed bottom-36 right-4 w-12 h-12 rounded-full flex items-center justify-center shadow-lg active:scale-95 transition-all z-30"
-        style={{ background: '#E8A838' }}
-        aria-label="Add nugget"
-      >
-        <Lightbulb size={20} className="text-white" />
-      </button>
+      {/* Chapter navigation */}
+      <div className="flex items-center justify-between px-4 py-4 flex-shrink-0 border-t border-gray-100 bg-white">
+        <button onClick={goPrev} disabled={chapter <= 1}
+          className="flex items-center gap-2 px-4 py-2.5 rounded-full border-2 disabled:opacity-30 transition-all active:scale-95"
+          style={{ borderColor:'#E5E7EB', color:'#1A1A2E' }}>
+          <ChevronLeft size={16} />
+          <span className="text-[13px] font-semibold">Prev</span>
+        </button>
+
+        <span className="text-[12px] font-semibold" style={{ color:'#9CA3AF' }}>
+          {chapter} / {totalChapters}
+        </span>
+
+        <button onClick={goNext} disabled={chapter >= totalChapters}
+          className="flex items-center gap-2 px-4 py-2.5 rounded-full text-white disabled:opacity-30 transition-all active:scale-95"
+          style={{ background:'#5B4FCF' }}>
+          <span className="text-[13px] font-semibold">Next</span>
+          <ChevronRight size={16} />
+        </button>
+      </div>
 
       <AnimatePresence>
-        {nuggetOpen && <NuggetModal source={passageRef} onClose={() => setNuggetOpen(false)} />}
+        {showNav && <NavigatorSheet currentBook={book} currentChapter={chapter} onSelect={navigate} onClose={() => setShowNav(false)} />}
+        {showVer && <VersionSheet currentId={versionId} onSelect={selectVersion} onClose={() => setShowVer(false)} />}
       </AnimatePresence>
-
-      <ToastContainer />
     </div>
   )
 }

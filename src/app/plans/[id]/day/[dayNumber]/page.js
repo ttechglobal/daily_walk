@@ -98,12 +98,18 @@ export default function DayReadingPage() {
     if (!dayData?.passage) return
     setLoading(true); setFetchError(null)
     try {
-      const res  = await fetch(`https://bible-api.com/${encodeURIComponent(dayData.passage)}?translation=kjv`)
-      const data = await res.json()
-      if (data.error) throw new Error()
-      setVerses(data.verses || [])
+      const { getPassage, getPreferredTranslation } = await import('../../../../../lib/bible')
+      const trans  = getPreferredTranslation()
+      const result = await getPassage(dayData.passage, trans)
+      if (result.error) throw new Error(result.error)
+      // Normalise verse shape from new API
+      const normalised = (result.verses || []).map(v => ({
+        verse: v.verse?.number ?? v.verseNumber ?? v.number ?? '',
+        text:  v.verse?.text  ?? v.text ?? '',
+      }))
+      setVerses(normalised)
     } catch {
-      setFetchError("Couldn't load passage. Open in your Bible app instead.")
+      setFetchError("Couldn't load passage. Check your connection or open the Bible reader.")
     } finally {
       setLoading(false)
     }

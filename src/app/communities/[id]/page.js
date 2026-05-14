@@ -380,9 +380,22 @@ function PostCard({ post, onDelete, onLike, onComment }) {
   const isOwn    = post.authorId === 'local_user'
 
   async function handleShare() {
-    const text = `${post.authorName} on Daily Walk: "${post.content.slice(0,100)}"`
-    if(navigator.share){try{await navigator.share({text})}catch{}}
-    else{await navigator.clipboard.writeText(text).catch(()=>{});showToast('Copied!')}
+    const { createShareUrl } = await import('../../../lib/config')
+    const params = new URLSearchParams({
+      author:  post.authorName,
+      content: post.content.slice(0, 200),
+      type:    post.type || 'general',
+    })
+    if (post.passage) params.set('passage', post.passage)
+    if (community?.name) params.set('community', community.name)
+    const link = createShareUrl(`/post/${post.id}?${params}`)
+    const text = `"${post.content.slice(0,80)}" — ${post.authorName} on Daily Walk`
+    if (navigator.share) {
+      try { await navigator.share({ title:'Daily Walk', text, url: link }) } catch {}
+    } else {
+      await navigator.clipboard.writeText(link).catch(() => {})
+      showToast('Link copied!')
+    }
   }
 
   return (
