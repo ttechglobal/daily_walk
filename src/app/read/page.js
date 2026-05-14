@@ -1,13 +1,11 @@
 'use client'
 
-export const dynamic = 'force-dynamic'
-
 // ── /read — Bible Reader ──
 // Uses YouVersion Platform SDK (@youversion/platform-core)
 // Requires: NEXT_PUBLIC_YOUVERSION_APP_KEY in .env.local
 // KJV (id:1) is default. All chapters cached in localStorage.
 
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, Suspense } from 'react'
 import { useRouter, useSearchParams } from 'next/navigation'
 import { motion, AnimatePresence } from 'framer-motion'
 import { ChevronLeft, ChevronRight, ArrowLeft, WifiOff, Download, Check, BookOpen, X } from 'lucide-react'
@@ -186,7 +184,7 @@ function VersionSheet({ currentId, onSelect, onClose }) {
 // ─────────────────────────────────────────────
 //  Main reader
 // ─────────────────────────────────────────────
-export default function BibleReaderPage() {
+function BibleReaderInner() {
   const router       = useRouter()
   const searchParams = useSearchParams()
   const isOnline     = useOnlineStatus()
@@ -400,5 +398,19 @@ export default function BibleReaderPage() {
         {showVer && <VersionSheet currentId={versionId} onSelect={selectVersion} onClose={() => setShowVer(false)} />}
       </AnimatePresence>
     </div>
+  )
+}
+
+// Wrap in Suspense — required because useSearchParams() prevents static prerender
+export default function BibleReaderPage() {
+  return (
+    <Suspense fallback={
+      <div className="flex items-center justify-center h-screen" style={{ background:'#FAF8F5' }}>
+        <div className="w-8 h-8 rounded-full border-2 border-t-transparent animate-spin"
+          style={{ borderColor:'#5B4FCF' }} />
+      </div>
+    }>
+      <BibleReaderInner />
+    </Suspense>
   )
 }
