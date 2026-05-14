@@ -1,15 +1,13 @@
-// ─────────────────────────────────────────────────────────────
-//  lib/health.js — Spiritual health calculation
-// ─────────────────────────────────────────────────────────────
+// ── lib/health.js — Spiritual health calculation ──
+// Labels are always encouraging — never negative.
 
-/** 0–100 health score based on streak and missed days */
 export function calculateHealth(streak, daysMissed) {
   const streakHealth = Math.min(streak * 8, 80)
   const missPenalty  = daysMissed * 20
   return Math.max(0, Math.min(100, streakHealth - missPenalty))
 }
 
-/** CharacterState from health score */
+// Maps health score to a visual state key
 export function getCharacterState(health) {
   if (health >= 85) return 'radiant'
   if (health >= 65) return 'happy'
@@ -20,20 +18,20 @@ export function getCharacterState(health) {
   return 'fading'
 }
 
-/** Human-readable health label */
+// Always-encouraging human-readable label
 export function getHealthLabel(health) {
-  if (health >= 85) return 'Radiant'
+  if (health >= 85) return 'Radiant ✨'
   if (health >= 65) return 'Thriving'
-  if (health >= 50) return 'Doing well'
-  if (health >= 35) return 'A little quiet'
+  if (health >= 50) return 'Growing'
+  if (health >= 35) return 'Needs a nudge'
   if (health >= 20) return 'Needs care'
-  if (health >= 8)  return 'Struggling'
-  return 'Fading...'
+  if (health >= 8)  return 'Come back'
+  return 'Waiting for you'
 }
 
-/** Health bar colour — interpolates purple → amber */
+// Health bar colour — purple (high) → amber (mid) → soft grey (low)
 export function getHealthColor(health) {
   if (health >= 50) return '#5B4FCF'
   if (health >= 20) return '#E8A838'
-  return '#C0392B'
+  return '#9CA3AF'
 }

@@ -97,6 +97,10 @@ export default function PostComposer({ onClose, defaultCommunityId = null }) {
       type:    postType,
     })
     if (passage) params.set('passage', passage)
+    if (visibility === 'community') {
+      const cName = joined.find(c => c.id === communityId)?.name
+      if (cName) params.set('community', cName)
+    }
     return `${base}?${params}`
   }
 

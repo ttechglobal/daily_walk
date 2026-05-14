@@ -8,12 +8,12 @@ import { useRouter } from 'next/navigation'
 import { motion, AnimatePresence } from 'framer-motion'
 import {
   Plus, BookOpen, Search, Users, Map,
-  MoreVertical, Gauge, BookMarked, ChevronRight, Trash2, RotateCcw
+  MoreVertical, Gauge, BookMarked, ChevronRight, Trash2, RotateCcw, Share2
 } from 'lucide-react'
 import { useLocalStorage } from '../../hooks/useLocalStorage'
 import { ToastContainer, showToast } from '../../components/Toast'
 import { useCheckin as _useCheckin } from '../../hooks/useCheckin'
-import { getPlanProgress, fmtDate, markDayComplete, writePlans, readPlans } from '../../lib/plans'
+import { getPlanProgress, fmtDate, markDayComplete, writePlans, readPlans, buildPlanShareUrl } from '../../lib/plans'
 import { todayStr } from '../../lib/constants'
 
 const TYPE_STYLES = {
@@ -149,6 +149,12 @@ function ActivePlanCard({ plan, onMarkDone, onDelete, idx }) {
             className="absolute right-8 bg-white rounded-2xl shadow-xl border border-gray-100 z-20 overflow-hidden min-w-[160px]"
           >
             {[
+              { label: 'Share plan',   onClick: async () => {
+                const url = buildPlanShareUrl(plan)
+                if (navigator.share) { try { await navigator.share({ title: plan.name, url }) } catch {} }
+                else { await navigator.clipboard.writeText(url).catch(()=>{}); showToast('Link copied!') }
+                setMenu(false)
+              }},
               { label: 'Pause plan',   onClick: () => { showToast('Plan paused'); setMenu(false) } },
               { label: 'Adjust pace',  onClick: () => { showToast('Pace adjustment coming soon'); setMenu(false) } },
               { label: 'Delete plan',  onClick: () => { onDelete(plan.id); setMenu(false) }, red: true },
@@ -307,7 +313,7 @@ export default function PlansPage() {
       <AnimatePresence mode="wait">
         {tab === 'active' && (
           <motion.div key="active" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
-            className="flex flex-col gap-4 px-4 py-4 pb-28 relative">
+            className="flex flex-col gap-4 px-4 py-4 pb-4 relative">
             {active.length === 0 ? (
               <EmptyState />
             ) : (
@@ -320,7 +326,7 @@ export default function PlansPage() {
         )}
         {tab === 'completed' && (
           <motion.div key="completed" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
-            className="flex flex-col gap-4 px-4 py-4 pb-28">
+            className="flex flex-col gap-4 px-4 py-4 pb-4">
             {completed.length === 0 ? (
               <div className="flex flex-col items-center gap-3 text-center py-12">
                 <BookMarked size={36} style={{ color: '#E8E5E0' }} />

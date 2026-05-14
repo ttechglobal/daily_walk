@@ -123,3 +123,23 @@ export async function prefetchPlanPassages(days) {
   )
   await Promise.allSettled(promises)
 }
+
+/** Build a shareable URL for a plan with first-3-days preview */
+export function buildPlanShareUrl(plan) {
+  const { createShareUrl } = require('./config')
+  const slug   = plan.name.toLowerCase().replace(/[^a-z0-9]/g,'-').replace(/-+/g,'-').slice(0,30)
+  const id     = plan.id.slice(-6)
+  const base   = createShareUrl(`/plan/${slug}-${id}`)
+  const params = new URLSearchParams({
+    name: plan.name,
+    desc: plan.description || '',
+    days: String(plan.totalDays),
+    type: plan.type || 'topic',
+  })
+  // Encode first 3 days for preview
+  const preview = (plan.days || []).slice(0, 3).map(d => ({
+    day: d.day, passage: d.passage, title: d.title, focus: d.focus || ''
+  }))
+  if (preview.length) params.set('preview', encodeURIComponent(JSON.stringify(preview)))
+  return `${base}?${params}`
+}

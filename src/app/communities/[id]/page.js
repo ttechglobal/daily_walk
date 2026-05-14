@@ -12,6 +12,7 @@ import {
   UserPlus, LogOut, Copy, Settings2
 } from 'lucide-react'
 import { useLocalStorage } from '../../../hooks/useLocalStorage'
+import { createShareUrl } from '../../../lib/config'
 import { useCheckin } from '../../../hooks/useCheckin'
 import { ToastContainer, showToast } from '../../../components/Toast'
 import {
@@ -44,7 +45,7 @@ function timeAgo(iso) {
 // ── Invite share sheet ──
 function InviteSheet({ community, onClose }) {
   const catColor  = CATEGORY_COLORS[community.category] || '#5B4FCF'
-  const inviteUrl = `https://dailywalk.app/join/${community.inviteCode || 'INVITE'}`
+  const inviteUrl = createShareUrl(`/join/${community.inviteCode || 'INVITE'}`)
   const shareText = `Join me on Daily Walk in "${community.name}"! ${inviteUrl}`
 
   async function handleCopy() {
@@ -547,7 +548,7 @@ export default function CommunityDetailPage() {
       </div>
 
       {/* Feed */}
-      <div className="flex flex-col gap-3 px-4 py-4 pb-28">
+      <div className="flex flex-col gap-3 px-4 py-4 pb-4">
         {posts.length===0 ? (
           <div className="bg-white rounded-[20px] p-10 flex flex-col items-center gap-3 text-center"
             style={{ boxShadow:'0 2px 12px rgba(0,0,0,0.07)' }}>

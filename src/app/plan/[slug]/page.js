@@ -1,39 +1,27 @@
-// ── /plan/[slug] — Shareable plan preview ──
+// ── /plan/[slug] — Plan share landing page ──
+// OG meta from query params. Shows plan name, description, 3-day preview, CTA.
 
-import PlanPreviewClient from './PlanPreviewClient'
-
-export async function generateMetadata({ params, searchParams }) {
-  const name = searchParams.name || 'A Bible Reading Plan'
-  const desc = searchParams.desc || 'A personal Bible study plan on Daily Walk'
-  const days = searchParams.days || '30'
+export async function generateMetadata({ params, searchParams: sp }) {
+  const name = sp.name || 'A Bible Reading Plan'
+  const desc = sp.desc || 'A personal Bible study plan on Daily Walk'
+  const days = sp.days || '30'
+  const appUrl = process.env.NEXT_PUBLIC_APP_URL || 'https://dailywalkapp.vercel.app'
 
   return {
-    title:       `${name} — Daily Walk`,
-    description: `${days}-day Bible reading plan: ${desc}`,
+    title: `${name} — Daily Walk`,
+    description: `${days}-day plan: ${desc}`,
     openGraph: {
       title:       `${name} — Daily Walk`,
-      description: `${days}-day plan · ${desc}`,
-      url:         `https://dailywalk.app/plan/${params.slug}`,
+      description: `${days}-day Bible reading plan · ${desc}`,
+      url:         `${appUrl}/plan/${params.slug}`,
       siteName:    'Daily Walk',
-      images: [{
-        url:    `https://dailywalk.app/og/plan?name=${encodeURIComponent(name)}&days=${days}`,
-        width:  1200,
-        height: 630,
-        alt:    `${name} on Daily Walk`,
-      }],
+      images: [{ url:`${appUrl}/og-image.png`, width:1200, height:630 }],
     },
-    twitter: { card:'summary_large_image', title:`${name} — Daily Walk`, description: `${days}-day plan` },
+    twitter: { card:'summary_large_image', title:`${name} — Daily Walk`, description: desc },
   }
 }
 
-export default function PlanPreviewPage({ params, searchParams }) {
-  return (
-    <PlanPreviewClient
-      slug={params.slug}
-      name={searchParams.name || 'Reading Plan'}
-      desc={searchParams.desc || ''}
-      days={searchParams.days || '30'}
-      type={searchParams.type || 'topic'}
-    />
-  )
+import PlanLandingClient from './PlanLandingClient'
+export default function PlanPage({ params, searchParams: sp }) {
+  return <PlanLandingClient slug={params.slug} sp={sp} />
 }

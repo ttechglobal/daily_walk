@@ -179,6 +179,7 @@ function TodaysReadingCard({ plans, setPlans, onCheckin }) {
   const todayDay   = todayPlan.days?.[todayPlan.currentDay - 1]
   const pct        = getPlanProgress(todayPlan)
   const isComplete = isPlanCompletedToday(todayPlan)
+  const dayUrl     = `/plans/${todayPlan.id}/day/${todayPlan.currentDay}`
 
   function handleDone() {
     markDayComplete(todayPlan.id, todayPlan.currentDay, '')
@@ -188,22 +189,25 @@ function TodaysReadingCard({ plans, setPlans, onCheckin }) {
   }
 
   return (
-    <motion.div initial={{ opacity:0, y:10 }} animate={{ opacity:1, y:0 }} transition={{ delay:0.35 }}
-      className="bg-white rounded-card shadow-card p-5">
-      <div className="flex items-center justify-between mb-3">
-        <div className="flex items-center gap-2">
-          <BookMarked size={16} style={{ color:'#5B4FCF' }} />
-          <span className="font-bold text-[14px]" style={{ color:'#1A1A2E' }}>Today's Reading</span>
+    <motion.div initial={{ opacity:0, y:10 }} animate={{ opacity:1, y:0 }} transition={{ delay:0.35 }}>
+      {/* Entire card taps to open today's reading */}
+      <button onClick={() => router.push(dayUrl)}
+        className="w-full bg-white rounded-card shadow-card p-5 text-left cursor-pointer active:scale-[0.98] transition-all block"
+        style={{ WebkitTapHighlightColor:'transparent' }}>
+        <div className="flex items-center justify-between mb-3">
+          <div className="flex items-center gap-2">
+            <BookMarked size={16} style={{ color:'#5B4FCF' }} />
+            <span className="font-bold text-[14px]" style={{ color:'#1A1A2E' }}>Today's Reading</span>
+          </div>
+          <span className="text-[12px] font-semibold" style={{ color:'#9CA3AF' }}>Open →</span>
         </div>
-        <Link href="/plans" className="text-[12px] font-semibold" style={{ color:'#9CA3AF' }}>All Plans →</Link>
-      </div>
 
-      <p className="font-display font-semibold text-[16px]" style={{ color:'#1A1A2E' }}>{todayPlan.name}</p>
-      {todayDay && (
-        <p className="text-[13px] mt-0.5" style={{ color:'#6B7280' }}>
-          Day {todayPlan.currentDay} · {todayDay.passage}
-        </p>
-      )}
+        <p className="font-display font-semibold text-[16px]" style={{ color:'#1A1A2E' }}>{todayPlan.name}</p>
+        {todayDay && (
+          <p className="text-[13px] mt-0.5" style={{ color:'#6B7280' }}>
+            Day {todayPlan.currentDay} · {todayDay.passage}
+          </p>
+        )}
 
       {/* Progress bar */}
       <div className="mt-3 mb-4">
@@ -243,10 +247,11 @@ function TodaysReadingCard({ plans, setPlans, onCheckin }) {
       )}
 
       {otherCount > 0 && (
-        <Link href="/plans" className="block text-center text-[12px] font-semibold mt-2" style={{ color:'#9CA3AF' }}>
+        <p className="block text-center text-[12px] font-semibold mt-2" style={{ color:'#9CA3AF' }}>
           + {otherCount} more {otherCount===1?'plan':'plans'}
-        </Link>
+        </p>
       )}
+      </button>
     </motion.div>
   )
 }
@@ -351,7 +356,7 @@ export default function HomeScreen() {
         </div>
 
         {/* Open Bible */}
-        <div className="px-4 mt-4 mb-24">
+        <div className="px-4 mt-4 mb-4">
           <motion.div initial={{ opacity:0, y:8 }} animate={{ opacity:1, y:0 }} transition={{ delay:0.4 }}>
             <Link href="/read"
               className="flex items-center gap-4 rounded-card p-5 active:scale-[0.98] hover:opacity-95 transition-all"

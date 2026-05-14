@@ -305,7 +305,7 @@ export default function CommunitiesPage() {
       <AnimatePresence mode="wait">
         {tab==='foryou'&&(
           <motion.div key="foryou" initial={{opacity:0}} animate={{opacity:1}} exit={{opacity:0}}
-            className="flex flex-col gap-3 px-4 py-4 pb-28">
+            className="flex flex-col gap-3 px-4 py-4 pb-4">
             {feedPosts.length===0?(
               <motion.div initial={{opacity:0,scale:0.96}} animate={{opacity:1,scale:1}}
                 className="flex flex-col items-center gap-4 text-center py-16">

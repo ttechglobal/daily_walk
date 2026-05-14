@@ -1,65 +1,40 @@
-// ── /post/[slug] — Shareable post preview page ──
-// Server component so metadata (OG tags) render at SSR time.
-// When shared on WhatsApp/Twitter the OG image + title previews immediately.
-// The page itself shows post content + "Open in Daily Walk" CTA.
+// ── /post/[slug] — Post share landing page ──
+// Server component generates OG meta from query params.
+// Client shows post content + community + "Join Daily Walk" CTA.
 
-import { notFound } from 'next/navigation'
-import PostPreviewClient from './PostPreviewClient'
+import { APP_URL } from '../../../lib/config'
 
-function findPost(slug, allPosts) {
-  // slug is last 8 chars of post id
-  return allPosts.find(p => p.id.slice(-8) === slug || p.id === slug) || null
-}
+export async function generateMetadata({ params, searchParams: sp }) {
+  const author    = sp.author  || 'Someone'
+  const content   = sp.content || 'Shared from Daily Walk'
+  const community = sp.community || ''
+  const desc = community
+    ? `Posted in ${community} · ${content.slice(0, 140)}`
+    : content.slice(0, 160)
 
-// OG metadata — reads from URL params since we don't have a DB on server
-export async function generateMetadata({ params, searchParams }) {
-  const { slug } = params
-  // Title + description passed as query params from share URL builder
-  const title   = searchParams.title   || 'A post on Daily Walk'
-  const content = searchParams.content || 'Shared from the Daily Walk app'
-  const author  = searchParams.author  || 'Someone'
+  const appUrl = process.env.NEXT_PUBLIC_APP_URL || 'https://dailywalkapp.vercel.app'
 
   return {
-    title:       `${author} on Daily Walk`,
-    description: content.slice(0, 200),
+    title: `${author} on Daily Walk`,
+    description: desc,
     openGraph: {
       title:       `${author} on Daily Walk`,
-      description: content.slice(0, 200),
-      url:         `https://dailywalk.app/post/${slug}`,
+      description: desc,
+      url:         `${appUrl}/post/${params.slug}`,
       siteName:    'Daily Walk',
       type:        'article',
-      images: [
-        {
-          url:    `https://dailywalk.app/og/post?content=${encodeURIComponent(content.slice(0,120))}&author=${encodeURIComponent(author)}`,
-          width:  1200,
-          height: 630,
-          alt:    `${author} on Daily Walk`,
-        }
-      ],
+      images: [{ url:`${appUrl}/og-image.png`, width:1200, height:630, alt:'Daily Walk' }],
     },
-    twitter: {
-      card:        'summary_large_image',
-      title:       `${author} on Daily Walk`,
-      description: content.slice(0, 200),
-    },
+    twitter: { card:'summary', title:`${author} on Daily Walk`, description: desc },
   }
 }
 
-export default function PostPreviewPage({ params, searchParams }) {
-  const { slug }   = params
-  const content    = searchParams.content || ''
-  const author     = searchParams.author  || 'Someone'
-  const passage    = searchParams.passage || ''
-  const type       = searchParams.type    || 'general'
+export default function PostPage({ params, searchParams: sp }) {
+  return <PostLanding slug={params.slug} sp={sp} />
+}
 
-  // PostPreviewClient handles the interactive UI
-  return (
-    <PostPreviewClient
-      slug={slug}
-      content={content}
-      author={author}
-      passage={passage}
-      type={type}
-    />
-  )
+// ── Inline client component ──
+import PostLandingClient from './PostLandingClient'
+function PostLanding({ slug, sp }) {
+  return <PostLandingClient slug={slug} sp={sp} />
 }

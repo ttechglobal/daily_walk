@@ -77,6 +77,10 @@ export default function CheckinScreen() {
 
     const isFirstEver = !(checkins?.length > 0)
     const didSave = performCheckin({ passage, reflection, challengeId })
+    // Trigger install prompt after first check-in
+    if (isFirstEver && typeof window !== 'undefined') {
+      window.dispatchEvent(new CustomEvent('dw-first-checkin'))
+    }
 
     if (didSave) {
       // Part 5: streak milestone notifications
