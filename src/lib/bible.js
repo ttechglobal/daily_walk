@@ -122,14 +122,16 @@ export async function getPassage(ref, versionId = DEFAULT_VERSION_ID) {
   }
 
   try {
-    const passage = await client.getPassage(versionId, usfm, 'text')
+    // Use HTML format — it embeds verse numbers as <span class="yv-vlbl">N</span>
+    // which lets us split cleanly into individual numbered verses
+    const passage = await client.getPassage(versionId, usfm, 'html')
+    const verses  = parseHtmlToVerses(passage.content || '')
     const result  = {
       usfm,
       versionId,
       reference: passage.reference || ref,
       content:   passage.content   || '',
-      // Split content into verse-like chunks for display
-      verses:    parseContentToVerses(passage.content || '', usfm),
+      verses,
     }
     writeCache(key, result)
     return { ...result, fromCache: false }
@@ -147,25 +149,51 @@ export async function getChapter(versionId, book, chapter) {
 }
 
 // ─────────────────────────────────────────────
-//  Parse plain text content into verse objects
-//  The SDK returns plain text — we split on verse numbers
+//  Parse HTML content into verse objects
+//  HTML format: <span class="yv-vlbl">1</span>In the beginning...
+//  We extract verse numbers and their following text.
 // ─────────────────────────────────────────────
 
-function parseContentToVerses(content, usfm) {
-  if (!content) return []
+function parseHtmlToVerses(html) {
+  if (!html) return []
 
-  // Try to split on verse numbers: "1 In the beginning... 2 And the..."
-  const parts = content.split(/(?=\b\d{1,3}\s+[A-Z])/)
-  if (parts.length > 1) {
-    return parts.map(p => {
-      const m = p.match(/^(\d+)\s+(.+)/)
-      if (m) return { number: parseInt(m[1]), text: m[2].trim() }
-      return { number: 0, text: p.trim() }
-    }).filter(v => v.text)
+  // Server-side safe: use regex since DOMParser isn't available in Node
+  const verses = []
+
+  // Split on verse label spans: <span class="yv-vlbl">N</span>
+  // Each split gives us one verse worth of content
+  const parts = html.split(/<span[^>]*class="[^"]*yv-vlbl[^"]*"[^>]*>/)
+
+  for (let i = 1; i < parts.length; i++) {
+    const part = parts[i]
+    // Extract verse number from the closing </span> boundary
+    const numMatch = part.match(/^(\d+)<\/span>(.*)$/s)
+    if (!numMatch) continue
+
+    const verseNum = parseInt(numMatch[1])
+    const rawText  = numMatch[2]
+
+    // Strip all remaining HTML tags and clean up whitespace
+    const text = rawText
+      .replace(/<[^>]+>/g, ' ')   // remove tags
+      .replace(/&nbsp;/g, ' ')
+      .replace(/&amp;/g, '&')
+      .replace(/&lt;/g, '<')
+      .replace(/&gt;/g, '>')
+      .replace(/&quot;/g, '"')
+      .replace(/\s+/g, ' ')       // collapse whitespace
+      .trim()
+
+    if (text) verses.push({ number: verseNum, text })
   }
 
-  // Fallback: return as single block
-  return [{ number: 0, text: content.trim() }]
+  // Fallback: strip all HTML and return as one block
+  if (verses.length === 0 && html) {
+    const plain = html.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim()
+    if (plain) verses.push({ number: 0, text: plain })
+  }
+
+  return verses
 }
 
 // ─────────────────────────────────────────────

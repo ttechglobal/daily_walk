@@ -45,7 +45,8 @@ function ConfettiBurst() {
 
 // ── Character image — real SVG with styled placeholder fallback ──
 function CharacterImage({ character, state }) {
-  const [failed, setFailed] = useState(false)
+  const [failed, setFailed]           = useState(false)
+  const [imageLoaded, setImageLoaded] = useState(false)
   const src   = getImagePath(character.id, state)
   const color = character.accentColor
 
@@ -59,50 +60,57 @@ function CharacterImage({ character, state }) {
   }
 
   return (
-    // motion.div handles the float/sway animation only — does NOT touch opacity
     <motion.div animate={anim[state] || {}}
       style={{ width:200, height:220, position:'relative', flexShrink:0 }}>
 
-      {/* Placeholder — always visible underneath */}
-      <div className="absolute inset-0 flex flex-col items-center justify-center rounded-[24px]"
-        style={{ background:`${color}14`, border:`1.5px solid ${color}28` }}>
-        <div className="absolute inset-0 rounded-[24px]"
-          style={{ background:`radial-gradient(circle at 50% 38%, ${color}22, transparent 68%)` }} />
-        <span className="relative z-10"
-          style={{ fontSize:60, lineHeight:1, marginBottom:10,
-                   filter:'drop-shadow(0 2px 8px rgba(0,0,0,0.12))' }}>
-          {character.placeholderEmoji}
-        </span>
-        <p className="relative z-10 font-display font-bold text-[15px]" style={{ color }}>
-          {character.name}
-        </p>
-        <p className="relative z-10 text-[11px] mt-0.5 font-semibold" style={{ color:`${color}65` }}>
-          {character.title}
-        </p>
-      </div>
+      {/* The styled frame — ALWAYS visible, gives the image its shape and shadow */}
+      <div className="absolute inset-0 rounded-[24px] overflow-hidden"
+        style={{
+          background: `${color}14`,
+          border: `1.5px solid ${color}38`,
+          boxShadow: `0 4px 24px ${color}22, inset 0 0 0 1px ${color}12`,
+        }}>
+        {/* Radial glow inside frame */}
+        <div className="absolute inset-0"
+          style={{ background:`radial-gradient(circle at 50% 30%, ${color}20, transparent 70%)` }} />
 
-      {/* Real image — in a plain div so Framer Motion never touches its opacity */}
-      {!failed && (
-        <div style={{ position:'absolute', inset:0 }}>
+        {/* Real image inside the frame — fills it when loaded */}
+        {!failed && (
           <img
             key={src}
             src={src}
             alt={`${character.name} — ${state}`}
             onLoad={e => {
               e.currentTarget.style.opacity = '1'
+              setImageLoaded(true)
             }}
             onError={() => setFailed(true)}
             style={{
-              width: '100%',
-              height: '100%',
+              position: 'absolute', inset: 0,
+              width: '100%', height: '100%',
               objectFit: 'contain',
               opacity: 0,
               transition: 'opacity 0.4s ease',
-              display: 'block',
             }}
           />
-        </div>
-      )}
+        )}
+
+        {/* Emoji placeholder — shown inside the frame until image loads */}
+        {!imageLoaded && (
+          <div className="absolute inset-0 flex flex-col items-center justify-center">
+            <span style={{ fontSize:60, lineHeight:1, marginBottom:8,
+                           filter:'drop-shadow(0 2px 8px rgba(0,0,0,0.10))', position:'relative', zIndex:1 }}>
+              {character.placeholderEmoji}
+            </span>
+            <p className="font-display font-bold text-[14px]" style={{ color, position:'relative', zIndex:1 }}>
+              {character.name}
+            </p>
+            <p className="text-[10px] mt-0.5 font-semibold" style={{ color:`${color}70`, position:'relative', zIndex:1 }}>
+              {character.title}
+            </p>
+          </div>
+        )}
+      </div>
 
     </motion.div>
   )
