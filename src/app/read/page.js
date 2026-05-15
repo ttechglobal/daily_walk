@@ -6,10 +6,10 @@
 import { useState, useEffect, useCallback, Suspense } from 'react'
 import { useRouter, useSearchParams } from 'next/navigation'
 import { motion, AnimatePresence } from 'framer-motion'
-import { ChevronLeft, ChevronRight, ArrowLeft, WifiOff, Download, Check, X, Sun, Moon, Plus, Minus } from 'lucide-react'
+import { ChevronLeft, ChevronRight, ArrowLeft, WifiOff, Download, Check, X, Sun, Moon, Plus, Minus, Wifi } from 'lucide-react'
 import { useOnlineStatus } from '../../hooks/useOnlineStatus'
 import {
-  getChapter, getAvailableVersions,
+  getChapter, getAvailableVersions, getAllVersions,
   getPreferredVersionId, setPreferredVersionId,
   isVersionDownloaded, downloadVersion,
   seedDefaultVersionIfNeeded,
@@ -118,14 +118,7 @@ function VersionSheet({ currentId, onSelect, onClose, darkMode }) {
     setDlStatus(status)
 
     getAvailableVersions().then(list => {
-      // Filter to allowed only
-      const filtered = list.filter(v => ALLOWED.includes(v.abbreviation))
-      // Ensure all ALLOWED are represented even if API doesn't return them
-      const result = ALLOWED.map(abbr => {
-        const found = filtered.find(v => v.abbreviation === abbr)
-        return found || { id: abbr, abbreviation: abbr, name: TRANSLATION_NAMES[abbr] || abbr }
-      })
-      setVersions(result)
+      setVersions(list)
       setLoading(false)
     })
   }, [])
@@ -197,7 +190,16 @@ function VersionSheet({ currentId, onSelect, onClose, darkMode }) {
                     </div>
                   )}
                 </div>
-                {!isDone && !isRunning && (
+                {/* API.Bible + bible-api.com = online only, no download */}
+                {(v.source === 'apibible' || v.source === 'bibleapi') && (
+                  <span className="flex items-center gap-1 text-[10px] font-bold px-2 py-1 rounded-full flex-shrink-0"
+                    style={{ background: darkMode?'#1A2A3A':'#EBF5FB', color:'#5B9BD5' }}>
+                    <Wifi size={9} />
+                    Online
+                  </span>
+                )}
+                {/* YouVersion = downloadable */}
+                {v.source === 'youversion' && !isDone && !isRunning && (
                   <button onClick={e => handleDownload(e, v)}
                     className="text-[12px] font-bold px-3 py-1.5 rounded-full flex-shrink-0 active:scale-95"
                     style={{ color:'#5B4FCF', background:darkMode?'#2A2A3E':'#EDE9FF' }}>
@@ -304,7 +306,7 @@ function BibleReaderInner() {
   const [book,       setBook]      = useState(searchParams?.get('book')    || 'John')
   const [chapter,    setChapter]   = useState(parseInt(searchParams?.get('chapter') || '1'))
   const [versionId,  setVersionId] = useState(DEFAULT_VERSION_ID)
-  const [versionAbbr,setAbbr]      = useState('BSB')
+  const [versionAbbr,setAbbr]      = useState('NIV11')
   const [data,       setData]      = useState(null)
   const [loading,    setLoading]   = useState(true)
   const [error,      setError]     = useState(null)
@@ -386,19 +388,24 @@ function BibleReaderInner() {
           <ArrowLeft size={18} />
         </button>
 
-        {/* Book + Chapter — prominent, takes most space */}
+        {/* Book + Chapter — grows to fill space, no truncation for long names */}
         <button onClick={() => setShowNav(true)}
-          className="flex-1 flex items-center justify-center gap-2 py-2.5 rounded-2xl shadow-sm active:opacity-80"
-          style={{ background:bg2, minWidth:0 }}>
-          <span className="font-bold text-[17px] truncate" style={{ color:text }}>{book}</span>
-          <span className="font-bold text-[17px]" style={{ color:'#5B4FCF' }}>{chapter}</span>
+          className="flex items-center justify-center gap-2 py-2.5 rounded-2xl shadow-sm active:opacity-80"
+          style={{ background:bg2, flex:'1 1 0', minWidth:0, overflow:'hidden' }}>
+          <span className="font-bold text-[16px] leading-tight text-center px-1"
+            style={{ color:text, wordBreak:'break-word', overflowWrap:'anywhere', maxWidth:'100%' }}>
+            {book}
+          </span>
+          <span className="font-bold text-[16px] flex-shrink-0" style={{ color:'#5B4FCF' }}>
+            {chapter}
+          </span>
         </button>
 
-        {/* Version — polished pill */}
+        {/* Version — compact fixed width */}
         <button onClick={() => setShowVer(true)}
-          className="flex items-center justify-center px-4 py-2.5 rounded-2xl shadow-sm active:opacity-80"
-          style={{ background:'#5B4FCF', minWidth:64 }}>
-          <span className="font-bold text-[14px] text-white">{versionAbbr}</span>
+          className="flex items-center justify-center px-3 py-2.5 rounded-2xl shadow-sm active:opacity-80 flex-shrink-0"
+          style={{ background:'#5B4FCF', minWidth:56 }}>
+          <span className="font-bold text-[13px] text-white">{versionAbbr}</span>
         </button>
 
         {/* Font settings */}

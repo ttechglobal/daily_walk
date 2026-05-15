@@ -26,6 +26,7 @@ export default function BottomNav() {
 
   return (
     <nav className="
+      md:hidden
       fixed bottom-0 left-1/2 -translate-x-1/2
       w-full max-w-[420px]
       bg-white/95 backdrop-blur-md

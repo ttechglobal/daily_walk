@@ -1,9 +1,9 @@
 'use client'
+import React from 'react'
 
 // ── Home screen — sticky header, single FAB, proper plan completion ──
 
 import { useMemo, useState, useRef } from 'react'
-import Image from 'next/image'
 import Link from 'next/link'
 import { useRouter } from 'next/navigation'
 import { motion, AnimatePresence, useScroll, useTransform } from 'framer-motion'
@@ -259,6 +259,61 @@ function TodaysReadingCard({ plans, setPlans, onCheckin }) {
 // ─────────────────────────────────────────────
 //  Main home screen
 // ─────────────────────────────────────────────
+
+// ── HeroCard — verse of the day with image and graceful fallback ──
+const FALLBACK_GRADIENTS = [
+  'linear-gradient(135deg, #5B4FCF 0%, #3D3190 100%)',  // Sunday — purple
+  'linear-gradient(135deg, #4A7C5F 0%, #2D5A40 100%)',  // Monday — sage
+  'linear-gradient(135deg, #E8A838 0%, #B07000 100%)',  // Tuesday — amber
+  'linear-gradient(135deg, #5B4FCF 0%, #7C3AED 100%)',  // Wednesday — violet
+  'linear-gradient(135deg, #4A7C5F 0%, #5B4FCF 100%)',  // Thursday — sage-purple
+  'linear-gradient(135deg, #1A1A2E 0%, #5B4FCF 100%)',  // Friday — dark purple
+  'linear-gradient(135deg, #E8A838 0%, #5B4FCF 100%)',  // Saturday — amber-purple
+]
+
+function HeroCard({ heroImg, verse }) {
+  const [imgFailed, setImgFailed] = React.useState(false)
+  const dayOfWeek = new Date().getDay()
+  const gradient  = FALLBACK_GRADIENTS[dayOfWeek]
+
+  return (
+    <div className="relative overflow-hidden" style={{ height:200, borderRadius:20 }}>
+      {/* Fallback gradient — always rendered underneath */}
+      <div className="absolute inset-0" style={{ background: gradient }} />
+
+      {/* Real image on top — hidden until loaded, removed on error */}
+      {!imgFailed && (
+        <img
+          src={heroImg}
+          alt="Daily devotion"
+          onLoad={e => { e.currentTarget.style.opacity = '1' }}
+          onError={() => setImgFailed(true)}
+          style={{
+            position: 'absolute', inset: 0,
+            width: '100%', height: '100%',
+            objectFit: 'cover',
+            opacity: 0,
+            transition: 'opacity 0.5s ease',
+          }}
+        />
+      )}
+
+      {/* Gradient overlay for text legibility */}
+      <div className="absolute inset-0"
+        style={{ background:'linear-gradient(to bottom,rgba(0,0,0,0.0),rgba(0,0,0,0.60))' }} />
+
+      {/* Verse text */}
+      <div className="absolute bottom-0 left-0 right-0 px-4 pb-4">
+        <p className="text-white/70 text-[12px] font-semibold mb-1">{fmtToday()}</p>
+        <p className="font-display italic text-white text-[14px] leading-snug line-clamp-2">
+          "{verse.text}"
+        </p>
+        <p className="text-white/60 text-[11px] mt-1">— {verse.ref}</p>
+      </div>
+    </div>
+  )
+}
+
 export default function HomeScreen() {
   const router = useRouter()
   const scrollRef = useRef(null)
@@ -322,17 +377,10 @@ export default function HomeScreen() {
       {/* ── SCROLLABLE CONTENT ── */}
       <div ref={scrollRef} className="flex-1 overflow-y-auto" style={{ background:'#FAF8F5' }}>
 
-        {/* Hero image */}
+        {/* Hero image — graceful fallback to gradient if image fails */}
         <div className="px-4 pt-4">
-          <motion.div initial={{ opacity:0, y:8 }} animate={{ opacity:1, y:0 }} transition={{ duration:0.4 }}
-            className="relative overflow-hidden" style={{ height:200, borderRadius:20 }}>
-            <Image src={heroImg} alt="Daily devotion" fill priority className="object-cover" sizes="420px" />
-            <div className="absolute inset-0" style={{ background:'linear-gradient(to bottom,rgba(0,0,0,0.05),rgba(0,0,0,0.55))' }} />
-            <div className="absolute bottom-0 left-0 right-0 px-4 pb-4">
-              <p className="text-white/70 text-[12px] font-semibold mb-1">{fmtToday()}</p>
-              <p className="font-display italic text-white text-[14px] leading-snug line-clamp-2">"{verse.text}"</p>
-              <p className="text-white/60 text-[11px] mt-1">— {verse.ref}</p>
-            </div>
+          <motion.div initial={{ opacity:0, y:8 }} animate={{ opacity:1, y:0 }} transition={{ duration:0.4 }}>
+            <HeroCard heroImg={heroImg} verse={verse} />
           </motion.div>
         </div>
 

@@ -114,3 +114,56 @@
     rgba(26,26,46,0.88) 100%
   );
 }
+
+/* ── Responsive layout helpers ── */
+
+/* Desktop: content gets more breathing room */
+@media (min-width: 768px) {
+  /* Communities feed — two-column on desktop */
+  .communities-layout {
+    display: grid;
+    grid-template-columns: 1fr 360px;
+    gap: 24px;
+    max-width: 1100px;
+    margin: 0 auto;
+    padding: 24px;
+  }
+
+  /* Home dashboard — cards in wider columns */
+  .home-grid {
+    max-width: 720px;
+    margin: 0 auto;
+    padding: 0 24px;
+  }
+
+  /* Bible reader — comfortable reading width */
+  .bible-reader-content {
+    max-width: 680px;
+    margin: 0 auto;
+    padding: 0 32px;
+  }
+
+  /* Hide mobile-only elements */
+  .mobile-only { display: none !important; }
+  
+  /* Show desktop-only elements */
+  .desktop-only { display: block !important; }
+}
+
+@media (max-width: 767px) {
+  .desktop-only { display: none !important; }
+  .mobile-only  { display: block !important; }
+  
+  /* Reset communities layout to single column on mobile */
+  .communities-layout {
+    display: block;
+    padding: 0;
+  }
+}
+
+/* Tablet — middle ground */
+@media (min-width: 768px) and (max-width: 1023px) {
+  .communities-layout {
+    grid-template-columns: 1fr;
+  }
+}

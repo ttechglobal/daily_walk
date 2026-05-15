@@ -1,21 +1,24 @@
 // ── lib/supabase/client.js ──
-// Returns null if env vars not set — app falls back to localStorage silently.
+// Uses @supabase/supabase-js directly — no auth-helpers dependency needed.
+// Returns null gracefully if env vars not set — app falls back to localStorage.
 
 let _client = null
 
 export function createClient() {
   const url = process.env.NEXT_PUBLIC_SUPABASE_URL
   const key = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY
-  if (!url || !key || url === 'your_supabase_project_url') return null
 
+  if (!url || !key || url === 'your_supabase_project_url') return null
   if (_client) return _client
 
   try {
-    // Dynamic import so bundle doesn't break when package not installed
-    const { createClientComponentClient } = require('@supabase/auth-helpers-nextjs')
-    _client = createClientComponentClient({ supabaseUrl: url, supabaseKey: key })
+    const { createClient: create } = require('@supabase/supabase-js')
+    _client = create(url, key, {
+      auth: { persistSession: true, autoRefreshToken: true },
+    })
     return _client
   } catch {
+    // Package not installed — app runs in localStorage-only mode
     return null
   }
 }

@@ -4,7 +4,7 @@
 // For You: global posts + community posts, merged feed.
 // Compose FAB opens PostComposer anywhere.
 
-import { useState, useMemo } from 'react'
+import { useState, useEffect, useMemo } from 'react'
 import Link from 'next/link'
 import { useRouter } from 'next/navigation'
 import { motion, AnimatePresence } from 'framer-motion'
@@ -15,7 +15,8 @@ import {
 import { useLocalStorage } from '../../hooks/useLocalStorage'
 import { ToastContainer, showToast } from '../../components/Toast'
 import PostComposer from '../../components/PostComposer'
-import { SEED_COMMUNITIES, COMMUNITY_CATEGORIES, initials, avatarColor } from '../../lib/constants'
+import { COMMUNITY_CATEGORIES, initials, avatarColor } from '../../lib/constants'
+import { getCommunities, joinCommunity, leaveCommunity } from '../../lib/supabase/communities'
 
 const CATEGORY_COLORS = {
   'Bible Study':'#5B4FCF','Prayer':'#4A7C5F','Mental Health':'#7CB9E8',
@@ -56,7 +57,7 @@ function LinkPreviewCard({ preview }) {
 
 function FeedPostCard({ post, community, isGlobal, onLike, onShare, idx }) {
   const router   = useRouter()
-  const isLiked  = post.likedBy?.includes('local_user')
+  const isLiked  = post.likedBy?.includes((() => { try { const u=localStorage.getItem('dw_user'); return u?JSON.parse(u)?.id||'local_user':'local_user' } catch { return 'local_user' } })())
   const likes    = post.likedBy?.length || 0
   const comments = post.comments?.length || 0
   const typeColor = { general:'#888780', reading:'#5B4FCF', prayer:'#4A7C5F', encouragement:'#E8A838' }[post.type] || '#888780'
@@ -148,7 +149,7 @@ function MyCommunityCard({ community, idx }) {
           <CatBadge category={community.category} />
         </div>
         <div className="flex items-center gap-1.5" style={{ color:'#6B7280' }}>
-          <Users size={11} /><span className="text-[12px]">{community.memberCount+1}</span>
+          <Users size={11} /><span className="text-[12px]">{(community.member_count || 0) + 1}</span>
           <span className="text-[11px]">· Active recently</span>
         </div>
       </div>
@@ -170,14 +171,14 @@ function ExploreCard({ community, onToggleJoin, idx }) {
         <div className="flex items-center gap-2 my-1">
           <CatBadge category={community.category} />
           <div className="flex items-center gap-1" style={{ color:'#6B7280' }}>
-            <Users size={11} /><span className="text-[12px]">{community.memberCount+(community.joined?1:0)}</span>
+            <Users size={11} /><span className="text-[12px]">{(community.member_count || 0) + (community.joined ? 1 : 0)}</span>
           </div>
         </div>
         <p className="text-[13px] leading-relaxed line-clamp-2" style={{ color:'#6B7280' }}>{community.description}</p>
       </button>
       <div className="px-4 pb-4 flex items-center justify-between">
         <div className="flex items-center">
-          {[0,1,2].slice(0,Math.min(3,community.memberCount)).map(i=>(
+          {[0,1,2].slice(0,Math.min(3, community.member_count || 0)).map(i=>(
             <div key={i} className="w-6 h-6 rounded-full border-2 border-white flex items-center justify-center text-white text-[9px] font-bold"
               style={{ background:color, marginLeft:i>0?-8:0 }}>{community.name[0]}</div>
           ))}
@@ -199,14 +200,19 @@ export default function CommunitiesPage() {
   const [filter,       setFilter]       = useState('All')
   const [query,        setQuery]        = useState('')
   const [compose,      setCompose]      = useState(false)
-  const [communities,  setCommunities]  = useLocalStorage('dw_communities', SEED_COMMUNITIES)
+  const [communities,  setCommunities]  = useLocalStorage('dw_communities_v2', [])
+
+  // Load communities from Supabase on mount (merges with localStorage)
+  useEffect(() => {
+    getCommunities().then(list => { setCommunities(list || []) }).catch(() => null)
+  }, [])
   const [globalPosts,  setGlobalPosts]  = useLocalStorage('dw_global_posts', [])
-  const [, , hydrated]                  = useLocalStorage('dw_communities', SEED_COMMUNITIES)
+  const [, , hydrated]                  = useLocalStorage('dw_communities_v2', [])
 
   function toggleJoin(id) {
     const c = (communities||[]).find(x=>x.id===id)
     setCommunities(prev=>(prev||[]).map(x=>
-      x.id!==id?x:{...x,joined:!x.joined,memberCount:x.memberCount+(x.joined?-1:1)}
+      x.id!==id?x:{...x,joined:!x.joined,member_count:(x.member_count || 0) + (x.joined ? -1 : 1)}
     ))
     showToast(c?.joined?'Left community':'Joined!')
   }
@@ -214,8 +220,8 @@ export default function CommunitiesPage() {
   function handleLikeGlobal(post) {
     setGlobalPosts(prev=>(prev||[]).map(p=>{
       if(p.id!==post.id) return p
-      const liked = p.likedBy?.includes('local_user')
-      return {...p,likedBy:liked?(p.likedBy||[]).filter(x=>x!=='local_user'):[...(p.likedBy||[]),'local_user']}
+      const liked = p.likedBy?.includes((() => { try { const u=localStorage.getItem('dw_user'); return u?JSON.parse(u)?.id||'local_user':'local_user' } catch { return 'local_user' } })())
+      return {...p,likedBy:liked?(p.likedBy||[]).filter(x=>x!==(() => { try { const u=localStorage.getItem('dw_user'); return u?JSON.parse(u)?.id||'local_user':'local_user' } catch { return 'local_user' } })()):[...(p.likedBy||[]),(() => { try { const u=localStorage.getItem('dw_user'); return u?JSON.parse(u)?.id||'local_user':'local_user' } catch { return 'local_user' } })()]}
     }))
   }
 
@@ -224,8 +230,8 @@ export default function CommunitiesPage() {
       if(c.id!==post.communityId) return c
       return {...c,posts:(c.posts||[]).map(p=>{
         if(p.id!==post.id) return p
-        const liked = p.likedBy?.includes('local_user')
-        return {...p,likedBy:liked?(p.likedBy||[]).filter(x=>x!=='local_user'):[...(p.likedBy||[]),'local_user']}
+        const liked = p.likedBy?.includes((() => { try { const u=localStorage.getItem('dw_user'); return u?JSON.parse(u)?.id||'local_user':'local_user' } catch { return 'local_user' } })())
+        return {...p,likedBy:liked?(p.likedBy||[]).filter(x=>x!==(() => { try { const u=localStorage.getItem('dw_user'); return u?JSON.parse(u)?.id||'local_user':'local_user' } catch { return 'local_user' } })()):[...(p.likedBy||[]),(() => { try { const u=localStorage.getItem('dw_user'); return u?JSON.parse(u)?.id||'local_user':'local_user' } catch { return 'local_user' } })()]}
       })}
     }))
   }
@@ -265,11 +271,21 @@ export default function CommunitiesPage() {
           <h1 className="font-display text-[24px] font-bold" style={{ color:'#1A1A2E' }}>Communities</h1>
           <p className="text-[13px] mt-0.5" style={{ color:'#6B7280' }}>Grow together with other believers</p>
         </div>
-        <Link href="/communities/create"
+        <button
+          onClick={() => {
+            // Community creation requires an account
+            const user = (() => { try { const u=localStorage.getItem('dw_user'); return u?JSON.parse(u):null } catch { return null } })()
+            if (!user?.name) {
+              showToast('You need an account to create a community. Sign up coming soon! 🙏')
+              return
+            }
+            // Accounts can create communities — but show coming soon for now
+            showToast('Community creation is coming very soon! 🙏')
+          }}
           className="flex items-center gap-1.5 px-3 py-2 rounded-full text-[13px] font-bold border-2 hover:opacity-80 transition-all"
           style={{ borderColor:'#5B4FCF', color:'#5B4FCF' }}>
           <Plus size={13} /> Create
-        </Link>
+                </button>
       </div>
 
       {/* Search */}

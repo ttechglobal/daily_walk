@@ -1,47 +1,59 @@
-// ── lib/bible.js — YouVersion Platform SDK ──
-// SDK: @youversion/platform-core
-// Docs: https://developers.youversion.com/sdks/javascript
+// ── lib/bible.js ──
 //
-// Setup: npm install @youversion/platform-core
-// Get App Key: https://platform.youversion.com/
-// Add to .env.local: NEXT_PUBLIC_YOUVERSION_APP_KEY=your_key
+// SOURCE MAP (exactly as specified):
 //
-// Version IDs are numeric. KJV = 1, BSB = 3034.
-// All passages cached in localStorage permanently (offline-first).
-// USFM format: "JHN.3.16", "GEN.1", "ROM.8.28-39"
-
-export const DEFAULT_VERSION_ID = 3034     // BSB — Berean Standard Bible (confirmed available)
-export const DEFAULT_VERSION_NAME = 'BSB'
-// NOTE: Change to 1 for KJV if your YouVersion app has KJV licensed
+//  YouVersion SDK  — NIV11, ESV, BSB, NASB, CSB, AMP  (downloadable + offline)
+//  API.Bible       — NLT, Good News (GNT), The Message (MSG)  (online only, no download)
+//  bible-api.com   — KJV  (free, no download button, but fetches are cached)
+//
+// DEFAULT: NIV11 (YouVersion id:111) — downloadable, works offline
+// FALLBACK: if any version fails → silently retry with NIV11
 
 // ─────────────────────────────────────────────
-//  SDK client — lazy initialised once
+//  Version registry
 // ─────────────────────────────────────────────
 
-let _bibleClient = null
+export const DEFAULT_VERSION_ID   = 111    // NIV11 — YouVersion
+export const DEFAULT_ABBR         = 'NIV11'
 
-function getBibleClient() {
-  if (_bibleClient) return _bibleClient
-  try {
-    const { ApiClient, BibleClient } = require('@youversion/platform-core')
-    const appKey = process.env.NEXT_PUBLIC_YOUVERSION_APP_KEY
-    if (!appKey) throw new Error('NEXT_PUBLIC_YOUVERSION_APP_KEY not set')
-    const apiClient = new ApiClient({ appKey })
-    _bibleClient = new BibleClient(apiClient)
-    return _bibleClient
-  } catch (e) {
-    console.warn('[Bible] SDK init failed:', e.message)
-    return null
-  }
+// YouVersion — downloadable, fully offline after download
+export const YV_VERSIONS = [
+  { id: 111,  abbreviation: 'NIV11', name: 'New International Version',      downloadable: true,  source: 'youversion' },
+  { id: 59,   abbreviation: 'ESV',   name: 'English Standard Version',       downloadable: true,  source: 'youversion' },
+  { id: 3034, abbreviation: 'BSB',   name: 'Berean Standard Bible',          downloadable: true,  source: 'youversion' },
+  { id: 37,   abbreviation: 'NASB',  name: 'New American Standard Bible',    downloadable: true,  source: 'youversion' },
+  { id: 2016, abbreviation: 'CSB',   name: 'Christian Standard Bible',       downloadable: true,  source: 'youversion' },
+  { id: 1,    abbreviation: 'AMP',   name: 'Amplified Bible',                downloadable: true,  source: 'youversion' },
+]
+
+// API.Bible — online only, no download button
+// Correct Bible IDs from API.Bible docs
+export const APIBIBLE_VERSIONS = [
+  { bibleId: '65eec8e0b60e656b-01', abbreviation: 'NLT',  name: 'New Living Translation',  downloadable: false, source: 'apibible' },
+  { bibleId: '9879dbb7cfe39e4d-01', abbreviation: 'GNT',  name: 'Good News Translation',   downloadable: false, source: 'apibible' },
+  { bibleId: '65eec8e0b60e656b-02', abbreviation: 'MSG',  name: 'The Message',             downloadable: false, source: 'apibible' },
+]
+
+// bible-api.com — free REST, no download, but every fetch is cached
+export const BIBLEAPI_VERSIONS = [
+  { abbreviation: 'KJV', name: 'King James Version', downloadable: false, source: 'bibleapi' },
+]
+
+// Combined list for the UI
+export function getAllVersions() {
+  return [
+    ...YV_VERSIONS,
+    ...APIBIBLE_VERSIONS,
+    ...BIBLEAPI_VERSIONS,
+  ]
 }
 
 // ─────────────────────────────────────────────
-//  Cache helpers
+//  Cache
 // ─────────────────────────────────────────────
 
-const passageCacheKey = (versionId, usfm) =>
-  `dw_yv_${versionId}_${usfm.replace(/\./g, '_')}`
-const versionsCacheKey = () => 'dw_yv_versions'
+const cacheKey = (source, id, usfm) =>
+  `dw_b_${source}_${String(id).replace(/[^a-zA-Z0-9_-]/g,'_')}_${usfm.replace(/\./g,'_')}`
 
 function readCache(key) {
   try { const v = localStorage.getItem(key); return v ? JSON.parse(v) : null } catch { return null }
@@ -51,219 +63,320 @@ function writeCache(key, value) {
 }
 
 // ─────────────────────────────────────────────
-//  Passage → USFM converter
-//  "John 3:16"     → "JHN.3.16"
-//  "Romans 8:28-39" → "ROM.8.28-39"
-//  "Genesis 1"     → "GEN.1"
+//  Resolve version from id or abbreviation
+// ─────────────────────────────────────────────
+
+function resolveVersion(v) {
+  // Numeric → YouVersion
+  if (typeof v === 'number' || (typeof v === 'string' && /^\d+$/.test(v))) {
+    const id  = parseInt(v)
+    const yv  = YV_VERSIONS.find(x => x.id === id)
+    return { type: 'youversion', id, abbreviation: yv?.abbreviation || 'NIV11' }
+  }
+
+  // Check API.Bible
+  const apib = APIBIBLE_VERSIONS.find(x => x.abbreviation === v || x.bibleId === v)
+  if (apib) return { type: 'apibible', bibleId: apib.bibleId, abbreviation: apib.abbreviation }
+
+  // Check bible-api.com
+  const bapi = BIBLEAPI_VERSIONS.find(x => x.abbreviation === v)
+  if (bapi) return { type: 'bibleapi', abbreviation: bapi.abbreviation }
+
+  // Check YouVersion by abbreviation
+  const yv = YV_VERSIONS.find(x => x.abbreviation === v)
+  if (yv) return { type: 'youversion', id: yv.id, abbreviation: yv.abbreviation }
+
+  // Default
+  return { type: 'youversion', id: DEFAULT_VERSION_ID, abbreviation: DEFAULT_ABBR }
+}
+
+// ─────────────────────────────────────────────
+//  YouVersion SDK
+// ─────────────────────────────────────────────
+
+let _yvClient = null
+function getYVClient() {
+  if (_yvClient) return _yvClient
+  try {
+    const { ApiClient, BibleClient } = require('@youversion/platform-core')
+    const appKey = process.env.NEXT_PUBLIC_YOUVERSION_APP_KEY
+    if (!appKey) return null
+    _yvClient = new BibleClient(new ApiClient({ appKey }))
+    return _yvClient
+  } catch { return null }
+}
+
+async function fetchYouVersion(id, usfm) {
+  const client = getYVClient()
+  if (!client) throw new Error('YouVersion SDK not configured')
+  const passage = await client.getPassage(id, usfm, 'html')
+  const verses  = parseYVHtml(passage.content || '')
+  return {
+    usfm,
+    reference: passage.reference || usfm,
+    content:   passage.content   || '',
+    verses,
+    source: 'youversion',
+  }
+}
+
+function parseYVHtml(html) {
+  if (!html) return []
+  const verses = []
+  const parts  = html.split(/<span[^>]*class="[^"]*yv-vlbl[^"]*"[^>]*>/)
+  for (let i = 1; i < parts.length; i++) {
+    const m = parts[i].match(/^(\d+)<\/span>(.*)$/s)
+    if (!m) continue
+    const text = m[2]
+      .replace(/<[^>]+>/g, ' ')
+      .replace(/&nbsp;/g, ' ').replace(/&amp;/g, '&')
+      .replace(/&lt;/g, '<').replace(/&gt;/g, '>')
+      .replace(/&quot;/g, '"').replace(/\s+/g, ' ').trim()
+    if (text) verses.push({ number: parseInt(m[1]), text })
+  }
+  if (!verses.length && html) {
+    const plain = html.replace(/<[^>]+>/g,' ').replace(/\s+/g,' ').trim()
+    if (plain) verses.push({ number: 0, text: plain })
+  }
+  return verses
+}
+
+// ─────────────────────────────────────────────
+//  API.Bible (rest.api.bible)
+// ─────────────────────────────────────────────
+
+const APIBIBLE_BASE = 'https://rest.api.bible/v1'
+
+function getApiBibleKey() {
+  return process.env.NEXT_PUBLIC_API_BIBLE_KEY || null
+}
+
+async function fetchApiBible(bibleId, usfm) {
+  const apiKey = getApiBibleKey()
+  if (!apiKey) throw new Error('API.Bible key not set (NEXT_PUBLIC_API_BIBLE_KEY)')
+
+  // Chapters: GEN.1  →  /chapters/GEN.1
+  // Passages: GEN.1.1-5  →  /passages/GEN.1.1-GEN.1.5
+  const isChapter = /^[A-Z0-9]+\.\d+$/.test(usfm)
+  const endpoint  = isChapter
+    ? `${APIBIBLE_BASE}/bibles/${bibleId}/chapters/${usfm}`
+    : `${APIBIBLE_BASE}/bibles/${bibleId}/passages/${usfm}`
+
+  const params = new URLSearchParams({
+    'content-type':            'text',
+    'include-notes':           'false',
+    'include-titles':          'false',
+    'include-chapter-numbers': 'false',
+    'include-verse-numbers':   'true',
+    'include-verse-spans':     'false',
+  })
+
+  const res = await fetch(`${endpoint}?${params}`, {
+    headers: { 'api-key': apiKey },
+  })
+
+  if (!res.ok) throw new Error(`API.Bible HTTP ${res.status}`)
+
+  const data    = await res.json()
+  const content = data?.data?.content   || ''
+  const ref     = data?.data?.reference || usfm
+  const verses  = parseApiBibleText(content)
+
+  return { usfm, reference: ref, content, verses, source: 'apibible' }
+}
+
+function parseApiBibleText(text) {
+  if (!text) return []
+  const clean = text.replace(/¶\s*/g, '').trim()
+  const parts = clean.split(/(?=\[\d+\])/)
+  if (parts.length > 1) {
+    return parts
+      .map(p => {
+        const m = p.match(/^\[(\d+)\]\s*(.+)$/s)
+        return m ? { number: parseInt(m[1]), text: m[2].replace(/\n+/g,' ').trim() } : null
+      })
+      .filter(Boolean)
+  }
+  return clean ? [{ number: 0, text: clean }] : []
+}
+
+// ─────────────────────────────────────────────
+//  bible-api.com (KJV only)
+// ─────────────────────────────────────────────
+
+async function fetchBibleApiCom(usfm) {
+  // bible-api.com uses format like "john+3:16" or "john+3"
+  // Convert USFM to their format
+  const ref = usfmToHumanRef(usfm)
+  const url = `https://bible-api.com/${encodeURIComponent(ref)}?translation=kjv`
+  const res = await fetch(url)
+  if (!res.ok) throw new Error(`bible-api.com HTTP ${res.status}`)
+  const data   = await res.json()
+  const verses = (data.verses || []).map(v => ({
+    number: v.verse,
+    text:   v.text.trim().replace(/\n/g,' '),
+  }))
+  // If no verse breakdown, use the whole text
+  if (!verses.length && data.text) {
+    verses.push({ number: 0, text: data.text.trim() })
+  }
+  return {
+    usfm,
+    reference: data.reference || ref,
+    content:   data.text || '',
+    verses,
+    source: 'bibleapi',
+  }
+}
+
+// Convert "JHN.3" → "john 3" or "JHN.3.16" → "john 3:16"
+function usfmToHumanRef(usfm) {
+  const parts  = usfm.split('.')
+  const bookId = parts[0]
+  const book   = BIBLE_BOOK_LIST.find(b => b.id === bookId)
+  const name   = book?.name || bookId
+  if (parts.length === 2) return `${name} ${parts[1]}`
+  if (parts.length >= 3)  return `${name} ${parts[1]}:${parts[2]}`
+  return name
+}
+
+// ─────────────────────────────────────────────
+//  getPassage — main entry point
+// ─────────────────────────────────────────────
+
+export async function getPassage(ref, versionIdOrAbbr = DEFAULT_VERSION_ID) {
+  const usfm    = passageToUsfm(ref)
+  if (!usfm) return { error: `Cannot parse: "${ref}"`, verses: [], content: '' }
+
+  const version = resolveVersion(versionIdOrAbbr)
+  const ck      = cacheKey(version.type, version.bibleId || version.id || version.abbreviation, usfm)
+
+  // Cache first — never hit API twice for the same passage
+  const cached = readCache(ck)
+  if (cached) return { ...cached, fromCache: true }
+
+  // Offline — only YouVersion downloaded versions work
+  const offline = typeof navigator !== 'undefined' && !navigator.onLine
+  if (offline) return { error: 'offline', offline: true, verses: [], content: '' }
+
+  // Fetch
+  try {
+    let result
+    if (version.type === 'youversion') {
+      result = await fetchYouVersion(version.id, usfm)
+    } else if (version.type === 'apibible') {
+      result = await fetchApiBible(version.bibleId, usfm)
+    } else {
+      result = await fetchBibleApiCom(usfm)
+    }
+    writeCache(ck, result)
+    return { ...result, fromCache: false }
+  } catch (err) {
+    // Fallback → NIV11 (YouVersion), unless that's already what we tried
+    const isAlreadyDefault = version.type === 'youversion' && version.id === DEFAULT_VERSION_ID
+    if (!isAlreadyDefault) {
+      try {
+        const defaultCk = cacheKey('youversion', DEFAULT_VERSION_ID, usfm)
+        const defaultCached = readCache(defaultCk)
+        if (defaultCached) return { ...defaultCached, fromCache: true, isFallback: true }
+        const fallback = await fetchYouVersion(DEFAULT_VERSION_ID, usfm)
+        writeCache(defaultCk, fallback)
+        return { ...fallback, fromCache: false, isFallback: true }
+      } catch { /* fallback also failed */ }
+    }
+    return { error: err.message, offline: false, verses: [], content: '' }
+  }
+}
+
+export async function getChapter(versionIdOrAbbr, book, chapter) {
+  const bookId = normaliseBookId(book)
+  const usfm   = `${bookId}.${chapter}`
+  return getPassage(usfm, versionIdOrAbbr)
+}
+
+// ─────────────────────────────────────────────
+//  USFM converter
 // ─────────────────────────────────────────────
 
 export function passageToUsfm(ref) {
   if (!ref) return null
   ref = ref.trim()
-
-  // Already looks like USFM (e.g. "JHN.3.16")
-  if (/^[A-Z0-9]{2,3}\.\d/.test(ref)) return ref
-
+  if (/^[A-Z0-9]{2,3}\.\d/.test(ref)) return ref  // already USFM
   const m = ref.match(/^(.+?)\s+(\d+)(?::(\d+)(?:-(\d+))?)?$/)
   if (!m) return null
-
   const bookId = normaliseBookId(m[1].trim())
   if (!bookId) return null
-
   const ch = m[2]
-  if (!m[3]) return `${bookId}.${ch}`                         // whole chapter
-  if (!m[4]) return `${bookId}.${ch}.${m[3]}`                 // single verse
-  return `${bookId}.${ch}.${m[3]}-${m[4]}`                    // verse range
+  if (!m[3]) return `${bookId}.${ch}`
+  if (!m[4]) return `${bookId}.${ch}.${m[3]}`
+  return `${bookId}.${ch}.${m[3]}-${m[4]}`
 }
 
 // ─────────────────────────────────────────────
-//  Get English versions
+//  Versions list for picker
 // ─────────────────────────────────────────────
 
 export async function getAvailableVersions() {
-  const cached = readCache(versionsCacheKey())
-  if (cached) return cached
+  return getAllVersions()
+}
 
-  const client = getBibleClient()
-  if (!client) return FALLBACK_VERSIONS
+// ─────────────────────────────────────────────
+//  Download (YouVersion only)
+// ─────────────────────────────────────────────
 
-  try {
-    const res     = await client.getVersions('en*')
-    const versions = (res.data || []).map(v => ({
-      id:           v.id,
-      name:         v.title,
-      abbreviation: v.abbreviation,
-      copyright:    v.copyright || '',
-    }))
-    writeCache(versionsCacheKey(), versions)
-    return versions
-  } catch (e) {
-    console.warn('[Bible] getVersions failed:', e.message)
-    return FALLBACK_VERSIONS
+export async function downloadVersion(versionIdOrAbbr, onProgress) {
+  const version = resolveVersion(versionIdOrAbbr)
+  if (version.type !== 'youversion') {
+    throw new Error('Only YouVersion translations can be downloaded for offline use')
   }
-}
-
-// ─────────────────────────────────────────────
-//  Get passage — cache first, then SDK
-// ─────────────────────────────────────────────
-
-export async function getPassage(ref, versionId = DEFAULT_VERSION_ID) {
-  const usfm = passageToUsfm(ref)
-  if (!usfm) return { error: `Cannot parse passage: "${ref}"`, verses: [], content: '' }
-
-  const key    = passageCacheKey(versionId, usfm)
-  const cached = readCache(key)
-  if (cached) return { ...cached, fromCache: true }
-
-  const client = getBibleClient()
-  if (!client) {
-    const isOffline = typeof navigator !== 'undefined' && !navigator.onLine
-    return { error: 'YouVersion SDK not initialised — check NEXT_PUBLIC_YOUVERSION_APP_KEY', offline: isOffline, verses: [], content: '' }
+  const { startBackgroundDownload } = await import('./downloadManager')
+  async function fetchChapter(vid, bookName, chapter) {
+    const bookId = normaliseBookId(bookName)
+    const usfm   = `${bookId}.${chapter}`
+    const ck     = cacheKey('youversion', vid, usfm)
+    if (readCache(ck)) return
+    await getPassage(usfm, vid)
   }
-
-  try {
-    // Use HTML format — it embeds verse numbers as <span class="yv-vlbl">N</span>
-    // which lets us split cleanly into individual numbered verses
-    const passage = await client.getPassage(versionId, usfm, 'html')
-    const verses  = parseHtmlToVerses(passage.content || '')
-    const result  = {
-      usfm,
-      versionId,
-      reference: passage.reference || ref,
-      content:   passage.content   || '',
-      verses,
-    }
-    writeCache(key, result)
-    return { ...result, fromCache: false }
-  } catch (err) {
-    const isOffline = typeof navigator !== 'undefined' && !navigator.onLine
-    return { error: err.message, offline: isOffline, verses: [], content: '' }
-  }
-}
-
-// Get a full chapter
-export async function getChapter(versionId, book, chapter) {
-  const bookId = normaliseBookId(book)
-  const usfm   = `${bookId}.${chapter}`
-  return getPassage(usfm, versionId)
-}
-
-// ─────────────────────────────────────────────
-//  Parse HTML content into verse objects
-//  HTML format: <span class="yv-vlbl">1</span>In the beginning...
-//  We extract verse numbers and their following text.
-// ─────────────────────────────────────────────
-
-function parseHtmlToVerses(html) {
-  if (!html) return []
-
-  // Server-side safe: use regex since DOMParser isn't available in Node
-  const verses = []
-
-  // Split on verse label spans: <span class="yv-vlbl">N</span>
-  // Each split gives us one verse worth of content
-  const parts = html.split(/<span[^>]*class="[^"]*yv-vlbl[^"]*"[^>]*>/)
-
-  for (let i = 1; i < parts.length; i++) {
-    const part = parts[i]
-    // Extract verse number from the closing </span> boundary
-    const numMatch = part.match(/^(\d+)<\/span>(.*)$/s)
-    if (!numMatch) continue
-
-    const verseNum = parseInt(numMatch[1])
-    const rawText  = numMatch[2]
-
-    // Strip all remaining HTML tags and clean up whitespace
-    const text = rawText
-      .replace(/<[^>]+>/g, ' ')   // remove tags
-      .replace(/&nbsp;/g, ' ')
-      .replace(/&amp;/g, '&')
-      .replace(/&lt;/g, '<')
-      .replace(/&gt;/g, '>')
-      .replace(/&quot;/g, '"')
-      .replace(/\s+/g, ' ')       // collapse whitespace
-      .trim()
-
-    if (text) verses.push({ number: verseNum, text })
-  }
-
-  // Fallback: strip all HTML and return as one block
-  if (verses.length === 0 && html) {
-    const plain = html.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim()
-    if (plain) verses.push({ number: 0, text: plain })
-  }
-
-  return verses
-}
-
-// ─────────────────────────────────────────────
-//  Pre-fetch passages for a plan (offline prep)
-// ─────────────────────────────────────────────
-
-export async function prefetchPlanPassages(days, versionId = DEFAULT_VERSION_ID) {
-  for (const day of (days || [])) {
-    if (!day.passage) continue
-    const usfm = passageToUsfm(day.passage)
-    if (!usfm) continue
-    const key = passageCacheKey(versionId, usfm)
-    if (readCache(key)) continue  // already cached
-    await getPassage(day.passage, versionId).catch(() => null)
-    await new Promise(r => setTimeout(r, 80))
-  }
-}
-
-// ─────────────────────────────────────────────
-//  Cache utilities
-// ─────────────────────────────────────────────
-
-export function isPassageCached(ref, versionId = DEFAULT_VERSION_ID) {
-  const usfm = passageToUsfm(ref)
-  if (!usfm) return false
-  return !!readCache(passageCacheKey(versionId, usfm))
-}
-
-export function getCacheStats(versionId = DEFAULT_VERSION_ID) {
-  try {
-    const prefix = `dw_yv_${versionId}_`
-    let count = 0
-    for (let i = 0; i < localStorage.length; i++) {
-      if (localStorage.key(i)?.startsWith(prefix)) count++
-    }
-    return count
-  } catch { return 0 }
-}
-
-// Download full version for offline — seeds all 1,189 chapters
-export async function downloadVersion(versionId, onProgress) {
-  const total = BIBLE_BOOK_LIST.reduce((s, b) => s + b.chapters, 0)
-  let done = 0
-  for (const book of BIBLE_BOOK_LIST) {
-    for (let ch = 1; ch <= book.chapters; ch++) {
-      const usfm = `${book.id}.${ch}`
-      const key  = passageCacheKey(versionId, usfm)
-      if (!readCache(key)) {
-        await getPassage(usfm, versionId).catch(() => null)
+  if (onProgress) {
+    const total = BIBLE_BOOK_LIST.reduce((s, b) => s + b.chapters, 0)
+    let done = 0
+    for (const book of BIBLE_BOOK_LIST) {
+      for (let ch = 1; ch <= book.chapters; ch++) {
+        await fetchChapter(version.id, book.name, ch).catch(() => null)
+        done++
+        onProgress(done, total, book.name, ch)
+        await new Promise(r => setTimeout(r, 1200))
       }
-      done++
-      if (onProgress) onProgress(done, total, book.name, ch)
-      await new Promise(r => setTimeout(r, 80))
     }
+    writeCache(`dw_dl_${version.id}`, true)
+  } else {
+    await startBackgroundDownload(version.id, fetchChapter, BIBLE_BOOK_LIST)
   }
-  writeCache(`dw_yv_downloaded_${versionId}`, true)
 }
 
-export function isVersionDownloaded(versionId) {
-  return !!readCache(`dw_yv_downloaded_${versionId}`)
+export function isVersionDownloaded(versionIdOrAbbr) {
+  const version = resolveVersion(versionIdOrAbbr)
+  if (version.type !== 'youversion') return false
+  try { return localStorage.getItem(`dw_dl_${version.id}`) === 'true' } catch { return false }
 }
 
-// Seed KJV on first open (background)
-export async function seedDefaultVersionIfNeeded() {
-  if (typeof window === 'undefined') return
-  if (readCache('dw_yv_seeded')) return
-  writeCache('dw_yv_seeded', true)
-  downloadVersion(DEFAULT_VERSION_ID).catch(() => null)
+export function isPassageCached(ref, versionIdOrAbbr = DEFAULT_VERSION_ID) {
+  const usfm    = passageToUsfm(ref)
+  if (!usfm) return false
+  const version = resolveVersion(versionIdOrAbbr)
+  const ck      = cacheKey(version.type, version.bibleId || version.id || version.abbreviation, usfm)
+  return !!readCache(ck)
 }
-// Legacy alias
+
+export async function prefetchPlanPassages(days, versionIdOrAbbr = DEFAULT_VERSION_ID) {
+  for (const day of (days || [])) {
+    if (!day.passage || isPassageCached(day.passage, versionIdOrAbbr)) continue
+    await getPassage(day.passage, versionIdOrAbbr).catch(() => null)
+    await new Promise(r => setTimeout(r, 500))
+  }
+}
+
+export async function seedDefaultVersionIfNeeded() {}
 export const seedKJVIfNeeded = seedDefaultVersionIfNeeded
 
 // ─────────────────────────────────────────────
@@ -273,53 +386,35 @@ export const seedKJVIfNeeded = seedDefaultVersionIfNeeded
 export function getPreferredVersionId() {
   try {
     const v = localStorage.getItem('dw_yv_version')
-    return v ? parseInt(v) : DEFAULT_VERSION_ID
+    if (!v) return DEFAULT_VERSION_ID
+    if (/^\d+$/.test(v)) return parseInt(v)
+    return v
   } catch { return DEFAULT_VERSION_ID }
 }
 export function setPreferredVersionId(id) {
   try { localStorage.setItem('dw_yv_version', String(id)) } catch {}
 }
-
-// Legacy string-based helpers used elsewhere
 export function getPreferredTranslation() {
   const id = getPreferredVersionId()
-  const found = FALLBACK_VERSIONS.find(v => v.id === id)
-  return found?.abbreviation || 'KJV'
+  if (typeof id === 'number') return YV_VERSIONS.find(v => v.id === id)?.abbreviation || DEFAULT_ABBR
+  return id
 }
-export function setPreferredTranslation(abbr) {
-  const found = FALLBACK_VERSIONS.find(v => v.abbreviation === abbr)
-  if (found) setPreferredVersionId(found.id)
-}
+export function setPreferredTranslation(abbr) { setPreferredVersionId(abbr) }
 
 // ─────────────────────────────────────────────
-//  Book list with USFM IDs
+//  Book normalisation
 // ─────────────────────────────────────────────
 
 function normaliseBookId(book) {
   if (!book) return null
   const found = BIBLE_BOOK_LIST.find(b =>
-    b.name.toLowerCase()   === book.toLowerCase() ||
-    b.id.toLowerCase()     === book.toLowerCase() ||
-    b.abbr?.toLowerCase()  === book.toLowerCase()
+    b.name.toLowerCase()  === book.toLowerCase() ||
+    b.id.toLowerCase()    === book.toLowerCase() ||
+    b.abbr?.toLowerCase() === book.toLowerCase()
   )
   if (found) return found.id
-  // Handle numbered books like "1 Cor" → "1CO"
-  const short = book.replace(/\s+/g, '').toUpperCase().slice(0, 3)
-  return BIBLE_BOOK_LIST.find(b => b.id === short)?.id || null
+  return BIBLE_BOOK_LIST.find(b => b.id === book.replace(/\s+/g,'').toUpperCase().slice(0,3))?.id || null
 }
-
-// Fallback English versions shown when offline/SDK not ready
-const FALLBACK_VERSIONS = [
-  { id:3034, abbreviation:'BSB',  name:'Berean Standard Bible' },
-  { id:1,    abbreviation:'KJV',  name:'King James Version' },
-  { id:111,  abbreviation:'NIV',  name:'New International Version' },
-  { id:59,   abbreviation:'ESV',  name:'English Standard Version' },
-  { id:116,  abbreviation:'NLT',  name:'New Living Translation' },
-  { id:100,  abbreviation:'MSG',  name:'The Message' },
-  { id:2016, abbreviation:'CSB',  name:'Christian Standard Bible' },
-  { id:406,  abbreviation:'NCV',  name:'New Century Version' },
-  { id:37,   abbreviation:'NASB', name:'New American Standard Bible' },
-]
 
 export const BIBLE_BOOK_LIST = [
   {id:'GEN',name:'Genesis',abbr:'Gen',chapters:50},      {id:'EXO',name:'Exodus',abbr:'Exo',chapters:40},
@@ -356,3 +451,15 @@ export const BIBLE_BOOK_LIST = [
   {id:'2JN',name:'2 John',abbr:'2Jn',chapters:1},        {id:'3JN',name:'3 John',abbr:'3Jn',chapters:1},
   {id:'JUD',name:'Jude',abbr:'Jud',chapters:1},          {id:'REV',name:'Revelation',abbr:'Rev',chapters:22},
 ]
+
+export function getCacheStats(versionIdOrAbbr = DEFAULT_VERSION_ID) {
+  try {
+    const v      = resolveVersion(versionIdOrAbbr)
+    const prefix = `dw_b_${v.type}_${String(v.bibleId || v.id || v.abbreviation).replace(/[^a-zA-Z0-9_-]/g,'_')}_`
+    let count = 0
+    for (let i = 0; i < localStorage.length; i++) {
+      if (localStorage.key(i)?.startsWith(prefix)) count++
+    }
+    return count
+  } catch { return 0 }
+}

@@ -543,6 +543,11 @@ function ProfileView({ user, streak, checkins }) {
             <NotificationSettings />
             <div className="mt-4 flex flex-col gap-3 mb-6">
               <p className="text-[11px] font-bold uppercase tracking-widest" style={{ color:'#9CA3AF' }}>More</p>
+              {/* Notification settings */}
+              <div className="mb-4">
+                <p className="text-[11px] font-bold uppercase tracking-wider mb-3 px-1" style={{ color:'#9CA3AF' }}>Notifications</p>
+                <NotificationSettingsPanel />
+              </div>
               <SettingsRow icon={Shield} iconBg="bg-sage-light"   label="Privacy"          sub="Who can see your posts"   onClick={() => showToast('Coming soon')} />
               <SettingsRow icon={Info}   iconBg="bg-purple-light" label="About Daily Walk"                                onClick={() => showToast('v1.0.0 — Built with ♥')} />
               <SettingsRow icon={LogOut} iconBg="bg-red-50"       label="Sign out & reset"  danger                        onClick={handleSignOut} />

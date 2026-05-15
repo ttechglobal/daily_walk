@@ -1,247 +1,216 @@
 'use client'
 
-// ── NotificationSettings — Part 4 ──
-// Mounted inside Profile page. Full notification settings UI.
+// ── NotificationSettings — full notification preferences panel ──
+// Embedded in Profile settings tab.
 
 import { useState, useEffect } from 'react'
-import { Bell, Clock, Flame, Trophy, Send } from 'lucide-react'
+import { motion } from 'framer-motion'
+import { Bell, BellOff, Clock, Flame, Users, MessageCircle, BarChart2, ChevronRight } from 'lucide-react'
 import {
-  requestNotificationPermission,
-  sendLocalNotification,
-  scheduleDailyReminder,
-  clearDailyReminder,
-  getNotificationSettings,
-  saveNotificationSettings,
+  getPermissionStatus, requestNotificationPermission,
+  getNotificationSettings, saveNotificationSettings,
+  scheduleDailyReminder, clearDailyReminder, initNotifications,
 } from '../lib/notifications'
 
-// ── Reusable toggle switch ──
-function Toggle({ on, onToggle, disabled = false }) {
+function Toggle({ value, onChange }) {
   return (
-    <button
-      onClick={disabled ? undefined : onToggle}
-      aria-checked={on}
-      role="switch"
-      disabled={disabled}
-      className={`relative w-11 h-6 rounded-full transition-colors flex-shrink-0 ${
-        on ? 'bg-purple' : 'bg-gray-200'
-      } ${disabled ? 'opacity-40 cursor-not-allowed' : 'cursor-pointer'}`}
-      style={{ background: on ? '#5B4FCF' : undefined }}
-    >
-      <span
-        className={`absolute top-0.5 left-0.5 w-5 h-5 bg-white rounded-full shadow transition-transform ${
-          on ? 'translate-x-5' : 'translate-x-0'
-        }`}
-      />
+    <button onClick={() => onChange(!value)}
+      className="relative flex-shrink-0 transition-all active:scale-95"
+      style={{ width:44, height:26 }}>
+      <div className="absolute inset-0 rounded-full transition-all"
+        style={{ background: value ? '#5B4FCF' : '#D1D5DB' }} />
+      <div className="absolute top-0.5 transition-all rounded-full bg-white shadow-sm"
+        style={{ width:22, height:22, left: value ? 20 : 2 }} />
     </button>
   )
 }
 
-// ── Time picker row ──
-function TimePicker({ hour, minute, ampm, onChange }) {
-  const hours   = Array.from({ length: 12 }, (_, i) => i + 1)
-  const minutes = [0, 15, 30, 45]
-
-  const selectClass = "border border-gray-200 rounded-[10px] px-3 py-2 text-[13px] font-semibold text-text-primary bg-white focus:outline-none focus:border-purple transition-colors"
-
+function SettingRow({ icon: Icon, iconColor, iconBg, label, sub, value, onChange }) {
   return (
-    <div className="flex items-center gap-2 mt-2">
-      {/* Hour */}
-      <select value={hour} onChange={e => onChange({ hour: Number(e.target.value), minute, ampm })} className={selectClass}>
-        {hours.map(h => <option key={h} value={h}>{h}</option>)}
-      </select>
-      <span className="text-text-muted font-bold">:</span>
-      {/* Minute */}
-      <select value={minute} onChange={e => onChange({ hour, minute: Number(e.target.value), ampm })} className={selectClass}>
-        {minutes.map(m => <option key={m} value={m}>{String(m).padStart(2, '0')}</option>)}
-      </select>
-      {/* AM/PM */}
-      <select value={ampm} onChange={e => onChange({ hour, minute, ampm: e.target.value })} className={selectClass}>
-        <option value="AM">AM</option>
-        <option value="PM">PM</option>
-      </select>
+    <div className="flex items-center gap-3 py-3.5 border-b last:border-0" style={{ borderColor:'#F5F5F5' }}>
+      <div className="w-9 h-9 rounded-xl flex items-center justify-center flex-shrink-0"
+        style={{ background: iconBg }}>
+        <Icon size={16} style={{ color: iconColor }} />
+      </div>
+      <div className="flex-1 min-w-0">
+        <p className="font-semibold text-[14px]" style={{ color:'#1A1A2E' }}>{label}</p>
+        {sub && <p className="text-[12px] mt-0.5" style={{ color:'#9CA3AF' }}>{sub}</p>}
+      </div>
+      <Toggle value={value} onChange={onChange} />
     </div>
   )
 }
 
-/** Convert 12h {hour, ampm} to 24h */
-function to24h(hour, ampm) {
-  if (ampm === 'AM') return hour === 12 ? 0 : hour
-  return hour === 12 ? 12 : hour + 12
-}
-
-/** Convert 24h hour to 12h {hour, ampm} */
-function to12h(hour24) {
-  if (hour24 === 0) return { hour: 12, ampm: 'AM' }
-  if (hour24 < 12) return { hour: hour24, ampm: 'AM' }
-  if (hour24 === 12) return { hour: 12, ampm: 'PM' }
-  return { hour: hour24 - 12, ampm: 'PM' }
-}
-
 export default function NotificationSettings() {
-  const [permission,  setPermission]  = useState('default') // 'default'|'granted'|'denied'
-  const [settings,    setSettings]    = useState({
-    dailyReminder: false, hour: 7, minute: 0,
-    streakAlerts: true, challengeNudges: false,
-  })
-  const [timeUI, setTimeUI] = useState({ hour: 7, minute: 0, ampm: 'AM' })
-  const [requesting, setRequesting] = useState(false)
+  const [permission, setPermission] = useState('default')
+  const [settings,   setSettings]   = useState(null)
+  const [timeEdit,   setTimeEdit]   = useState(false)
+  const [hour,       setHour]       = useState(8)
+  const [minute,     setMinute]     = useState(0)
 
-  // Hydrate from localStorage on mount
   useEffect(() => {
-    if (typeof window === 'undefined') return
-    setPermission(Notification?.permission ?? 'default')
-    const saved = getNotificationSettings()
-    setSettings(saved)
-    const t12 = to12h(saved.hour)
-    setTimeUI({ hour: t12.hour, minute: saved.minute, ampm: t12.ampm })
+    setPermission(getPermissionStatus())
+    const s = getNotificationSettings()
+    setSettings(s)
+    setHour(s.reminderHour   ?? 8)
+    setMinute(s.reminderMinute ?? 0)
   }, [])
 
-  async function handleRequestPermission() {
-    setRequesting(true)
+  async function handleEnable() {
     const granted = await requestNotificationPermission()
     setPermission(granted ? 'granted' : 'denied')
-    setRequesting(false)
+    if (granted) {
+      const s = getNotificationSettings()
+      if (s.dailyReminder) scheduleDailyReminder(s.reminderHour, s.reminderMinute)
+    }
   }
 
-  function updateSettings(patch) {
-    const next = { ...settings, ...patch }
+  function update(key, value) {
+    const next = { ...settings, [key]: value }
     setSettings(next)
     saveNotificationSettings(next)
-    return next
-  }
-
-  function handleDailyToggle() {
-    const next = updateSettings({ dailyReminder: !settings.dailyReminder })
-    if (next.dailyReminder) {
-      scheduleDailyReminder(next.hour, next.minute)
-    } else {
-      clearDailyReminder()
+    // Re-schedule reminder if toggled or time changed
+    if (key === 'dailyReminder') {
+      if (value) scheduleDailyReminder(next.reminderHour, next.reminderMinute)
+      else       clearDailyReminder()
     }
   }
 
-  function handleTimeChange(t) {
-    setTimeUI(t)
-    const h24 = to24h(t.hour, t.ampm)
-    const next = updateSettings({ hour: h24, minute: t.minute })
-    if (next.dailyReminder) {
-      scheduleDailyReminder(h24, t.minute)
-    }
+  function saveTime() {
+    const next = { ...settings, reminderHour: hour, reminderMinute: minute }
+    setSettings(next)
+    saveNotificationSettings(next)
+    if (next.dailyReminder) scheduleDailyReminder(hour, minute)
+    setTimeEdit(false)
   }
 
-  function handleStreakToggle()    { updateSettings({ streakAlerts:    !settings.streakAlerts    }) }
-  function handleChallengeToggle() { updateSettings({ challengeNudges: !settings.challengeNudges }) }
-
-  function handleTestNotification() {
-    sendLocalNotification('Test notification', 'Daily Walk notifications are working!')
+  function formatTime(h, m) {
+    const period = h >= 12 ? 'PM' : 'AM'
+    const hh     = h % 12 || 12
+    return `${hh}:${String(m).padStart(2,'0')} ${period}`
   }
 
-  const granted = permission === 'granted'
-  const denied  = permission === 'denied'
+  if (!settings) return null
 
-  const rowClass = "flex items-center justify-between p-4 bg-white rounded-2xl shadow-card"
-
-  return (
-    <div className="flex flex-col gap-3">
-      {/* Section heading */}
-      <div className="flex items-center gap-2 px-1">
-        <Bell size={15} className="text-text-muted" />
-        <p className="text-[11px] font-bold text-text-muted uppercase tracking-widest">Notifications</p>
-      </div>
-
-      {/* Permission banner */}
-      {!granted && (
-        <div className="bg-purple-light rounded-2xl p-4 flex flex-col gap-3">
-          {denied ? (
-            <>
-              <p className="font-bold text-text-primary text-[14px]">Notifications are blocked</p>
-              <p className="text-text-muted text-[13px] leading-relaxed">
-                Enable them in your browser or device settings to get daily reminders.
-              </p>
-            </>
-          ) : (
-            <>
-              <p className="font-bold text-text-primary text-[14px]">Get daily reminders</p>
-              <p className="text-text-muted text-[13px] leading-relaxed">
-                Enable notifications to be reminded when it's time to read.
-              </p>
-              <button
-                onClick={handleRequestPermission}
-                disabled={requesting}
-                className="w-full bg-purple text-white rounded-pill py-3 text-[14px] font-bold disabled:opacity-60 transition-all active:scale-[0.97]"
-                style={{ background: '#5B4FCF' }}
-              >
-                {requesting ? 'Requesting…' : 'Enable Notifications'}
-              </button>
-            </>
-          )}
-        </div>
-      )}
-
-      {/* Daily reminder toggle */}
-      <div className={`${rowClass} flex-col items-start gap-3`}>
-        <div className="flex items-center justify-between w-full">
-          <div className="flex items-center gap-3">
-            <div className="w-9 h-9 rounded-xl bg-amber-light flex items-center justify-center flex-shrink-0">
-              <Clock size={16} className="text-amber" style={{ color: '#E8A838' }} />
-            </div>
-            <div>
-              <p className="font-bold text-text-primary text-[14px]">Daily Bible reminder</p>
-              <p className="text-text-muted text-[12px]">Remind me to read each day</p>
-            </div>
-          </div>
-          <Toggle on={settings.dailyReminder} onToggle={handleDailyToggle} disabled={!granted} />
-        </div>
-
-        {/* Time picker — only shown when toggled on */}
-        {settings.dailyReminder && granted && (
-          <TimePicker
-            hour={timeUI.hour}
-            minute={timeUI.minute}
-            ampm={timeUI.ampm}
-            onChange={handleTimeChange}
-          />
-        )}
-      </div>
-
-      {/* Streak milestones */}
-      <div className={rowClass}>
+  // Not yet requested
+  if (permission === 'default') {
+    return (
+      <motion.div initial={{ opacity:0, y:6 }} animate={{ opacity:1, y:0 }}
+        className="bg-white rounded-[20px] p-5 flex flex-col gap-4"
+        style={{ boxShadow:'0 2px 12px rgba(0,0,0,0.06)' }}>
         <div className="flex items-center gap-3">
-          <div className="w-9 h-9 rounded-xl flex items-center justify-center flex-shrink-0"
-            style={{ background: '#FFF4DC' }}>
-            <Flame size={16} style={{ color: '#E8A838' }} />
+          <div className="w-12 h-12 rounded-2xl flex items-center justify-center" style={{ background:'#EDE9FF' }}>
+            <Bell size={22} style={{ color:'#5B4FCF' }} />
           </div>
           <div>
-            <p className="font-bold text-text-primary text-[14px]">Streak milestones</p>
-            <p className="text-text-muted text-[12px]">Celebrated at 3, 7, 14, 30, 100 days</p>
+            <p className="font-bold text-[16px]" style={{ color:'#1A1A2E' }}>Stay connected</p>
+            <p className="text-[13px] mt-0.5" style={{ color:'#6B7280' }}>
+              Get reminders and community updates
+            </p>
           </div>
         </div>
-        <Toggle on={settings.streakAlerts} onToggle={handleStreakToggle} disabled={!granted} />
-      </div>
-
-      {/* Challenge nudges */}
-      <div className={rowClass}>
-        <div className="flex items-center gap-3">
-          <div className="w-9 h-9 rounded-xl bg-sage-light flex items-center justify-center flex-shrink-0">
-            <Trophy size={16} style={{ color: '#4A7C5F' }} />
-          </div>
-          <div>
-            <p className="font-bold text-text-primary text-[14px]">Challenge reminders</p>
-            <p className="text-text-muted text-[12px]">Nudge me about joined challenges</p>
-          </div>
-        </div>
-        <Toggle on={settings.challengeNudges} onToggle={handleChallengeToggle} disabled={!granted} />
-      </div>
-
-      {/* Test button — only shown when granted */}
-      {granted && (
-        <button
-          onClick={handleTestNotification}
-          className="w-full border border-gray-200 text-text-muted rounded-pill py-2.5 text-[13px] font-semibold hover:bg-gray-50 transition-colors flex items-center justify-center gap-2"
-        >
-          <Send size={13} />
-          Send a test notification
+        <p className="text-[13px] leading-relaxed" style={{ color:'#6B7280' }}>
+          Daily Walk can remind you to read, celebrate your streaks, and notify you when your community is active.
+        </p>
+        <button onClick={handleEnable}
+          className="w-full text-white rounded-full py-3.5 font-bold text-[15px] hover:opacity-90 active:scale-[0.97]"
+          style={{ background:'#5B4FCF' }}>
+          Enable Notifications
         </button>
-      )}
+      </motion.div>
+    )
+  }
+
+  // Denied
+  if (permission === 'denied') {
+    return (
+      <div className="bg-white rounded-[20px] p-5 flex flex-col gap-3"
+        style={{ boxShadow:'0 2px 12px rgba(0,0,0,0.06)' }}>
+        <div className="flex items-center gap-3">
+          <div className="w-10 h-10 rounded-xl flex items-center justify-center" style={{ background:'#FFF0F0' }}>
+            <BellOff size={18} style={{ color:'#EF4444' }} />
+          </div>
+          <div>
+            <p className="font-bold text-[14px]" style={{ color:'#1A1A2E' }}>Notifications blocked</p>
+            <p className="text-[12px] mt-0.5" style={{ color:'#9CA3AF' }}>Enable in your device settings</p>
+          </div>
+        </div>
+        <p className="text-[12px] leading-relaxed px-1" style={{ color:'#9CA3AF' }}>
+          Go to your browser or phone Settings → Notifications → Daily Walk → Allow
+        </p>
+      </div>
+    )
+  }
+
+  // Granted — show full settings
+  return (
+    <div className="flex flex-col gap-4">
+      <div className="bg-white rounded-[20px] px-5 py-2"
+        style={{ boxShadow:'0 2px 12px rgba(0,0,0,0.06)' }}>
+        <SettingRow icon={Bell}           iconColor="#5B4FCF" iconBg="#EDE9FF"
+          label="Daily reading reminder"  sub="Remind me to read my Bible"
+          value={settings.dailyReminder}  onChange={v => update('dailyReminder', v)} />
+
+        {/* Reminder time picker */}
+        {settings.dailyReminder && (
+          <div className="py-3 pl-12 border-b" style={{ borderColor:'#F5F5F5' }}>
+            {!timeEdit ? (
+              <button onClick={() => setTimeEdit(true)}
+                className="flex items-center gap-2 text-[13px] font-semibold"
+                style={{ color:'#5B4FCF' }}>
+                <Clock size={13} />
+                Reminder at {formatTime(hour, minute)}
+                <ChevronRight size={13} />
+              </button>
+            ) : (
+              <div className="flex flex-col gap-3">
+                <p className="text-[12px] font-bold" style={{ color:'#9CA3AF' }}>Set reminder time</p>
+                <div className="flex items-center gap-3">
+                  <div className="flex flex-col items-center gap-1">
+                    <p className="text-[11px]" style={{ color:'#9CA3AF' }}>Hour</p>
+                    <input type="number" min="0" max="23" value={hour}
+                      onChange={e => setHour(parseInt(e.target.value))}
+                      className="w-16 text-center border rounded-xl py-2 font-bold text-[16px] focus:outline-none focus:border-purple"
+                      style={{ borderColor:'#E5E7EB', color:'#1A1A2E' }} />
+                  </div>
+                  <p className="font-bold text-[20px] mt-4" style={{ color:'#1A1A2E' }}>:</p>
+                  <div className="flex flex-col items-center gap-1">
+                    <p className="text-[11px]" style={{ color:'#9CA3AF' }}>Minute</p>
+                    <input type="number" min="0" max="59" value={minute}
+                      onChange={e => setMinute(parseInt(e.target.value))}
+                      className="w-16 text-center border rounded-xl py-2 font-bold text-[16px] focus:outline-none focus:border-purple"
+                      style={{ borderColor:'#E5E7EB', color:'#1A1A2E' }} />
+                  </div>
+                  <div className="flex flex-col gap-1.5 ml-2 mt-4">
+                    <button onClick={saveTime}
+                      className="px-4 py-1.5 rounded-full text-white text-[12px] font-bold"
+                      style={{ background:'#5B4FCF' }}>Save</button>
+                    <button onClick={() => setTimeEdit(false)}
+                      className="px-4 py-1.5 rounded-full text-[12px] font-semibold"
+                      style={{ background:'#F5F5F5', color:'#6B7280' }}>Cancel</button>
+                  </div>
+                </div>
+                <p className="text-[12px]" style={{ color:'#9CA3AF' }}>
+                  Currently: {formatTime(hour, minute)}
+                </p>
+              </div>
+            )}
+          </div>
+        )}
+
+        <SettingRow icon={Flame}           iconColor="#E8A838" iconBg="#FFF4DC"
+          label="Streak alerts"            sub="Celebrate reading milestones"
+          value={settings.streakAlerts}    onChange={v => update('streakAlerts', v)} />
+        <SettingRow icon={Users}           iconColor="#4A7C5F" iconBg="#E8F4ED"
+          label="Community activity"       sub="New posts from your communities"
+          value={settings.communityActivity} onChange={v => update('communityActivity', v)} />
+        <SettingRow icon={MessageCircle}   iconColor="#5B4FCF" iconBg="#EDE9FF"
+          label="Comments & likes"         sub="When someone reacts to your posts"
+          value={settings.commentsLikes}   onChange={v => update('commentsLikes', v)} />
+        <SettingRow icon={BarChart2}       iconColor="#888780" iconBg="#F5F5F5"
+          label="Weekly summary"           sub="Sunday reading recap"
+          value={settings.weeklySummary}   onChange={v => update('weeklySummary', v)} />
+      </div>
     </div>
   )
 }

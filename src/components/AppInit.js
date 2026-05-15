@@ -4,11 +4,13 @@
 // Advances plan day counters, re-registers notification timers.
 
 import { useEffect } from 'react'
-import { getNotificationSettings, scheduleDailyReminder, sendChallengeNudge } from '../lib/notifications'
+import { getNotificationSettings, scheduleDailyReminder, sendChallengeNudge, initNotifications } from '../lib/notifications'
 import { advanceAllPlans } from '../lib/plans'
 
 export default function AppInit() {
   useEffect(() => {
+    // Init notification timers (daily reminder, weekly summary)
+    initNotifications()
     if (typeof window === 'undefined') return
     try {
       // Advance plan day counters if yesterday's reading is done
