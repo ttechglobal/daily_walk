@@ -18,7 +18,7 @@ import { ToastContainer, showToast } from '../components/Toast'
 import CharacterCompanion from '../components/CharacterCompanion'
 import { NotificationBell, NotificationPanel } from '../components/NotificationPanel'
 import PostComposer from '../components/PostComposer'
-import { HERO_IMAGES, getTodayVerse, initials, todayStr } from '../lib/constants'
+import { getTodayVerseImage, getTodayVerse, initials, todayStr } from '../lib/constants'
 import {
   getTodaysPlan, getPlanProgress, isPlanCompletedToday,
   markDayComplete, readPlans, advanceAllPlans
@@ -204,9 +204,18 @@ function TodaysReadingCard({ plans, setPlans, onCheckin }) {
 
         <p className="font-display font-semibold text-[16px]" style={{ color:'#1A1A2E' }}>{todayPlan.name}</p>
         {todayDay && (
-          <p className="text-[13px] mt-0.5" style={{ color:'#6B7280' }}>
-            Day {todayPlan.currentDay} · {todayDay.passage}
-          </p>
+          <div className="flex items-center justify-between mt-1">
+            <p className="text-[13px]" style={{ color:'#6B7280' }}>
+              Day {todayPlan.currentDay} · {todayDay.passage}
+            </p>
+            {/* Read Full Chapter — stops propagation so it doesn't trigger the plan card tap */}
+            <span
+              onClick={e => { e.stopPropagation(); router.push(buildReaderUrl(todayDay.passage)) }}
+              className="text-[12px] font-bold cursor-pointer"
+              style={{ color:'#5B4FCF' }}>
+              Read Chapter →
+            </span>
+          </div>
         )}
 
       {/* Progress bar */}
@@ -260,6 +269,22 @@ function TodaysReadingCard({ plans, setPlans, onCheckin }) {
 //  Main home screen
 // ─────────────────────────────────────────────
 
+
+// Build /read URL with correct book+chapter from a passage reference like "John 3:16"
+function buildReaderUrl(passage) {
+  if (!passage) return '/read'
+  const ref = passage.trim()
+  // USFM format already (JHN.3)
+  if (/^[A-Z0-9]{2,3}\.\d/.test(ref)) {
+    const parts = ref.split('.')
+    return `/read?book=${encodeURIComponent(parts[0])}&chapter=${parts[1] || '1'}`
+  }
+  // "John 3:16" or "Romans 8" format
+  const m = ref.match(/^(.+?)\s+(\d+)/)
+  if (m) return `/read?book=${encodeURIComponent(m[1].trim())}&chapter=${m[2]}`
+  return '/read'
+}
+
 // ── HeroCard — verse of the day with image and graceful fallback ──
 const FALLBACK_GRADIENTS = [
   'linear-gradient(135deg, #5B4FCF 0%, #3D3190 100%)',  // Sunday — purple
@@ -277,15 +302,17 @@ function HeroCard({ heroImg, verse }) {
   const gradient  = FALLBACK_GRADIENTS[dayOfWeek]
 
   return (
-    <div className="relative overflow-hidden" style={{ height:200, borderRadius:20 }}>
-      {/* Fallback gradient — always rendered underneath */}
+    // Taller card — 280px gives verse text real room to breathe
+    <div className="relative overflow-hidden" style={{ height:280, borderRadius:24 }}>
+
+      {/* Fallback gradient — always visible underneath */}
       <div className="absolute inset-0" style={{ background: gradient }} />
 
-      {/* Real image on top — hidden until loaded, removed on error */}
+      {/* Real image — fades in on load */}
       {!imgFailed && (
         <img
           src={heroImg}
-          alt="Daily devotion"
+          alt="Daily verse"
           onLoad={e => { e.currentTarget.style.opacity = '1' }}
           onError={() => setImgFailed(true)}
           style={{
@@ -293,22 +320,37 @@ function HeroCard({ heroImg, verse }) {
             width: '100%', height: '100%',
             objectFit: 'cover',
             opacity: 0,
-            transition: 'opacity 0.5s ease',
+            transition: 'opacity 0.6s ease',
           }}
         />
       )}
 
-      {/* Gradient overlay for text legibility */}
-      <div className="absolute inset-0"
-        style={{ background:'linear-gradient(to bottom,rgba(0,0,0,0.0),rgba(0,0,0,0.60))' }} />
+      {/* Strong gradient overlay — top transparent, bottom very dark for text */}
+      <div className="absolute inset-0" style={{
+        background: 'linear-gradient(to bottom, rgba(0,0,0,0.05) 0%, rgba(0,0,0,0.35) 40%, rgba(0,0,0,0.82) 100%)'
+      }} />
 
-      {/* Verse text */}
-      <div className="absolute bottom-0 left-0 right-0 px-4 pb-4">
-        <p className="text-white/70 text-[12px] font-semibold mb-1">{fmtToday()}</p>
-        <p className="font-display italic text-white text-[14px] leading-snug line-clamp-2">
+      {/* Verse content */}
+      <div className="absolute bottom-0 left-0 right-0 px-5 pb-5">
+        {/* Date chip */}
+        <div className="inline-flex items-center px-2.5 py-1 rounded-full mb-3"
+          style={{ background:'rgba(255,255,255,0.18)', backdropFilter:'blur(4px)' }}>
+          <p className="text-white text-[11px] font-bold tracking-wide">{fmtToday()}</p>
+        </div>
+
+        {/* Verse text — prominent, bold, always readable */}
+        <p className="font-display italic text-white leading-[1.5] mb-2"
+          style={{ fontSize:18, fontWeight:600,
+                   textShadow:'0 1px 8px rgba(0,0,0,0.7), 0 2px 20px rgba(0,0,0,0.5)' }}>
           "{verse.text}"
         </p>
-        <p className="text-white/60 text-[11px] mt-1">— {verse.ref}</p>
+
+        {/* Reference — distinct style */}
+        <p className="font-bold text-[13px] tracking-wider"
+          style={{ color:'rgba(255,255,255,0.85)',
+                   textShadow:'0 1px 6px rgba(0,0,0,0.8)' }}>
+          — {verse.ref}
+        </p>
       </div>
     </div>
   )
@@ -328,7 +370,7 @@ export default function HomeScreen() {
   const { isCheckedInToday, streak, performCheckin } = useCheckin()
 
   const dayOfWeek    = new Date().getDay()
-  const heroImg      = HERO_IMAGES[dayOfWeek]
+  const heroImg      = getTodayVerseImage()
   const verse        = getTodayVerse()
   const userInitials = user?.name ? initials(user.name) : null
   const daysMissed   = useMemo(() => calcDaysMissed(streak?.lastCheckinDate), [streak?.lastCheckinDate])

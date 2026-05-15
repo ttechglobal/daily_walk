@@ -44,16 +44,22 @@ export function getTodayVerse() {
   return VERSES[dayOfYear % 30]
 }
 
-// ── Hero images by day of week (0 = Sunday) ──
-export const HERO_IMAGES = [
-  "https://images.unsplash.com/photo-1506905925346-21bda4d32df4?w=800&q=80",
-  "https://images.unsplash.com/photo-1441974231531-c6227db76b6e?w=800&q=80",
-  "https://images.unsplash.com/photo-1518495973542-4542c06a5843?w=800&q=80",
-  "https://images.unsplash.com/photo-1469474968028-56623f02e42e?w=800&q=80",
-  "https://images.unsplash.com/photo-1502082553048-f009c37129b9?w=800&q=80",
-  "https://images.unsplash.com/photo-1504701954957-2010ec3bcec1?w=800&q=80",
-  "https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?w=800&q=80",
-]
+// ── Local verse image pool ──
+// Drop images into /public/verse-images/ named verse-1.jpg, verse-2.jpg, etc.
+// The count here should match how many images you've added (default 5 placeholders).
+// Update VERSE_IMAGE_COUNT when you add more images.
+export const VERSE_IMAGE_COUNT = 5  // ← update this when you add more images
+
+// Date-seeded picker — same image all day, changes tomorrow, never random on re-render
+export function getTodayVerseImage() {
+  const now   = new Date()
+  const seed  = now.getFullYear() * 10000 + (now.getMonth()+1) * 100 + now.getDate()
+  const index = (seed % VERSE_IMAGE_COUNT) + 1  // 1-based
+  return `/verse-images/verse-${index}.jpg`
+}
+
+// Legacy export — no longer used, kept for backwards compat
+export const HERO_IMAGES = Array.from({ length: 5 }, (_, i) => `/verse-images/verse-${i+1}.jpg`)
 
 // ── Seed challenges — real default content, NOT fake social data ──
 // Update 3: posts arrays start empty. No fake posts.
@@ -210,14 +216,9 @@ export function getChallengeProgress(challenge, checkins = []) {
 }
 
 // ── Communities seed data (Update 2) ──
-export const SEED_COMMUNITIES = [
-  { id: 'cm1', name: 'Morning Readers',   category: 'Bible Study',    description: 'A community of early risers committed to starting every day in the Word.',                              memberCount: 234, joined: false, posts: [], challenges: [], members: [] },
-  { id: 'cm2', name: 'Prayer Warriors',   category: 'Prayer',         description: 'We believe in the power of prayer. Join us in daily intercession.',                                    memberCount: 189, joined: false, posts: [], challenges: [], members: [] },
-  { id: 'cm3', name: 'Young & Rooted',    category: 'Youth',          description: 'For young Christians navigating faith, life, and growth together.',                                    memberCount: 412, joined: false, posts: [], challenges: [], members: [] },
-  { id: 'cm4', name: 'Still Waters',      category: 'Mental Health',  description: 'A safe space for Christians dealing with anxiety, depression, and finding peace in God.',              memberCount: 97,  joined: false, posts: [], challenges: [], members: [] },
-  { id: 'cm5', name: 'Worship Together',  category: 'Worship',        description: 'For those who love deep worship. Share songs, reflections, and encounters.',                           memberCount: 156, joined: false, posts: [], challenges: [], members: [] },
-  { id: 'cm6', name: 'Daily Bread',       category: 'Bible Study',    description: 'Verse by verse. Chapter by chapter. Walking through Scripture together.',                             memberCount: 321, joined: false, posts: [], challenges: [], members: [] },
-]
+// SEED_COMMUNITIES removed — all community data comes from Supabase.
+// Two default communities are seeded directly in the database (see schema.sql).
+export const SEED_COMMUNITIES = []
 
 export const COMMUNITY_CATEGORIES = ['All', 'Bible Study', 'Prayer', 'Mental Health', 'Youth', 'Worship']
 

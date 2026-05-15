@@ -74,7 +74,7 @@ function FeedPostCard({ post, community, isGlobal, onLike, onShare, idx }) {
           <span className="text-[11px] font-bold" style={{ color:'#5B4FCF' }}>Daily Walk Community</span>
         </div>
       ) : community ? (
-        <button onClick={() => router.push(`/communities/${community.id}`)}
+        <button onClick={() => router.push(`/community/${community.slug || community.id}`)}
           className="flex items-center gap-1.5 px-4 pt-3 pb-1 w-full text-left"
           style={{ borderBottom:'1px solid #F5F5F5' }}>
           <div className="w-3.5 h-3.5 rounded-full flex items-center justify-center text-white text-[7px] font-bold flex-shrink-0"
@@ -117,7 +117,7 @@ function FeedPostCard({ post, community, isGlobal, onLike, onShare, idx }) {
             </motion.div>
             {likes > 0 && <span className="text-[12px] font-semibold" style={{ color:isLiked?'#EF4444':'#9CA3AF' }}>{likes}</span>}
           </button>
-          <button onClick={() => community && router.push(`/communities/${community.id}`)}
+          <button onClick={() => community && router.push(`/community/${community.slug || community.id}`)}
             className="flex items-center gap-1.5">
             <MessageCircle size={16} style={{ color:'#9CA3AF' }} />
             {comments > 0 && <span className="text-[12px] font-semibold" style={{ color:'#9CA3AF' }}>{comments}</span>}
@@ -136,7 +136,7 @@ function MyCommunityCard({ community, idx }) {
   const color  = CATEGORY_COLORS[community.category] || '#888780'
   return (
     <motion.button initial={{ opacity:0, y:12 }} animate={{ opacity:1, y:0 }} transition={{ delay:idx*0.05 }}
-      onClick={() => router.push(`/communities/${community.id}`)}
+      onClick={() => router.push(`/community/${community.slug || community.id}`)}
       className="w-full bg-white rounded-[16px] p-4 flex items-center gap-3 text-left hover:shadow-md active:scale-[0.98] transition-all"
       style={{ boxShadow:'0 2px 10px rgba(0,0,0,0.06)', borderLeft:`3px solid ${color}` }}>
       <div className="w-11 h-11 rounded-full flex items-center justify-center text-white font-display font-bold text-[18px] flex-shrink-0"
@@ -166,7 +166,7 @@ function ExploreCard({ community, onToggleJoin, idx }) {
       className="bg-white rounded-[20px] overflow-hidden"
       style={{ boxShadow:'0 2px 10px rgba(0,0,0,0.07)' }}>
       <div className="h-1 w-full" style={{ background:color }} />
-      <button className="w-full text-left px-4 pt-4 pb-2" onClick={() => router.push(`/communities/${community.id}`)}>
+      <button className="w-full text-left px-4 pt-4 pb-2" onClick={() => router.push(`/community/${community.slug || community.id}`)}>
         <p className="font-display text-[17px] font-semibold" style={{ color:'#1A1A2E' }}>{community.name}</p>
         <div className="flex items-center gap-2 my-1">
           <CatBadge category={community.category} />
@@ -200,21 +200,33 @@ export default function CommunitiesPage() {
   const [filter,       setFilter]       = useState('All')
   const [query,        setQuery]        = useState('')
   const [compose,      setCompose]      = useState(false)
-  const [communities,  setCommunities]  = useLocalStorage('dw_communities_v2', [])
+  const [communities,  setCommunities]  = useLocalStorage('dw_communities_v3', [])
 
   // Load communities from Supabase on mount (merges with localStorage)
   useEffect(() => {
     getCommunities().then(list => { setCommunities(list || []) }).catch(() => null)
   }, [])
   const [globalPosts,  setGlobalPosts]  = useLocalStorage('dw_global_posts', [])
-  const [, , hydrated]                  = useLocalStorage('dw_communities_v2', [])
+  const [, , hydrated]                  = useLocalStorage('dw_communities_v3', [])
 
-  function toggleJoin(id) {
-    const c = (communities||[]).find(x=>x.id===id)
+  async function toggleJoin(id) {
+    const comm = (communities||[]).find(x=>x.id===id)
+    if (!comm) return
+    const wasJoined = comm.joined
+    // Optimistic update
     setCommunities(prev=>(prev||[]).map(x=>
-      x.id!==id?x:{...x,joined:!x.joined,member_count:(x.member_count || 0) + (x.joined ? -1 : 1)}
+      x.id!==id?x:{...x,joined:!wasJoined,member_count:(x.member_count||0)+(wasJoined?-1:1)}
     ))
-    showToast(c?.joined?'Left community':'Joined!')
+    try {
+      if (wasJoined) { await leaveCommunity(id); showToast('Left community') }
+      else           { await joinCommunity(id);  showToast(`Joined ${comm.name}!`) }
+    } catch {
+      // Revert on failure
+      setCommunities(prev=>(prev||[]).map(x=>
+        x.id!==id?x:{...x,joined:wasJoined,member_count:(x.member_count||0)+(wasJoined?1:-1)}
+      ))
+      showToast('Failed — please try again')
+    }
   }
 
   function handleLikeGlobal(post) {

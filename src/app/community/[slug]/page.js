@@ -1,45 +1,33 @@
-// ── /community/[slug] — Shareable community preview ──
+// ── /community/[slug] — Community page by slug ──
 
-import CommunityPreviewClient from './CommunityPreviewClient'
+import { Suspense } from 'react'
+import CommunityBySlug from './CommunityBySlug'
 
-export async function generateMetadata({ params, searchParams }) {
-  const name    = searchParams.name    || 'A Daily Walk Community'
-  const desc    = searchParams.desc    || 'Join this community on Daily Walk'
-  const members = searchParams.members || '0'
-
+export async function generateMetadata({ params }) {
+  // Next.js 16: params is a Promise — must await
+  const { slug } = await params
+  const appUrl   = process.env.NEXT_PUBLIC_APP_URL || 'https://dailywalkapp.vercel.app'
   return {
-    title:       `${name} — Daily Walk`,
-    description: desc,
+    title:       `Community — Daily Walk`,
+    description: 'A community on Daily Walk',
     openGraph: {
-      title:       `Join ${name} on Daily Walk`,
-      description: `${members} members · ${desc}`,
-      url:         `https://dailywalk.app/community/${params.slug}`,
-      siteName:    'Daily Walk',
-      type:        'website',
-      images: [{
-        url:    `https://dailywalk.app/og/community?name=${encodeURIComponent(name)}&members=${members}`,
-        width:  1200,
-        height: 630,
-        alt:    `${name} on Daily Walk`,
-      }],
-    },
-    twitter: {
-      card:        'summary_large_image',
-      title:       `Join ${name} on Daily Walk`,
-      description: desc,
+      title:    'Community on Daily Walk',
+      url:      `${appUrl}/community/${slug}`,
+      siteName: 'Daily Walk',
     },
   }
 }
 
-export default function CommunityPreviewPage({ params, searchParams }) {
+export default async function CommunitySlugPage({ params }) {
+  // Next.js 16: params is a Promise — must await
+  const { slug } = await params
   return (
-    <CommunityPreviewClient
-      slug={params.slug}
-      name={searchParams.name || 'Community'}
-      desc={searchParams.desc || ''}
-      members={searchParams.members || '0'}
-      category={searchParams.category || 'General'}
-      inviteCode={searchParams.code || ''}
-    />
+    <Suspense fallback={
+      <div className="flex items-center justify-center min-h-screen" style={{ background:'#FAF8F5' }}>
+        <div className="w-8 h-8 rounded-full border-2 border-t-transparent animate-spin" style={{ borderColor:'#5B4FCF' }} />
+      </div>
+    }>
+      <CommunityBySlug slug={slug} />
+    </Suspense>
   )
 }
