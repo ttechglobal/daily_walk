@@ -1,14 +1,14 @@
 'use client'
 
-// ── BottomNav — Home | Communities | [BibleIcon→/read] | Plans | Profile ──
-// Centre button: custom BibleIcon, raised purple circle 56px, deep shadow.
-// Hidden on /read and /plans/*/day/* for focused reading mode.
+// ── src/components/BottomNav.js ──
+// Fixed to viewport bottom. Dark mode via CSS custom properties.
+// Hidden on /read and plan day pages (full-screen reading mode).
 
 import Link from 'next/link'
 import { usePathname } from 'next/navigation'
 import { Home, Users, Map, User } from 'lucide-react'
 import { BibleIcon } from './icons/BibleIcon'
-import clsx from 'clsx'
+import { useTheme } from '../lib/theme'
 
 const LEFT_ITEMS = [
   { href: '/',            icon: Home,  label: 'Home'        },
@@ -21,45 +21,68 @@ const RIGHT_ITEMS = [
 
 export default function BottomNav() {
   const pathname = usePathname()
-  const isHidden = pathname === '/read' || /^\/plans\/.+\/day\//.test(pathname || '')
+  const { t }    = useTheme()
+
+  const isHidden =
+    pathname === '/read' ||
+    /^\/plans\/.+\/day\//.test(pathname || '') ||
+    pathname?.startsWith('/auth') ||
+    pathname?.startsWith('/onboarding')
+
   if (isHidden) return null
 
   return (
-    <nav className="
-      md:hidden
-      fixed bottom-0 left-1/2 -translate-x-1/2
-      w-full max-w-[420px]
-      bg-white/95 backdrop-blur-md
-      border-t border-gray-100
-      flex items-center justify-around
-      px-2 pt-2 pb-5 z-50
-      shadow-[0_-4px_20px_rgba(0,0,0,0.06)]
-    ">
+    <nav
+      aria-label="bottom"
+      className="bottom-nav md:hidden"
+      style={{
+        position:        'fixed',
+        bottom:          0,
+        left:            '50%',
+        transform:       'translateX(-50%)',
+        width:           '100%',
+        maxWidth:        430,
+        zIndex:          50,
+        display:         'flex',
+        alignItems:      'center',
+        justifyContent:  'space-around',
+        padding:         '8px 8px 20px',
+        background:      t.bgNav,
+        borderTop:       `1px solid ${t.border}`,
+        boxShadow:       '0 -4px 20px rgba(0,0,0,0.06)',
+        backdropFilter:  'blur(12px)',
+        WebkitBackdropFilter: 'blur(12px)',
+        /* Safe area for iPhone home indicator */
+        paddingBottom:   'calc(20px + env(safe-area-inset-bottom, 0px))',
+      }}
+    >
       {LEFT_ITEMS.map(({ href, icon: Icon, label }) => {
         const isActive = href === '/' ? pathname === '/' : pathname?.startsWith(href)
         return (
-          <Link key={href} href={href}
-            className={clsx(
-              'flex flex-col items-center gap-1 px-3 py-1 rounded-xl transition-colors',
-              isActive ? 'text-purple' : 'text-text-muted hover:text-text-primary'
-            )}>
+          <Link
+            key={href}
+            href={href}
+            className="flex flex-col items-center gap-1 px-3 py-1 rounded-xl transition-colors min-w-[48px] min-h-[44px] justify-center"
+            style={{ color: isActive ? '#5B4FCF' : t.textMuted }}
+          >
             <Icon size={22} strokeWidth={isActive ? 2.5 : 1.8} />
-            <span className={clsx('text-[10px] font-semibold tracking-wide', isActive ? 'text-purple' : 'text-text-muted')}>
+            <span style={{ fontSize: 10, fontWeight: 600, letterSpacing: '0.04em' }}>
               {label}
             </span>
           </Link>
         )
       })}
 
-      {/* ── Centre Bible button — the most important element in the nav ── */}
+      {/* Centre Bible button */}
       <Link
         href="/read"
-        className="flex items-center justify-center -mt-4 rounded-full text-white transition-all active:scale-95 hover:opacity-90"
+        className="flex items-center justify-center -mt-4 rounded-full text-white transition-all active:scale-95"
         style={{
-          width: 56,
-          height: 56,
+          width:      56,
+          height:     56,
           background: '#5B4FCF',
-          boxShadow: '0 6px 20px rgba(91,79,207,0.5), 0 2px 8px rgba(91,79,207,0.3)',
+          boxShadow:  '0 6px 20px rgba(91,79,207,0.5), 0 2px 8px rgba(91,79,207,0.3)',
+          flexShrink: 0,
         }}
         aria-label="Open Bible"
       >
@@ -69,13 +92,14 @@ export default function BottomNav() {
       {RIGHT_ITEMS.map(({ href, icon: Icon, label }) => {
         const isActive = pathname?.startsWith(href)
         return (
-          <Link key={href} href={href}
-            className={clsx(
-              'flex flex-col items-center gap-1 px-3 py-1 rounded-xl transition-colors',
-              isActive ? 'text-purple' : 'text-text-muted hover:text-text-primary'
-            )}>
+          <Link
+            key={href}
+            href={href}
+            className="flex flex-col items-center gap-1 px-3 py-1 rounded-xl transition-colors min-w-[48px] min-h-[44px] justify-center"
+            style={{ color: isActive ? '#5B4FCF' : t.textMuted }}
+          >
             <Icon size={22} strokeWidth={isActive ? 2.5 : 1.8} />
-            <span className={clsx('text-[10px] font-semibold tracking-wide', isActive ? 'text-purple' : 'text-text-muted')}>
+            <span style={{ fontSize: 10, fontWeight: 600, letterSpacing: '0.04em' }}>
               {label}
             </span>
           </Link>

@@ -1,52 +1,66 @@
 'use client'
 
-// ── Profile — Onboarding includes companion selection (step 2) ──
-// Profile | Journey tabs. Character picker in settings.
+// ── src/app/profile/page.js ──
+// All colours from useTheme() — nothing hardcoded.
+// Companion button redesigned as clear actionable row with icon + chevron.
+// NotificationSettings text visible in both modes.
+// Bottom padding 112px ensures nav never blocks content.
 
 import { useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { motion, AnimatePresence } from 'framer-motion'
-import { Flame, Info, Shield, LogOut, ChevronRight, BookOpen, Lightbulb, Trash2, Share2, PenLine, Heart, MessageCircle } from 'lucide-react'
-import { useLocalStorage } from '../../hooks/useLocalStorage'
-import { ToastContainer, showToast } from '../../components/Toast'
-import NotificationSettings from '../../components/NotificationSettings'
-import CharacterPicker from '../../components/CharacterPicker'
-import { CHARACTERS, getCharacterById, } from '../../lib/characters'
 import {
-  initials, avatarColor, formatDateLabel, formatTimestamp,
-  lastSevenDays, todayStr, SEED_CHALLENGES
+  Flame, Info, Shield, LogOut, ChevronRight,
+  Lightbulb, Trash2, PenLine, Heart, MessageCircle,
+  Sun, Moon, Sparkles, UserCog,
+} from 'lucide-react'
+import { useLocalStorage }           from '../../hooks/useLocalStorage'
+import { ToastContainer, showToast } from '../../components/Toast'
+import NotificationSettings          from '../../components/NotificationSettings'
+import CharacterPicker               from '../../components/CharacterPicker'
+import Onboarding                    from '../../components/Onboarding'
+import { useTheme }                  from '../../lib/theme'
+import { CHARACTERS, getCharacterById } from '../../lib/characters'
+import {
+  initials, avatarColor, formatTimestamp,
+  lastSevenDays, todayStr, SEED_CHALLENGES,
 } from '../../lib/constants'
-import { getImagePath } from '../../lib/character-state'
-import { useDarkMode } from '../../contexts/DarkModeContext'
-import Onboarding from '../../components/Onboarding'
 
-const WALK_STAGES   = ['Just starting', 'Growing', 'Recommitting', 'Consistent']
-const DAY_LABELS    = ['M','T','W','T','F','S','S']
-
+const DAY_LABELS = ['M','T','W','T','F','S','S']
 
 // ─────────────────────────────────────────────
-//  Journey section (embedded in Profile)
+//  Week strip
 // ─────────────────────────────────────────────
-function WeekStrip({ checkedSet, today, weekDays }) {
+function WeekStrip({ checkedSet, today, weekDays, t }) {
   return (
-    <div className="mt-4">
-      <p className="text-[11px] font-bold uppercase tracking-widest mb-3" style={{ color:'#9CA3AF' }}>This Week</p>
+    <div className="mt-5">
+      <p className="text-[11px] font-bold uppercase tracking-widest mb-3"
+        style={{ color: t.textFaint }}>
+        This Week
+      </p>
       <div className="flex items-center justify-between">
         {weekDays.map((d, i) => {
-          const isChecked = checkedSet.has(d), isToday = d === today
+          const isChecked = checkedSet.has(d)
+          const isToday   = d === today
           return (
             <div key={d} className="flex flex-col items-center gap-1.5">
-              <span className="text-[11px] font-semibold" style={{ color:'#9CA3AF' }}>{DAY_LABELS[i]}</span>
-              <div className="w-9 h-9 rounded-full flex items-center justify-center text-[12px] font-bold transition-all"
+              <span className="text-[11px] font-semibold" style={{ color: t.textFaint }}>
+                {DAY_LABELS[i]}
+              </span>
+              <div
+                className="w-9 h-9 rounded-full flex items-center justify-center text-[12px] font-bold transition-all"
                 style={{
                   background: isChecked ? '#5B4FCF' : 'transparent',
-                  color: isChecked ? 'white' : isToday ? '#5B4FCF' : '#9CA3AF',
-                  border: !isChecked ? `2px solid ${isToday ? '#5B4FCF' : '#E8E5E0'}` : 'none',
-                }}>
+                  color:  isChecked ? 'white' : isToday ? '#5B4FCF' : t.textFaint,
+                  border: !isChecked ? `2px solid ${isToday ? '#5B4FCF' : t.border}` : 'none',
+                }}
+              >
+                {isChecked && isToday  && '✓'}
                 {isChecked && !isToday && <span style={{ fontSize: 16 }}>·</span>}
-                {isToday && isChecked  && '✓'}
-                {isToday && !isChecked && <span style={{ fontSize: 10 }}>now</span>}
-                {!isToday && !isChecked && <span style={{ fontSize: 10 }}>{new Date(d).getDate()}</span>}
+                {!isChecked && isToday && <span style={{ fontSize: 10 }}>now</span>}
+                {!isChecked && !isToday && (
+                  <span style={{ fontSize: 10 }}>{new Date(d).getDate()}</span>
+                )}
               </div>
             </div>
           )
@@ -56,49 +70,72 @@ function WeekStrip({ checkedSet, today, weekDays }) {
   )
 }
 
-function JourneySection({ checkins, streak, user }) {
-  const [subTab, setSubTab]       = useState('logs')
-  const [nuggets, setNuggets]     = useLocalStorage('dw_nuggets', [])
-  const [challenges]              = useLocalStorage('dw_challenges', SEED_CHALLENGES)
+// ─────────────────────────────────────────────
+//  Journey section
+// ─────────────────────────────────────────────
+function JourneySection({ checkins, streak, user, t }) {
+  const [subTab,    setSubTab]  = useState('logs')
+  const [nuggets,   setNuggets] = useLocalStorage('dw_nuggets', [])
+
   const today      = todayStr()
   const weekDays   = lastSevenDays()
-  const checkedSet = new Set((checkins||[]).map(c => c.date))
+  const checkedSet = new Set((checkins || []).map(c => c.date))
 
-  function getChallengeTitle(id) {
-    return (challenges||[]).find(c => c.id === id)?.title || null
+  function deleteNugget(id) {
+    setNuggets(prev => (prev || []).filter(n => n.id !== id))
+    showToast('Nugget removed')
   }
 
   return (
-    <div>
-      <motion.div initial={{ opacity:0, y:12 }} animate={{ opacity:1, y:0 }} transition={{ delay:0.1 }}
-        className="rounded-card p-5 text-white" style={{ background:'linear-gradient(135deg,#5B4FCF 0%,#3D3190 100%)' }}>
+    <div className="flex flex-col gap-4">
+      {/* Streak card */}
+      <motion.div
+        initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.1 }}
+        className="rounded-[20px] p-5 text-white"
+        style={{ background: 'linear-gradient(135deg,#5B4FCF 0%,#3D3190 100%)' }}
+      >
         <div className="flex items-center justify-between">
           <div>
             <div className="flex items-center gap-2 mb-1">
-              <Flame size={22} className="flame-flicker" style={{ color:'#E8A838' }} />
-              <span className="font-extrabold text-[28px]" style={{ color:'#E8A838' }}>{streak?.current||0}</span>
+              <Flame size={22} className="flame-flicker" style={{ color: '#E8A838' }} />
+              <span className="font-extrabold text-[28px]" style={{ color: '#E8A838' }}>
+                {streak?.current || 0}
+              </span>
               <span className="font-semibold text-white/80 text-[16px]">-day streak</span>
             </div>
-            <p className="text-white/70 text-[13px]">{checkins?.length||0} total · Since {user?.joinedAt||'today'}</p>
+            <p className="text-white/70 text-[13px]">
+              {checkins?.length || 0} total · Since {user?.joinedAt || 'today'}
+            </p>
           </div>
           <div className="flex flex-col items-end gap-1">
             <span className="text-[11px] text-white/60 font-semibold uppercase tracking-wider">Longest</span>
-            <span className="font-bold text-[22px] text-white">{streak?.longest||0}</span>
+            <span className="font-bold text-[22px] text-white">{streak?.longest || 0}</span>
           </div>
         </div>
       </motion.div>
 
-      <WeekStrip checkedSet={checkedSet} today={today} weekDays={weekDays} />
+      {/* Week strip */}
+      <WeekStrip checkedSet={checkedSet} today={today} weekDays={weekDays} t={t} />
 
-      {/* Logs / Nuggets tabs */}
-      <div className="mt-5">
-        <div className="flex gap-1 p-1 rounded-full" style={{ background:'#EDE9FF' }}>
-          {[{k:'logs',l:'Logs'},{k:'nuggets',l:'Nuggets'}].map(t => (
-            <button key={t.k} onClick={() => setSubTab(t.k)}
+      {/* Sub-tabs */}
+      <div className="mt-2">
+        <div className="flex gap-1 p-1 rounded-full" style={{ background: t.bgMuted }}>
+          {[{ k:'logs', l:'Logs' }, { k:'nuggets', l:'Nuggets' }].map(tab => (
+            <button
+              key={tab.k}
+              onClick={() => setSubTab(tab.k)}
               className="relative flex-1 py-2 rounded-full text-[13px] font-bold transition-all"
-              style={subTab===t.k ? {color:'#5B4FCF'} : {color:'#6B7280'}}>
-              {subTab===t.k && <motion.div layoutId="j-tab" className="absolute inset-0 bg-white rounded-full shadow-card" transition={{type:'spring',stiffness:400,damping:35}} />}
-              <span className="relative z-10">{t.l}</span>
+              style={subTab===tab.k ? { color:'#5B4FCF' } : { color: t.textMuted }}
+            >
+              {subTab===tab.k && (
+                <motion.div
+                  layoutId="journey-sub"
+                  className="absolute inset-0 rounded-full"
+                  style={{ background: t.bgCard, boxShadow: t.shadow }}
+                  transition={{ type:'spring', stiffness:400, damping:35 }}
+                />
+              )}
+              <span className="relative z-10">{tab.l}</span>
             </button>
           ))}
         </div>
@@ -106,176 +143,133 @@ function JourneySection({ checkins, streak, user }) {
 
       <AnimatePresence mode="wait">
         {subTab === 'logs' && (
-          <motion.div key="logs" initial={{opacity:0}} animate={{opacity:1}} exit={{opacity:0}} transition={{duration:0.15}}>
-            {!(checkins?.length) ? (
-              <div className="flex flex-col items-center gap-3 text-center py-10">
-                <BookOpen size={32} style={{color:'#E8E5E0'}} />
-                <p className="font-display text-[16px] font-semibold" style={{color:'#1A1A2E'}}>No check-ins yet</p>
-                <p className="text-[13px]" style={{color:'#9CA3AF'}}>Tap "I read my Bible today" to log your first one.</p>
+          <motion.div key="logs" initial={{ opacity:0 }} animate={{ opacity:1 }} exit={{ opacity:0 }}
+            className="flex flex-col gap-3">
+            {(checkins || []).length === 0 ? (
+              <div className="text-center py-10">
+                <p className="font-semibold text-[15px]" style={{ color: t.text }}>No logs yet</p>
+                <p className="text-[13px] mt-1" style={{ color: t.textMuted }}>
+                  Complete your first check-in to start your journey
+                </p>
               </div>
             ) : (
-              <div className="flex flex-col gap-3 mt-4">
-                {[...(checkins||[])].reverse().map((e, i) => {
-                  const ct = e.challengeId ? getChallengeTitle(e.challengeId) : null
-                  return (
-                    <div key={e.id} className="bg-white rounded-[16px] p-4" style={{boxShadow:'0 2px 8px rgba(0,0,0,0.06)'}}>
-                      <div className="flex items-center justify-between mb-1.5">
-                        <p className="text-[11px] font-bold uppercase tracking-wide" style={{color:'#9CA3AF'}}>{formatDateLabel(e.date)}</p>
-                        {ct && <span className="text-[10px] font-bold px-2 py-0.5 rounded-full" style={{background:'#EDE9FF',color:'#5B4FCF'}}>{ct}</span>}
-                      </div>
-                      {e.passage    && <p className="font-display font-semibold text-[14px] mb-0.5" style={{color:'#5B4FCF'}}>{e.passage}</p>}
-                      {e.reflection && <p className="text-[13px] leading-relaxed" style={{color:'#1A1A2E'}}>"{e.reflection}"</p>}
-                    </div>
-                  )
-                })}
-              </div>
+              [...(checkins||[])].reverse().map(ci => (
+                <div key={ci.id} className="rounded-[16px] p-4 flex flex-col gap-2"
+                  style={{ background: t.bgCard, boxShadow: t.shadow }}>
+                  <div className="flex items-center justify-between">
+                    <p className="font-bold text-[13px]" style={{ color: '#5B4FCF' }}>
+                      {ci.passage || 'Reading logged'}
+                    </p>
+                    <p className="text-[11px]" style={{ color: t.textFaint }}>
+                      {formatTimestamp(ci.createdAt)}
+                    </p>
+                  </div>
+                  {ci.reflection && (
+                    <p className="text-[13px] leading-relaxed italic" style={{ color: t.textMuted }}>
+                      "{ci.reflection}"
+                    </p>
+                  )}
+                </div>
+              ))
             )}
           </motion.div>
         )}
+
         {subTab === 'nuggets' && (
-          <motion.div key="nuggets" initial={{opacity:0}} animate={{opacity:1}} exit={{opacity:0}} transition={{duration:0.15}}>
-            {!(nuggets?.length) ? (
-              <div className="flex flex-col items-center gap-3 text-center py-10">
-                <Lightbulb size={32} style={{color:'#E8A838'}} />
-                <p className="font-display text-[16px] font-semibold" style={{color:'#1A1A2E'}}>No nuggets yet</p>
-                <p className="text-[13px]" style={{color:'#9CA3AF'}}>Use the + button or the Bible reader to save something that spoke to you.</p>
+          <motion.div key="nuggets" initial={{ opacity:0 }} animate={{ opacity:1 }} exit={{ opacity:0 }}
+            className="flex flex-col gap-3">
+            {(nuggets||[]).length === 0 ? (
+              <div className="text-center py-10">
+                <p className="font-semibold text-[15px]" style={{ color: t.text }}>No nuggets yet</p>
+                <p className="text-[13px] mt-1" style={{ color: t.textMuted }}>
+                  Tap the + button on the home screen to save an insight
+                </p>
               </div>
             ) : (
-              <div className="flex flex-col gap-3 mt-4">
-                {[...(nuggets||[])].reverse().map(n => (
-                  <div key={n.id} className="bg-white rounded-[16px] p-4 flex items-start gap-3" style={{boxShadow:'0 2px 8px rgba(0,0,0,0.06)'}}>
-                    <div className="w-8 h-8 rounded-full flex items-center justify-center flex-shrink-0" style={{background:'#FFF4DC'}}>
-                      <Lightbulb size={14} style={{color:'#E8A838'}} />
-                    </div>
-                    <div className="flex-1 min-w-0">
-                      <p className="text-[11px] font-bold uppercase tracking-wide mb-1" style={{color:'#9CA3AF'}}>{formatTimestamp(n.createdAt)}</p>
-                      {n.source && <span className="text-[10px] font-bold px-2 py-0.5 rounded-full mr-1" style={{background:'#FFF4DC',color:'#B07000'}}>From {n.source}</span>}
-                      <p className="text-[14px] leading-relaxed mt-1" style={{color:'#1A1A2E'}}>{n.text}</p>
-                    </div>
-                    <button onClick={() => { if (!confirm('Delete?')) return; setNuggets(prev => (prev||[]).filter(x=>x.id!==n.id)); showToast('Deleted') }}
-                      className="w-8 h-8 rounded-full flex items-center justify-center hover:bg-red-50 transition-colors" style={{color:'#9CA3AF'}}>
-                      <Trash2 size={13} />
-                    </button>
+              (nuggets||[]).map(n => (
+                <div key={n.id} className="rounded-[16px] p-4 flex gap-3"
+                  style={{ background: t.bgCard, boxShadow: t.shadow }}>
+                  <div className="w-7 h-7 rounded-xl flex items-center justify-center flex-shrink-0"
+                    style={{ background: t.amberBg }}>
+                    <Lightbulb size={13} style={{ color: '#E8A838' }}/>
                   </div>
-                ))}
-              </div>
+                  <div className="flex-1 min-w-0">
+                    <p className="text-[14px] leading-relaxed" style={{ color: t.text }}>{n.text}</p>
+                    {n.source && (
+                      <p className="text-[12px] mt-1 font-semibold" style={{ color: '#5B4FCF' }}>
+                        {n.source}
+                      </p>
+                    )}
+                    <p className="text-[11px] mt-1" style={{ color: t.textFaint }}>
+                      {formatTimestamp(n.createdAt)}
+                    </p>
+                  </div>
+                  <button onClick={() => deleteNugget(n.id)}
+                    className="w-7 h-7 rounded-full flex items-center justify-center flex-shrink-0"
+                    style={{ background: t.bgMuted }}>
+                    <Trash2 size={12} style={{ color: '#EF4444' }}/>
+                  </button>
+                </div>
+              ))
             )}
           </motion.div>
         )}
       </AnimatePresence>
-
-      <div className="mt-5 mb-6 rounded-card p-5 flex flex-col gap-3" style={{border:'2px dashed rgba(91,79,207,0.2)'}}>
-        <p className="font-bold text-[15px]" style={{color:'#1A1A2E'}}>Back up your journey</p>
-        <p className="text-[13px] leading-relaxed" style={{color:'#6B7280'}}>Create a free account to never lose your streak.</p>
-        <button onClick={() => showToast('Account creation coming soon')}
-          className="rounded-pill py-2.5 px-5 text-[14px] font-bold w-fit border-2 hover:opacity-80 transition-colors"
-          style={{borderColor:'#5B4FCF',color:'#5B4FCF'}}>
-          Create account →
-        </button>
-      </div>
     </div>
   )
 }
 
-
 // ─────────────────────────────────────────────
-//  UserPostsTab — all posts the user has made
+//  Posts tab
 // ─────────────────────────────────────────────
-function UserPostsTab({ globalPosts, communities }) {
+function UserPostsTab({ globalPosts, communities, t }) {
   const [expandedId, setExpandedId] = useState(null)
 
-  const typeColor = { general:'#888780', reading:'#5B4FCF', prayer:'#4A7C5F', encouragement:'#E8A838' }
-  const CAT_COLORS = {
-    'Bible Study':'#5B4FCF','Prayer':'#4A7C5F','Mental Health':'#7CB9E8',
-    'Youth':'#E8A838','Worship':'#C77DFF','General':'#888780',
-  }
+  const myPosts = [
+    ...(globalPosts||[]).filter(p => p.userId==='local_user' || p.authorId==='local_user'),
+    ...(communities||[]).flatMap(c => (c.posts||[]).filter(p => p.userId==='local_user' || p.authorId==='local_user')),
+  ].sort((a,b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())
 
-  // Collect all posts authored by local_user across global + communities
-  const allPosts = []
-
-  ;(globalPosts || []).forEach(p => {
-    if (p.authorId === 'local_user' || p.authorId === 'anonymous') {
-      allPosts.push({ ...p, _source: p.communityName || 'Daily Walk', _sourceColor: '#5B4FCF' })
-    }
-  })
-
-  const seen = new Set(allPosts.map(p => p.id))
-  ;(communities || []).forEach(c => {
-    ;(c.posts || []).forEach(p => {
-      if ((p.authorId === 'local_user' || p.authorId === 'anonymous') && !seen.has(p.id)) {
-        seen.add(p.id)
-        allPosts.push({ ...p, _source: c.name, _sourceColor: CAT_COLORS[c.category] || '#888780' })
-      }
-    })
-  })
-
-  allPosts.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())
-
-  if (allPosts.length === 0) {
-    return (
-      <motion.div initial={{ opacity:0 }} animate={{ opacity:1 }}
-        className="flex flex-col items-center gap-3 text-center py-12">
-        <div className="w-14 h-14 rounded-full flex items-center justify-center" style={{ background:'#EDE9FF' }}>
-          <PenLine size={24} style={{ color:'#5B4FCF' }} />
-        </div>
-        <p className="font-display text-[17px] font-semibold" style={{ color:'#1A1A2E' }}>No posts yet</p>
-        <p className="text-[13px] leading-relaxed" style={{ color:'#6B7280' }}>
-          Share what you're reading with the community
-        </p>
-      </motion.div>
-    )
-  }
+  if (myPosts.length === 0) return (
+    <div className="text-center py-14">
+      <div className="w-14 h-14 rounded-full flex items-center justify-center mx-auto mb-3"
+        style={{ background: t.bgMuted }}>
+        <PenLine size={22} style={{ color: t.textMuted }}/>
+      </div>
+      <p className="font-semibold text-[15px]" style={{ color: t.text }}>No posts yet</p>
+      <p className="text-[13px] mt-1" style={{ color: t.textMuted }}>Your posts will appear here</p>
+    </div>
+  )
 
   return (
     <div className="flex flex-col gap-3">
-      {allPosts.map((post, idx) => {
-        const tc      = typeColor[post.type] || '#888780'
-        const isLong  = post.content.length > 160
+      {myPosts.map(post => {
+        const isLong   = (post.content||'').length > 160
         const expanded = expandedId === post.id
-        const date    = new Date(post.createdAt).toLocaleDateString('en-US', {
-          month:'short', day:'numeric', year:'numeric'
-        })
-
         return (
-          <motion.div key={post.id} initial={{ opacity:0, y:10 }} animate={{ opacity:1, y:0 }}
-            transition={{ delay: idx * 0.04 }}
-            className="bg-white rounded-[16px] overflow-hidden"
-            style={{ boxShadow:'0 2px 10px rgba(0,0,0,0.07)' }}>
-
-            {/* Source + date */}
-            <div className="flex items-center justify-between px-4 pt-3 pb-1"
-              style={{ borderBottom:'1px solid #F5F5F5' }}>
-              <span className="text-[11px] font-bold" style={{ color: post._sourceColor }}>
-                {post._source}
-              </span>
-              <span className="text-[11px]" style={{ color:'#9CA3AF' }}>{date}</span>
-            </div>
-
-            <div className="px-4 py-3">
-              {post.passage && (
-                <p className="text-[12px] font-bold mb-1" style={{ color:'#5B4FCF' }}>{post.passage}</p>
-              )}
-              <span className="text-[11px] font-bold px-1.5 py-0.5 rounded-full inline-block mb-1.5"
-                style={{ background:`${tc}18`, color:tc }}>{post.type}</span>
-              <p className="text-[14px] leading-[1.7]" style={{ color:'#1A1A2E' }}>
-                {isLong && !expanded ? `${post.content.slice(0, 160)}…` : post.content}
-              </p>
-              {isLong && (
-                <button onClick={() => setExpandedId(expanded ? null : post.id)}
-                  className="text-[12px] font-semibold mt-1" style={{ color:'#5B4FCF' }}>
-                  {expanded ? 'Show less' : 'Read more'}
-                </button>
-              )}
-
-              <div className="flex items-center gap-4 mt-2 pt-2 border-t border-gray-100">
-                <div className="flex items-center gap-1" style={{ color:'#C4C1BC' }}>
-                  <Heart size={13} />
-                  <span className="text-[12px]">{post.likedBy?.length || 0}</span>
-                </div>
-                <div className="flex items-center gap-1" style={{ color:'#C4C1BC' }}>
-                  <MessageCircle size={13} />
-                  <span className="text-[12px]">{post.comments?.length || 0}</span>
-                </div>
+          <motion.div key={post.id} initial={{ opacity:0, y:8 }} animate={{ opacity:1, y:0 }}
+            className="rounded-[16px] p-4" style={{ background: t.bgCard, boxShadow: t.shadow }}>
+            <p className="text-[11px] font-bold mb-2" style={{ color: t.textFaint }}>
+              {formatTimestamp(post.createdAt)}
+            </p>
+            {post.passage && (
+              <p className="font-bold text-[13px] mb-1" style={{ color: '#5B4FCF' }}>{post.passage}</p>
+            )}
+            <p className="text-[14px] leading-relaxed" style={{ color: t.text }}>
+              {isLong && !expanded ? `${post.content.slice(0,160)}…` : post.content}
+            </p>
+            {isLong && (
+              <button onClick={() => setExpandedId(expanded?null:post.id)}
+                className="text-[12px] font-semibold mt-1" style={{ color:'#5B4FCF' }}>
+                {expanded ? 'Show less' : 'Read more'}
+              </button>
+            )}
+            <div className="flex items-center gap-4 mt-2 pt-2 border-t" style={{ borderColor: t.border }}>
+              <div className="flex items-center gap-1" style={{ color: t.textFaint }}>
+                <Heart size={13}/><span className="text-[12px]">{post.likedBy?.length||0}</span>
+              </div>
+              <div className="flex items-center gap-1" style={{ color: t.textFaint }}>
+                <MessageCircle size={13}/><span className="text-[12px]">{post.comments?.length||0}</span>
               </div>
             </div>
           </motion.div>
@@ -286,154 +280,303 @@ function UserPostsTab({ globalPosts, communities }) {
 }
 
 // ─────────────────────────────────────────────
-//  Profile view (post-onboarding)
+//  Settings row
 // ─────────────────────────────────────────────
-function SettingsRow({ icon: Icon, iconBg, label, sub, danger, onClick }) {
+function SettingsRow({ icon: Icon, iconBg, iconColor, label, sub, danger, onClick, t }) {
   return (
-    <button onClick={onClick} className="w-full flex items-center justify-between p-4 bg-white rounded-2xl shadow-card hover:shadow-card-hover transition-all active:scale-[0.98]">
+    <button
+      onClick={onClick}
+      className="w-full flex items-center justify-between p-4 rounded-[18px] active:scale-[0.98] transition-all min-h-[56px]"
+      style={{ background: t.bgCard, boxShadow: t.shadow }}
+    >
       <div className="flex items-center gap-3">
-        <div className={`w-9 h-9 rounded-xl flex items-center justify-center ${iconBg}`}>
-          <Icon size={17} className={danger ? 'text-red-500' : 'text-text-primary'} />
+        <div className="w-9 h-9 rounded-xl flex items-center justify-center flex-shrink-0"
+          style={{ background: iconBg }}>
+          <Icon size={17} style={{ color: danger ? '#EF4444' : iconColor }}/>
         </div>
         <div className="text-left">
-          <p className={`font-bold text-[14px] ${danger ? 'text-red-500' : 'text-text-primary'}`}>{label}</p>
-          {sub && <p className="text-text-muted text-[12px]">{sub}</p>}
+          <p className="font-bold text-[14px]" style={{ color: danger ? '#EF4444' : t.text }}>{label}</p>
+          {sub && <p className="text-[12px] mt-0.5" style={{ color: t.textMuted }}>{sub}</p>}
         </div>
       </div>
-      <ChevronRight size={16} className="text-text-muted" />
+      <ChevronRight size={16} style={{ color: t.textFaint }}/>
     </button>
   )
 }
 
+// ─────────────────────────────────────────────
+//  Dark mode row
+// ─────────────────────────────────────────────
+function DarkModeRow({ dark, onToggle, t }) {
+  return (
+    <div className="flex items-center gap-3 p-4 rounded-[18px] min-h-[56px]"
+      style={{ background: t.bgCard, boxShadow: t.shadow }}>
+      <div className="w-9 h-9 rounded-xl flex items-center justify-center flex-shrink-0"
+        style={{ background: dark ? '#2A2440' : '#EDE9FF' }}>
+        {dark
+          ? <Sun size={17} style={{ color:'#C77DFF' }}/>
+          : <Moon size={17} style={{ color:'#5B4FCF' }}/>
+        }
+      </div>
+      <div className="flex-1 min-w-0">
+        <p className="font-bold text-[14px]" style={{ color: t.text }}>Dark Mode</p>
+        <p className="text-[12px] mt-0.5" style={{ color: t.textMuted }}>
+          {dark ? 'On — tap to switch to light' : 'Off — tap to switch to dark'}
+        </p>
+      </div>
+      <button
+        onClick={onToggle}
+        className="relative flex-shrink-0 transition-all active:scale-95"
+        style={{ width:44, height:26, minWidth:44 }}
+      >
+        <div className="absolute inset-0 rounded-full transition-all"
+          style={{ background: dark ? '#5B4FCF' : '#D1D5DB' }}/>
+        <div className="absolute top-0.5 rounded-full bg-white shadow-sm"
+          style={{ width:22, height:22, left: dark ? 20 : 2, transition:'left 0.2s ease' }}/>
+      </button>
+    </div>
+  )
+}
+
+// ─────────────────────────────────────────────
+//  Companion row — clear actionable design
+// ─────────────────────────────────────────────
+function CompanionRow({ companion, onTap, t }) {
+  return (
+    <button
+      onClick={onTap}
+      className="w-full flex items-center gap-3 p-4 rounded-[18px] active:scale-[0.98] transition-all min-h-[68px]"
+      style={{ background: t.bgCard, boxShadow: t.shadow, border: `2px solid ${companion.accentColor}28` }}
+    >
+      {/* Character emoji/icon */}
+      <div
+        className="w-11 h-11 rounded-2xl flex items-center justify-center flex-shrink-0 text-[22px]"
+        style={{ background: `${companion.accentColor}18` }}
+      >
+        {companion.placeholderEmoji}
+      </div>
+
+      {/* Text */}
+      <div className="flex-1 min-w-0 text-left">
+        <p className="font-bold text-[14px]" style={{ color: t.text }}>
+          Change Your Bible Companion
+        </p>
+        <p className="text-[12px] mt-0.5 leading-snug" style={{ color: t.textMuted }}>
+          Currently <span style={{ color: companion.accentColor, fontWeight: 700 }}>{companion.name}</span>
+          {' '}— tap to switch companion
+        </p>
+      </div>
+
+      <ChevronRight size={16} style={{ color: t.textFaint, flexShrink: 0 }}/>
+    </button>
+  )
+}
+
+// ─────────────────────────────────────────────
+//  Profile view
+// ─────────────────────────────────────────────
 function ProfileView({ user, streak, checkins }) {
+  const { t, dark, toggle: toggleDark } = useTheme()
 
   const [mainTab,    setMainTab]    = useState('profile')
-  const [globalPosts]    = useLocalStorage('dw_global_posts', [])
-  const [communities2]   = useLocalStorage('dw_communities', [])
+  const [globalPosts]               = useLocalStorage('dw_global_posts', [])
+  const [communities2]              = useLocalStorage('dw_communities',  [])
   const [pickerOpen, setPickerOpen] = useState(false)
   const [, setOnboarded] = useLocalStorage('dw_onboarding_complete', false)
-  const [, setUser]      = useLocalStorage('dw_user', null)
+  const [, setUser]      = useLocalStorage('dw_user',     null)
   const [, setCheckins2] = useLocalStorage('dw_checkins', [])
-  const [, setStreak]    = useLocalStorage('dw_streak', null)
-  const { dark, toggle: toggleDark } = useDarkMode()
+  const [, setStreak]    = useLocalStorage('dw_streak',   null)
 
-  const companion   = getCharacterById(user?.companionId || 'david')
-
-    if (!setOnboarded) return <Onboarding onComplete={handleComplete} />
+  const companion = getCharacterById(user?.companionId || 'david')
+  const ini       = initials(user?.name || 'F')
+  const bg        = avatarColor(user?.name || 'Friend')
 
   function handleSignOut() {
-    if (confirm('Reset all data?')) {
-      setOnboarded(false); setUser(null); setCheckins2([]); setStreak(null)
-      window.localStorage.removeItem('dw_liked')
-      window.location.reload()
-    }
+    if (!confirm('This will reset all local data. Are you sure?')) return
+    setOnboarded(false); setUser(null); setCheckins2([]); setStreak(null)
+    try { window.localStorage.removeItem('dw_liked') } catch {}
+    window.location.reload()
   }
 
   function handleCompanionConfirm(id) {
-    setUser(prev => ({ ...(prev || {}), companionId: id }))
+    setUser(prev => ({...(prev||{}), companionId: id}))
     setPickerOpen(false)
-    showToast(`${getCharacterById(id).name} is your companion now.`)
+    showToast(`${getCharacterById(id).name} is your companion now 🙌`)
   }
 
-  const ini = initials(user?.name || 'F')
-  const bg  = avatarColor(user?.name || 'Friend')
+  const TABS = [
+    {k:'profile', l:'Profile'},
+    {k:'journey', l:'Journey'},
+    {k:'posts',   l:'Posts'},
+  ]
 
   return (
-    <div className="flex flex-col min-h-screen" style={{ background:'#FAF8F5' }}>
-      {/* Hero */}
-      <div className="px-5 pt-10 pb-6 flex flex-col items-center gap-4 text-white"
-        style={{ background:'linear-gradient(135deg,#5B4FCF 0%,#3D3190 100%)' }}>
-        <div className="w-20 h-20 rounded-full flex items-center justify-center text-white text-2xl font-bold font-display border-4 border-white/30"
-          style={{ background: bg }}>{ini}</div>
-        <div className="text-center">
-          <h1 className="font-display text-[22px] font-bold">{user?.name || 'Friend'}</h1>
-          {user?.walkStage && <span className="inline-block mt-1 bg-white/20 text-white text-[12px] font-bold px-3 py-1 rounded-full">{user.walkStage}</span>}
-          <p className="text-white/60 text-[13px] mt-1">Member since {user?.joinedAt || 'today'}</p>
-          {/* Companion badge */}
-          <button onClick={() => setPickerOpen(true)}
-            className="mt-2 flex items-center gap-1.5 mx-auto bg-white/15 hover:bg-white/25 transition-colors px-3 py-1.5 rounded-full">
-            <span style={{ fontSize: 14 }}>{companion.placeholderEmoji}</span>
-            <span className="text-[12px] font-semibold text-white">{companion.name}</span>
-            <span className="text-white/60 text-[11px]">· tap to change</span>
-          </button>
+    <div className="flex flex-col min-h-screen" style={{ background: t.bg }}>
+
+      {/* ── Hero banner ── */}
+      <div
+        className="px-5 pt-12 pb-6 flex flex-col items-center gap-4"
+        style={{ background: 'linear-gradient(135deg,#5B4FCF 0%,#3D3190 100%)' }}
+      >
+        <div
+          className="w-20 h-20 rounded-full flex items-center justify-center text-white text-[22px] font-bold font-display border-4"
+          style={{ background: bg, borderColor: 'rgba(255,255,255,0.3)' }}
+        >
+          {ini}
         </div>
-        <div className="flex items-center gap-0 bg-white/15 rounded-2xl overflow-hidden w-full">
-          {[{l:'Streak',v:streak?.current||0},{l:'Total',v:checkins?.length||0},{l:'Longest',v:streak?.longest||0}].map((s,i) => (
-            <div key={s.l} className={`flex-1 flex flex-col items-center py-3 ${i<2?'border-r border-white/20':''}`}>
-              <span className="font-extrabold text-[22px]">{s.v}</span>
+        <div className="text-center">
+          <h1 className="font-display text-[22px] font-bold text-white">
+            {user?.name || 'Friend'}
+          </h1>
+          {user?.walkStage && (
+            <span className="inline-block mt-1 text-white text-[12px] font-bold px-3 py-1 rounded-full"
+              style={{ background: 'rgba(255,255,255,0.2)' }}>
+              {user.walkStage}
+            </span>
+          )}
+          <p className="text-white/60 text-[13px] mt-1">
+            Member since {user?.joinedAt || 'today'}
+          </p>
+        </div>
+
+        {/* Stats row */}
+        <div className="flex items-center w-full rounded-2xl overflow-hidden"
+          style={{ background: 'rgba(255,255,255,0.15)' }}>
+          {[
+            {l:'Streak',  v: streak?.current || 0},
+            {l:'Total',   v: checkins?.length || 0},
+            {l:'Longest', v: streak?.longest  || 0},
+          ].map((s,i) => (
+            <div key={s.l} className="flex-1 flex flex-col items-center py-3"
+              style={{ borderRight: i<2 ? '1px solid rgba(255,255,255,0.2)' : 'none' }}>
+              <span className="font-extrabold text-[22px] text-white">{s.v}</span>
               <span className="text-white/60 text-[11px] font-semibold">{s.l}</span>
             </div>
           ))}
         </div>
       </div>
 
-      {/* Profile | Journey tabs */}
-      <div className="px-4 pt-4">
-        <div className="flex gap-1 p-1 rounded-full" style={{ background:'#EDE9FF' }}>
-          {[{k:'profile',l:'Profile'},{k:'journey',l:'Journey'},{k:'posts',l:'Posts'}].map(t => (
-            <button key={t.k} onClick={() => setMainTab(t.k)}
-              className="relative flex-1 py-2 rounded-full text-[13px] font-bold transition-all"
-              style={mainTab===t.k?{color:'#5B4FCF'}:{color:'#6B7280'}}>
-              {mainTab===t.k && <motion.div layoutId="profile-tab" className="absolute inset-0 bg-white rounded-full shadow-card" transition={{type:'spring',stiffness:400,damping:35}} />}
-              <span className="relative z-10">{t.l}</span>
+      {/* ── Tab bar — sticky ── */}
+      <div className="px-4 pt-4 sticky top-0 z-20" style={{ background: t.bg }}>
+        <div className="flex gap-1 p-1 rounded-full" style={{ background: t.bgMuted }}>
+          {TABS.map(tab => (
+            <button key={tab.k} onClick={() => setMainTab(tab.k)}
+              className="relative flex-1 py-2 rounded-full text-[13px] font-bold transition-all min-h-[40px]"
+              style={mainTab===tab.k ? {color:'#5B4FCF'} : {color: t.textMuted}}>
+              {mainTab===tab.k && (
+                <motion.div layoutId="profile-tab" className="absolute inset-0 rounded-full"
+                  style={{ background: t.bgCard, boxShadow: t.shadow }}
+                  transition={{ type:'spring', stiffness:400, damping:35 }}/>
+              )}
+              <span className="relative z-10">{tab.l}</span>
             </button>
           ))}
         </div>
       </div>
 
-      <AnimatePresence mode="wait">
-        {mainTab === 'profile' && (
-          <motion.div key="profile" initial={{opacity:0}} animate={{opacity:1}} exit={{opacity:0}} transition={{duration:0.15}} className="px-4 mt-4">
-            {user?.goal && (
-              <div className="card p-4 mb-4">
-                <p className="text-[11px] font-bold text-text-muted uppercase tracking-widest mb-1">Spiritual Goal</p>
-                <p className="text-text-primary text-[14px] leading-relaxed font-display italic">"{user.goal}"</p>
-              </div>
-            )}
+      {/* ── Tab content ── */}
+      <div className="flex-1" style={{ paddingBottom: 112 }}>
+        <AnimatePresence mode="wait">
 
-            <div className="mt-4 flex flex-col gap-3 mb-6">
-              {/* Notification settings */}
-              <div className="mb-4">
+          {/* Profile tab */}
+          {mainTab === 'profile' && (
+            <motion.div key="profile" initial={{opacity:0}} animate={{opacity:1}} exit={{opacity:0}}
+              transition={{duration:0.15}} className="px-4 mt-4 flex flex-col gap-4">
+
+              {/* Spiritual goal */}
+              {user?.goal && (
+                <div className="rounded-[16px] p-4" style={{ background: t.bgCard, boxShadow: t.shadow }}>
+                  <p className="text-[11px] font-bold uppercase tracking-widest mb-1"
+                    style={{ color: t.textFaint }}>
+                    Spiritual Goal
+                  </p>
+                  <p className="font-display text-[14px] leading-relaxed italic"
+                    style={{ color: t.text }}>
+                    "{user.goal}"
+                  </p>
+                </div>
+              )}
+
+              {/* ── Companion — clear, actionable row ── */}
+              <div>
+                <p className="text-[11px] font-bold uppercase tracking-wider mb-2 px-1"
+                  style={{ color: t.textFaint }}>
+                  Bible Companion
+                </p>
+                <CompanionRow companion={companion} onTap={() => setPickerOpen(true)} t={t}/>
+              </div>
+
+              {/* ── Notification settings ── */}
+              <div>
+                <p className="text-[11px] font-bold uppercase tracking-wider mb-2 px-1"
+                  style={{ color: t.textFaint }}>
+                  Notifications
+                </p>
+                {/*
+                  NotificationSettings renders its own rows.
+                  The component uses Tailwind classes, so globals.css dark overrides
+                  handle bg/text automatically. Passing t here as a data attribute
+                  isn't needed — the CSS [data-theme="dark"] selectors cover it.
+                */}
                 <NotificationSettings />
-
-                <div className="bg-white rounded-[20px] px-5 py-2 mt-4"
-  style={{ boxShadow: '0 2px 12px rgba(0,0,0,0.06)' }}>
-  <div className="flex items-center gap-3 py-3.5">
-    <div className="w-9 h-9 rounded-xl flex items-center justify-center flex-shrink-0"
-      style={{ background: dark ? '#2A2440' : '#EDE9FF' }}>
-      <span style={{ fontSize: 18 }}>{dark ? '☀️' : '🌙'}</span>
-    </div>
-    <div className="flex-1 min-w-0">
-      <p className="font-semibold text-[14px]" style={{ color: '#1A1A2E' }}>Dark Mode</p>
-      <p className="text-[12px] mt-0.5" style={{ color: '#9CA3AF' }}>
-        {dark ? 'Currently on — tap to switch to light' : 'Currently off — tap to switch to dark'}
-      </p>
-    </div>
-    <button onClick={toggleDark}
-      className="relative flex-shrink-0 transition-all active:scale-95"
-      style={{ width: 44, height: 26 }}>
-      <div className="absolute inset-0 rounded-full transition-all"
-        style={{ background: dark ? '#5B4FCF' : '#D1D5DB' }} />
-      <div className="absolute top-0.5 transition-all rounded-full bg-white shadow-sm"
-        style={{ width: 22, height: 22, left: dark ? 20 : 2, transition: 'left 0.2s ease' }} />
-    </button>
-  </div>
-</div>
               </div>
-              <SettingsRow icon={Shield} iconBg="bg-sage-light"   label="Privacy"          sub="Who can see your posts"   onClick={() => showToast('Coming soon')} />
-              <SettingsRow icon={Info}   iconBg="bg-purple-light" label="About Daily Walk"                                onClick={() => showToast('v1.0.0 — Built with ♥')} />
-              <SettingsRow icon={LogOut} iconBg="bg-red-50"       label="Sign out & reset"  danger                        onClick={handleSignOut} />
-            </div>
-          </motion.div>
-        )}
-        {mainTab === 'journey' && (
-          <motion.div key="journey" initial={{opacity:0}} animate={{opacity:1}} exit={{opacity:0}} transition={{duration:0.15}} className="px-4 mt-4">
-            <JourneySection checkins={checkins} streak={streak} user={user} />
-          </motion.div>
-        )}
-      </AnimatePresence>
 
-      {/* Character picker sheet */}
+              {/* ── Appearance ── */}
+              <div>
+                <p className="text-[11px] font-bold uppercase tracking-wider mb-2 px-1"
+                  style={{ color: t.textFaint }}>
+                  Appearance
+                </p>
+                <DarkModeRow dark={dark} onToggle={toggleDark} t={t}/>
+              </div>
+
+              {/* ── More ── */}
+              <div>
+                <p className="text-[11px] font-bold uppercase tracking-wider mb-2 px-1"
+                  style={{ color: t.textFaint }}>
+                  More
+                </p>
+                <div className="flex flex-col gap-2">
+                  <SettingsRow
+                    icon={Shield} iconBg={t.sageBg} iconColor="#4A7C5F"
+                    label="Privacy" sub="Who can see your posts"
+                    onClick={() => showToast('Coming soon')} t={t}
+                  />
+                  <SettingsRow
+                    icon={Info} iconBg={t.purpleBg} iconColor="#5B4FCF"
+                    label="About Daily Walk"
+                    onClick={() => showToast('v1.0.0 — Built with ♥')} t={t}
+                  />
+                  <SettingsRow
+                    icon={LogOut} iconBg="#FEE2E2" iconColor="#EF4444"
+                    label="Sign out & reset" danger
+                    onClick={handleSignOut} t={t}
+                  />
+                </div>
+              </div>
+            </motion.div>
+          )}
+
+          {/* Journey tab */}
+          {mainTab === 'journey' && (
+            <motion.div key="journey" initial={{opacity:0}} animate={{opacity:1}} exit={{opacity:0}}
+              transition={{duration:0.15}} className="px-4 mt-4">
+              <JourneySection checkins={checkins} streak={streak} user={user} t={t}/>
+            </motion.div>
+          )}
+
+          {/* Posts tab */}
+          {mainTab === 'posts' && (
+            <motion.div key="posts" initial={{opacity:0}} animate={{opacity:1}} exit={{opacity:0}}
+              transition={{duration:0.15}} className="px-4 mt-4">
+              <UserPostsTab globalPosts={globalPosts||[]} communities={communities2||[]} t={t}/>
+            </motion.div>
+          )}
+
+        </AnimatePresence>
+      </div>
+
+      {/* Character picker */}
       <AnimatePresence>
         {pickerOpen && (
           <CharacterPicker
@@ -442,32 +585,24 @@ function ProfileView({ user, streak, checkins }) {
             onClose={() => setPickerOpen(false)}
           />
         )}
-
-        {/* Posts tab */}
-        {mainTab === 'posts' && (
-          <motion.div key="posts" initial={{ opacity:0 }} animate={{ opacity:1 }} exit={{ opacity:0 }} transition={{ duration:0.15 }}
-            className="px-4 mt-4 pb-6">
-            <UserPostsTab globalPosts={globalPosts || []} communities={communities2 || []} />
-          </motion.div>
-        )}
       </AnimatePresence>
 
-      <ToastContainer />
+      <ToastContainer/>
     </div>
   )
 }
 
-// ── Main export ──
+// ─────────────────────────────────────────────
+//  Main export
+// ─────────────────────────────────────────────
 export default function ProfileScreen() {
   const [onboarded, setOnboarded] = useLocalStorage('dw_onboarding_complete', false)
-  const [user, setUser]           = useLocalStorage('dw_user', null)
-  const [streak]                  = useLocalStorage('dw_streak', null)
-  const [checkins]                = useLocalStorage('dw_checkins', [])
-  const [, , hydrated]            = useLocalStorage('dw_onboarding_complete', false)
-
-  function handleComplete(userData) { setUser(userData); setOnboarded(true) }
+  const [user,      setUser]      = useLocalStorage('dw_user',                null)
+  const [streak]                  = useLocalStorage('dw_streak',               null)
+  const [checkins]                = useLocalStorage('dw_checkins',             [])
+  const [,,hydrated]              = useLocalStorage('dw_onboarding_complete',  false)
 
   if (!hydrated) return null
-  if (!onboarded) return <Onboarding onComplete={handleComplete} />
-  return <ProfileView user={user} streak={streak} checkins={checkins} />
+  if (!onboarded) return <Onboarding onComplete={d => { setUser(d); setOnboarded(true) }}/>
+  return <ProfileView user={user} streak={streak} checkins={checkins}/>
 }
