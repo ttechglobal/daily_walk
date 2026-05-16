@@ -1,192 +1,135 @@
 'use client'
 
-// ── /communities — For You | My Communities | Explore ──
-// For You: global posts + community posts, merged feed.
-// Compose FAB opens PostComposer anywhere.
+// ── src/app/communities/page.js ──
+// Full communities UI is visible — users can browse everything freely.
+// ALL action buttons (Join, Post, Like, Comment, Sign In) show a
+// "Communities are coming soon" toast. No redirects, no auth walls.
 
 import { useState, useEffect, useMemo } from 'react'
-import Link from 'next/link'
-import { useRouter } from 'next/navigation'
 import { motion, AnimatePresence } from 'framer-motion'
 import {
-  Plus, Users, ChevronRight, Sparkles, Search, X as XIcon,
-  PenLine, Heart, MessageCircle, Share2, Globe
+  Search, X as XIcon, Plus, Users, Heart,
+  MessageCircle, Share2, Bookmark, MoreHorizontal,
+  Sparkles, ChevronRight, Lock,
 } from 'lucide-react'
-import { useLocalStorage } from '../../hooks/useLocalStorage'
 import { ToastContainer, showToast } from '../../components/Toast'
-import PostComposer from '../../components/PostComposer'
-import { COMMUNITY_CATEGORIES, initials, avatarColor } from '../../lib/constants'
-import { getCommunities, joinCommunity, leaveCommunity } from '../../lib/supabase/communities'
+import { avatarColor, initials } from '../../lib/constants'
 
-const CATEGORY_COLORS = {
+// ─────────────────────────────────────────────
+//  Coming-soon toast helper — used everywhere
+// ─────────────────────────────────────────────
+const cs = () => showToast('🙌 Communities are coming soon — stay tuned!')
+
+// ─────────────────────────────────────────────
+//  Colour maps
+// ─────────────────────────────────────────────
+const CAT_COLOR = {
   'Bible Study':'#5B4FCF','Prayer':'#4A7C5F','Mental Health':'#7CB9E8',
   'Youth':'#E8A838','Worship':'#C77DFF','General':'#888780',
 }
-
-function CatBadge({ category }) {
-  const color = CATEGORY_COLORS[category] || '#888780'
-  return <span className="text-[10px] font-bold px-2 py-0.5 rounded-full flex-shrink-0"
-    style={{ background:`${color}22`, color }}>{category}</span>
+const CAT_GRADIENT = {
+  'Bible Study':'linear-gradient(135deg,#5B4FCF,#3D3190)',
+  'Prayer':'linear-gradient(135deg,#4A7C5F,#2E5240)',
+  'Mental Health':'linear-gradient(135deg,#7CB9E8,#4A90C4)',
+  'Youth':'linear-gradient(135deg,#E8A838,#B07000)',
+  'Worship':'linear-gradient(135deg,#C77DFF,#7C3AED)',
+  'General':'linear-gradient(135deg,#888780,#5A5954)',
 }
+const CATEGORIES = ['All','Bible Study','Prayer','Mental Health','Youth','Worship','General']
 
-function timeAgo(iso) {
-  const diff = Date.now() - new Date(iso).getTime()
-  const m    = Math.floor(diff / 60000)
-  if (m < 1)   return 'Just now'
-  if (m < 60)  return `${m}m ago`
-  const h = Math.floor(m / 60)
-  if (h < 24)  return `${h}h ago`
-  if (h < 48)  return 'Yesterday'
-  return new Date(iso).toLocaleDateString('en-US', { month:'short', day:'numeric' })
+// ─────────────────────────────────────────────
+//  Demo data — real-feeling content for the preview
+// ─────────────────────────────────────────────
+const DEMO_POSTS = [
+  { id:'d1', authorName:'Sarah M.', content:'Started reading Psalms this morning and Psalm 23 just hit different today. "Even though I walk through the darkest valley, I will fear no evil." So much peace in those words.', passage:'Psalm 23:4', type:'reading', like_count:14, comment_count:3, createdAt:new Date(Date.now()-3600000).toISOString() },
+  { id:'d2', authorName:'James K.', content:'Day 12 of the New Believer plan and I feel like a new person. The verse on identity in Christ today just broke something open in me. Grateful for this community.', passage:'2 Corinthians 5:17', type:'encouragement', like_count:22, comment_count:7, createdAt:new Date(Date.now()-7200000).toISOString() },
+  { id:'d3', authorName:'Priya T.', content:'Praying for anyone going through a hard season right now. God sees you, He hasn\'t forgotten you, and His timing is perfect. Drop a 🙏 and I\'ll be praying for you today.', type:'prayer', like_count:41, comment_count:12, createdAt:new Date(Date.now()-10800000).toISOString() },
+  { id:'d4', authorName:'David O.', content:'Just finished the book of Romans. Reading Paul\'s explanation of grace made me realise I\'ve been treating it as a reward for good behaviour instead of a free gift. Mind blown.', passage:'Romans 5:1', type:'general', like_count:18, comment_count:5, createdAt:new Date(Date.now()-86400000).toISOString() },
+]
+const DEMO_COMMS = [
+  { id:'c1', name:'Daily Psalms',  category:'Bible Study',   member_count:1240, description:'Reading through the Psalms together, one a day.', visibility:'public' },
+  { id:'c2', name:'Prayer Circle', category:'Prayer',        member_count:890,  description:'A safe place to share requests and pray for each other.', visibility:'public' },
+  { id:'c3', name:'New Believers', category:'General',       member_count:654,  description:'Welcome! We are all learning to walk with God here.', visibility:'public' },
+  { id:'c4', name:'Youth & Faith', category:'Youth',         member_count:432,  description:'For the next generation walking boldly with Jesus.', visibility:'public' },
+  { id:'c5', name:'Worship Room',  category:'Worship',       member_count:321,  description:'Songs, Psalms, and the presence of God — daily.', visibility:'public' },
+]
+
+// ─────────────────────────────────────────────
+//  Helpers
+// ─────────────────────────────────────────────
+function timeAgo(d) {
+  if (!d) return ''
+  const s = (Date.now()-new Date(d).getTime())/1000
+  if (s<60) return 'just now'
+  if (s<3600) return `${Math.floor(s/60)}m`
+  if (s<86400) return `${Math.floor(s/3600)}h`
+  return new Date(d).toLocaleDateString('en-US',{month:'short',day:'numeric'})
 }
+function fmt(n){const v=n||0;return v>=1000?`${(v/1000).toFixed(1)}k`:String(v)}
 
-function LinkPreviewCard({ preview }) {
-  if (!preview) return null
+// ─────────────────────────────────────────────
+//  Post Card
+// ─────────────────────────────────────────────
+function PostCard({ post }) {
+  const [liked, setLiked] = useState(false)
+  const [saved, setSaved] = useState(false)
+  const [count, setCount] = useState(post.like_count||0)
+  const [anim,  setAnim]  = useState(false)
+  const tc = post.type==='prayer'?'#4A7C5F':post.type==='encouragement'?'#E8A838':post.type==='reading'?'#5B4FCF':'#888780'
+
+  function handleLike(){
+    setLiked(l=>!l); setCount(c=>liked?Math.max(0,c-1):c+1)
+    setAnim(true); setTimeout(()=>setAnim(false),380); cs()
+  }
+
   return (
-    <a href={preview.url} target="_blank" rel="noopener noreferrer"
-      className="block rounded-[12px] overflow-hidden border mt-2"
-      style={{ borderColor:'#E8E5E0' }}>
-      {preview.image && <img src={preview.image} alt="" className="w-full h-20 object-cover" />}
-      <div className="px-3 py-2">
-        <p className="text-[10px] font-bold uppercase tracking-wider" style={{ color:'#9CA3AF' }}>{preview.domain}</p>
-        {preview.title && <p className="font-bold text-[12px] mt-0.5 line-clamp-1" style={{ color:'#1A1A2E' }}>{preview.title}</p>}
-      </div>
-    </a>
-  )
-}
-
-function FeedPostCard({ post, community, isGlobal, onLike, onShare, idx }) {
-  const router   = useRouter()
-  const isLiked  = post.likedBy?.includes((() => { try { const u=localStorage.getItem('dw_user'); return u?JSON.parse(u)?.id||'local_user':'local_user' } catch { return 'local_user' } })())
-  const likes    = post.likedBy?.length || 0
-  const comments = post.comments?.length || 0
-  const typeColor = { general:'#888780', reading:'#5B4FCF', prayer:'#4A7C5F', encouragement:'#E8A838' }[post.type] || '#888780'
-
-  return (
-    <motion.div initial={{ opacity:0, y:10 }} animate={{ opacity:1, y:0 }} transition={{ delay:idx*0.04 }}
-      className="bg-white rounded-[16px] overflow-hidden"
-      style={{ boxShadow:'0 2px 10px rgba(0,0,0,0.06)' }}>
-
-      {/* Source tag */}
-      {isGlobal ? (
-        <div className="flex items-center gap-1.5 px-4 pt-3 pb-1" style={{ borderBottom:'1px solid #F5F5F5' }}>
-          <Globe size={11} style={{ color:'#5B4FCF' }} />
-          <span className="text-[11px] font-bold" style={{ color:'#5B4FCF' }}>Daily Walk Community</span>
-        </div>
-      ) : community ? (
-        <button onClick={() => router.push(`/community/${community.slug || community.id}`)}
-          className="flex items-center gap-1.5 px-4 pt-3 pb-1 w-full text-left"
-          style={{ borderBottom:'1px solid #F5F5F5' }}>
-          <div className="w-3.5 h-3.5 rounded-full flex items-center justify-center text-white text-[7px] font-bold flex-shrink-0"
-            style={{ background: CATEGORY_COLORS[community.category]||'#888780' }}>
-            {community.name[0]}
+    <motion.div initial={{opacity:0,y:8}} animate={{opacity:1,y:0}}
+      className="bg-white rounded-[20px] overflow-hidden" style={{boxShadow:'0 2px 12px rgba(0,0,0,0.06)'}}>
+      <div className="flex items-center gap-3 px-4 pt-4 pb-2">
+        <div className="w-9 h-9 rounded-full flex items-center justify-center text-white text-[12px] font-bold flex-shrink-0"
+          style={{background:avatarColor(post.authorName||'A')}}>{initials(post.authorName||'A')}</div>
+        <div className="flex-1 min-w-0">
+          <div className="flex items-center gap-2">
+            <p className="font-bold text-[14px] truncate" style={{color:'#1A1A2E'}}>{post.authorName}</p>
+            {post.type&&post.type!=='general'&&(
+              <span className="text-[10px] font-bold px-2 py-0.5 rounded-full capitalize flex-shrink-0"
+                style={{background:`${tc}18`,color:tc}}>{post.type}</span>
+            )}
           </div>
-          <span className="text-[11px] font-bold" style={{ color:CATEGORY_COLORS[community.category]||'#888780' }}>
-            {community.name}
-          </span>
+          <p className="text-[12px] mt-0.5" style={{color:'#9CA3AF'}}>{timeAgo(post.createdAt)}</p>
+        </div>
+        <button onClick={cs} className="w-8 h-8 rounded-full flex items-center justify-center hover:bg-gray-50">
+          <MoreHorizontal size={16} style={{color:'#9CA3AF'}}/>
         </button>
-      ) : null}
-
-      <div className="p-4 flex flex-col gap-2.5">
-        <div className="flex items-start justify-between gap-2">
-          <div className="flex items-center gap-2.5">
-            <div className="w-8 h-8 rounded-full flex items-center justify-center text-white text-[11px] font-bold flex-shrink-0"
-              style={{ background: avatarColor(post.authorName) }}>
-              {post.authorInitials || initials(post.authorName)}
-            </div>
-            <div>
-              <p className="font-bold text-[14px]" style={{ color:'#1A1A2E' }}>{post.authorName}</p>
-              <span className="text-[11px] font-bold px-1.5 py-0.5 rounded-full"
-                style={{ background:`${typeColor}18`, color:typeColor }}>{post.type}</span>
-            </div>
-          </div>
-          <span className="text-[11px] flex-shrink-0" style={{ color:'#9CA3AF' }}>{timeAgo(post.createdAt)}</span>
-        </div>
-
-        {post.passage && (
-          <span className="self-start text-[11px] font-bold px-2.5 py-1 rounded-full"
-            style={{ background:'#EDE9FF', color:'#5B4FCF' }}>{post.passage}</span>
-        )}
-        <p className="text-[15px] leading-[1.8]" style={{ color:'#1A1A2E' }}>{post.content}</p>
-        {post.linkPreview && <LinkPreviewCard preview={post.linkPreview} />}
-
-        <div className="flex items-center gap-4 pt-1 border-t border-gray-100">
-          <button onClick={() => onLike(post)} className="flex items-center gap-1.5">
-            <motion.div animate={isLiked ? { scale:[1,1.3,1] } : {}} transition={{ duration:0.2 }}>
-              <Heart size={16} style={{ color:isLiked?'#EF4444':'#9CA3AF', fill:isLiked?'#EF4444':'none' }} />
-            </motion.div>
-            {likes > 0 && <span className="text-[12px] font-semibold" style={{ color:isLiked?'#EF4444':'#9CA3AF' }}>{likes}</span>}
-          </button>
-          <button onClick={() => community && router.push(`/community/${community.slug || community.id}`)}
-            className="flex items-center gap-1.5">
-            <MessageCircle size={16} style={{ color:'#9CA3AF' }} />
-            {comments > 0 && <span className="text-[12px] font-semibold" style={{ color:'#9CA3AF' }}>{comments}</span>}
-          </button>
-          <button onClick={() => onShare(post)} className="flex items-center gap-1.5 ml-auto">
-            <Share2 size={14} style={{ color:'#9CA3AF' }} />
-          </button>
-        </div>
       </div>
-    </motion.div>
-  )
-}
-
-function MyCommunityCard({ community, idx }) {
-  const router = useRouter()
-  const color  = CATEGORY_COLORS[community.category] || '#888780'
-  return (
-    <motion.button initial={{ opacity:0, y:12 }} animate={{ opacity:1, y:0 }} transition={{ delay:idx*0.05 }}
-      onClick={() => router.push(`/community/${community.slug || community.id}`)}
-      className="w-full bg-white rounded-[16px] p-4 flex items-center gap-3 text-left hover:shadow-md active:scale-[0.98] transition-all"
-      style={{ boxShadow:'0 2px 10px rgba(0,0,0,0.06)', borderLeft:`3px solid ${color}` }}>
-      <div className="w-11 h-11 rounded-full flex items-center justify-center text-white font-display font-bold text-[18px] flex-shrink-0"
-        style={{ background:color }}>
-        {community.name[0].toUpperCase()}
+      {post.passage&&(
+        <div className="mx-4 mb-2 px-3 py-2 rounded-xl" style={{background:'#F8F7FF',borderLeft:'3px solid #5B4FCF'}}>
+          <p className="text-[12px] font-bold" style={{color:'#5B4FCF'}}>{post.passage}</p>
+        </div>
+      )}
+      <div className="px-4 pb-3">
+        <p className="text-[15px] leading-[1.7]" style={{color:'#1A1A2E'}}>{post.content}</p>
       </div>
-      <div className="flex-1 min-w-0">
-        <div className="flex items-center gap-2 mb-0.5">
-          <p className="font-bold text-[15px] truncate" style={{ color:'#1A1A2E' }}>{community.name}</p>
-          <CatBadge category={community.category} />
-        </div>
-        <div className="flex items-center gap-1.5" style={{ color:'#6B7280' }}>
-          <Users size={11} /><span className="text-[12px]">{(community.member_count || 0) + 1}</span>
-          <span className="text-[11px]">· Active recently</span>
-        </div>
-      </div>
-      <ChevronRight size={16} style={{ color:'#9CA3AF', flexShrink:0 }} />
-    </motion.button>
-  )
-}
-
-function ExploreCard({ community, onToggleJoin, idx }) {
-  const router = useRouter()
-  const color  = CATEGORY_COLORS[community.category] || '#888780'
-  return (
-    <motion.div initial={{ opacity:0, y:14 }} animate={{ opacity:1, y:0 }} transition={{ delay:idx*0.06 }}
-      className="bg-white rounded-[20px] overflow-hidden"
-      style={{ boxShadow:'0 2px 10px rgba(0,0,0,0.07)' }}>
-      <div className="h-1 w-full" style={{ background:color }} />
-      <button className="w-full text-left px-4 pt-4 pb-2" onClick={() => router.push(`/community/${community.slug || community.id}`)}>
-        <p className="font-display text-[17px] font-semibold" style={{ color:'#1A1A2E' }}>{community.name}</p>
-        <div className="flex items-center gap-2 my-1">
-          <CatBadge category={community.category} />
-          <div className="flex items-center gap-1" style={{ color:'#6B7280' }}>
-            <Users size={11} /><span className="text-[12px]">{(community.member_count || 0) + (community.joined ? 1 : 0)}</span>
-          </div>
-        </div>
-        <p className="text-[13px] leading-relaxed line-clamp-2" style={{ color:'#6B7280' }}>{community.description}</p>
-      </button>
-      <div className="px-4 pb-4 flex items-center justify-between">
-        <div className="flex items-center">
-          {[0,1,2].slice(0,Math.min(3, community.member_count || 0)).map(i=>(
-            <div key={i} className="w-6 h-6 rounded-full border-2 border-white flex items-center justify-center text-white text-[9px] font-bold"
-              style={{ background:color, marginLeft:i>0?-8:0 }}>{community.name[0]}</div>
-          ))}
-        </div>
-        <button onClick={() => onToggleJoin(community.id)}
-          className="rounded-full px-4 py-2 text-[13px] font-bold transition-all active:scale-95"
-          style={community.joined?{background:'#E8F4ED',color:'#4A7C5F'}:{background:'#5B4FCF',color:'white'}}>
-          {community.joined ? 'Joined ✓' : 'Join'}
+      <div className="flex items-center gap-1 px-3 pb-3 pt-2 border-t" style={{borderColor:'#F5F5F5'}}>
+        <button onClick={handleLike}
+          className="flex items-center gap-1.5 px-3 py-2 rounded-full transition-all active:scale-90"
+          style={{color:liked?'#E84060':'#9CA3AF',background:liked?'#FFF0F3':'transparent'}}>
+          <motion.div animate={anim?{scale:[1,1.5,1]}:{}} transition={{duration:0.35}}>
+            <Heart size={17} fill={liked?'#E84060':'none'}/>
+          </motion.div>
+          <span className="text-[13px] font-semibold">{fmt(count)}</span>
+        </button>
+        <button onClick={cs} className="flex items-center gap-1.5 px-3 py-2 rounded-full" style={{color:'#9CA3AF'}}>
+          <MessageCircle size={17}/>
+          <span className="text-[13px] font-semibold">{fmt(post.comment_count)}</span>
+        </button>
+        <button onClick={cs} className="flex items-center gap-1.5 px-3 py-2 rounded-full" style={{color:'#9CA3AF'}}>
+          <Share2 size={17}/>
+        </button>
+        <button onClick={()=>{setSaved(s=>!s);cs()}}
+          className="ml-auto flex items-center px-3 py-2 rounded-full"
+          style={{color:saved?'#5B4FCF':'#9CA3AF',background:saved?'#EDE9FF':'transparent'}}>
+          <Bookmark size={17} fill={saved?'#5B4FCF':'none'}/>
         </button>
       </div>
     </motion.div>
@@ -194,239 +137,187 @@ function ExploreCard({ community, onToggleJoin, idx }) {
 }
 
 // ─────────────────────────────────────────────
+//  Community cards
+// ─────────────────────────────────────────────
+function MyCommunityCard({ community, dimmed }) {
+  const gradient = CAT_GRADIENT[community.category]||CAT_GRADIENT.General
+  const color    = CAT_COLOR[community.category]||'#888780'
+  return (
+    <motion.button initial={{opacity:0,y:6}} animate={{opacity:dimmed?0.45:1,y:0}} whileTap={{scale:0.97}}
+      onClick={cs} className="w-full bg-white rounded-[20px] overflow-hidden flex items-center gap-4 px-4 py-3.5 text-left"
+      style={{boxShadow:'0 2px 10px rgba(0,0,0,0.06)'}}>
+      <div className="w-14 h-14 rounded-2xl flex items-center justify-center text-white font-bold text-[22px] flex-shrink-0"
+        style={{background:gradient}}>{(community.name||'C')[0].toUpperCase()}</div>
+      <div className="flex-1 min-w-0">
+        <p className="font-bold text-[15px] truncate" style={{color:'#1A1A2E'}}>{community.name}</p>
+        <div className="flex items-center gap-2 mt-0.5">
+          <span className="text-[11px] font-bold px-2 py-0.5 rounded-full"
+            style={{background:`${color}18`,color}}>{community.category}</span>
+          <span className="text-[12px]" style={{color:'#9CA3AF'}}>{fmt(community.member_count)} members</span>
+        </div>
+        {community.description&&<p className="text-[12px] mt-1 line-clamp-1" style={{color:'#6B7280'}}>{community.description}</p>}
+      </div>
+      <ChevronRight size={18} style={{color:'#D1D5DB',flexShrink:0}}/>
+    </motion.button>
+  )
+}
+
+function ExploreCard({ community, idx }) {
+  const gradient = CAT_GRADIENT[community.category]||CAT_GRADIENT.General
+  const color    = CAT_COLOR[community.category]||'#888780'
+  return (
+    <motion.div initial={{opacity:0,y:8}} animate={{opacity:1,y:0}} transition={{delay:idx*0.05}}
+      className="bg-white rounded-[20px] overflow-hidden" style={{boxShadow:'0 2px 12px rgba(0,0,0,0.06)'}}>
+      <div className="h-24 flex items-end px-4 pb-3 relative" style={{background:gradient}}>
+        <div className="absolute inset-0 opacity-10"
+          style={{backgroundImage:'radial-gradient(circle at 25% 25%, white 1.5px, transparent 1.5px)',backgroundSize:'28px 28px'}}/>
+        {community.visibility==='private'&&(
+          <div className="absolute top-3 right-3 w-6 h-6 rounded-full bg-black/30 flex items-center justify-center">
+            <Lock size={12} className="text-white"/>
+          </div>
+        )}
+        <span className="relative z-10 text-[11px] font-bold px-2.5 py-1 rounded-full bg-white/25 text-white">
+          {community.category}
+        </span>
+      </div>
+      <div className="px-4 pt-3 pb-4">
+        <p className="font-bold text-[15px]" style={{color:'#1A1A2E'}}>{community.name}</p>
+        {community.description&&(
+          <p className="text-[13px] mt-1 line-clamp-2 leading-relaxed" style={{color:'#6B7280'}}>{community.description}</p>
+        )}
+        <div className="flex items-center justify-between mt-3">
+          <div className="flex items-center gap-1">
+            <Users size={13} style={{color:'#9CA3AF'}}/>
+            <span className="text-[12px]" style={{color:'#9CA3AF'}}>{fmt(community.member_count)} members</span>
+          </div>
+          <button onClick={cs}
+            className="px-4 py-2 rounded-full text-[13px] font-bold text-white active:scale-95 transition-all"
+            style={{background:'#5B4FCF'}}>Join</button>
+        </div>
+      </div>
+    </motion.div>
+  )
+}
+
+// ─────────────────────────────────────────────
+//  Main
+// ─────────────────────────────────────────────
 export default function CommunitiesPage() {
-  const router   = useRouter()
-  const [tab,          setTab]          = useState('foryou')
-  const [filter,       setFilter]       = useState('All')
-  const [query,        setQuery]        = useState('')
-  const [compose,      setCompose]      = useState(false)
-  const [communities,  setCommunities]  = useLocalStorage('dw_communities_v3', [])
+  const [tab,    setTab]    = useState('foryou')
+  const [query,  setQuery]  = useState('')
+  const [filter, setFilter] = useState('All')
 
-  // Load communities from Supabase on mount (merges with localStorage)
-  useEffect(() => {
-    getCommunities().then(list => { setCommunities(list || []) }).catch(() => null)
-  }, [])
-  const [globalPosts,  setGlobalPosts]  = useLocalStorage('dw_global_posts', [])
-  const [, , hydrated]                  = useLocalStorage('dw_communities_v3', [])
+  const filtered = useMemo(()=>{
+    let list = DEMO_COMMS
+    if(filter!=='All') list=list.filter(c=>c.category===filter)
+    if(query.trim()){const q=query.toLowerCase();list=list.filter(c=>c.name?.toLowerCase().includes(q)||c.description?.toLowerCase().includes(q))}
+    return list
+  },[filter,query])
 
-  async function toggleJoin(id) {
-    const comm = (communities||[]).find(x=>x.id===id)
-    if (!comm) return
-    const wasJoined = comm.joined
-    // Optimistic update
-    setCommunities(prev=>(prev||[]).map(x=>
-      x.id!==id?x:{...x,joined:!wasJoined,member_count:(x.member_count||0)+(wasJoined?-1:1)}
-    ))
-    try {
-      if (wasJoined) { await leaveCommunity(id); showToast('Left community') }
-      else           { await joinCommunity(id);  showToast(`Joined ${comm.name}!`) }
-    } catch {
-      // Revert on failure
-      setCommunities(prev=>(prev||[]).map(x=>
-        x.id!==id?x:{...x,joined:wasJoined,member_count:(x.member_count||0)+(wasJoined?1:-1)}
-      ))
-      showToast('Failed — please try again')
-    }
-  }
-
-  function handleLikeGlobal(post) {
-    setGlobalPosts(prev=>(prev||[]).map(p=>{
-      if(p.id!==post.id) return p
-      const liked = p.likedBy?.includes((() => { try { const u=localStorage.getItem('dw_user'); return u?JSON.parse(u)?.id||'local_user':'local_user' } catch { return 'local_user' } })())
-      return {...p,likedBy:liked?(p.likedBy||[]).filter(x=>x!==(() => { try { const u=localStorage.getItem('dw_user'); return u?JSON.parse(u)?.id||'local_user':'local_user' } catch { return 'local_user' } })()):[...(p.likedBy||[]),(() => { try { const u=localStorage.getItem('dw_user'); return u?JSON.parse(u)?.id||'local_user':'local_user' } catch { return 'local_user' } })()]}
-    }))
-  }
-
-  function handleLikeCommunity(post) {
-    setCommunities(prev=>(prev||[]).map(c=>{
-      if(c.id!==post.communityId) return c
-      return {...c,posts:(c.posts||[]).map(p=>{
-        if(p.id!==post.id) return p
-        const liked = p.likedBy?.includes((() => { try { const u=localStorage.getItem('dw_user'); return u?JSON.parse(u)?.id||'local_user':'local_user' } catch { return 'local_user' } })())
-        return {...p,likedBy:liked?(p.likedBy||[]).filter(x=>x!==(() => { try { const u=localStorage.getItem('dw_user'); return u?JSON.parse(u)?.id||'local_user':'local_user' } catch { return 'local_user' } })()):[...(p.likedBy||[]),(() => { try { const u=localStorage.getItem('dw_user'); return u?JSON.parse(u)?.id||'local_user':'local_user' } catch { return 'local_user' } })()]}
-      })}
-    }))
-  }
-
-  async function handleShare(post) {
-    const text = `${post.authorName} on Daily Walk: "${(post.content||'').slice(0,80)}"`
-    if(navigator.share){try{await navigator.share({text})}catch{}}
-    else{await navigator.clipboard.writeText(text).catch(()=>{});showToast('Copied!')}
-  }
-
-  // Merged For You feed
-  const feedPosts = useMemo(() => {
-    const joined = (communities||[]).filter(c=>c.joined)
-    const commPosts = []
-    joined.forEach(c=>(c.posts||[]).forEach(p=>commPosts.push({...p,_community:c,_isGlobal:false})))
-    const globalFeed = (globalPosts||[]).map(p=>({...p,_community:null,_isGlobal:true}))
-    return [...commPosts,...globalFeed].sort((a,b)=>new Date(b.createdAt).getTime()-new Date(a.createdAt).getTime())
-  }, [communities, globalPosts])
-
-  const searchMatch = c => {
-    if(!query.trim()) return true
-    const q = query.toLowerCase()
-    return c.name.toLowerCase().includes(q)||c.description?.toLowerCase().includes(q)||c.category?.toLowerCase().includes(q)
-  }
-  const mine = (communities||[]).filter(c=>c.joined&&searchMatch(c))
-  const publicOnly = (communities||[]).filter(c=>c.visibility!=='private'||c.joined)
-  const filtered = (filter==='All'?publicOnly:publicOnly.filter(c=>c.category===filter)).filter(searchMatch)
-
-  if (!hydrated) return null
-
-  const TABS = [{key:'foryou',label:'For You'},{key:'mine',label:'My Communities'},{key:'explore',label:'Explore'}]
+  const TABS=[{key:'foryou',label:'For You'},{key:'mine',label:'My Communities'},{key:'explore',label:'Explore'}]
 
   return (
-    <div className="flex flex-col min-h-screen" style={{ background:'#FAF8F5' }}>
+    <div className="flex flex-col min-h-screen pb-28" style={{background:'#FAF8F5'}}>
+      <ToastContainer/>
+
+      {/* Header */}
       <div className="px-4 pt-6 pb-0 flex items-center justify-between">
         <div>
-          <h1 className="font-display text-[24px] font-bold" style={{ color:'#1A1A2E' }}>Communities</h1>
-          <p className="text-[13px] mt-0.5" style={{ color:'#6B7280' }}>Grow together with other believers</p>
+          <h1 className="font-display text-[24px] font-bold" style={{color:'#1A1A2E'}}>Communities</h1>
+          <p className="text-[13px] mt-0.5" style={{color:'#6B7280'}}>Grow together with other believers</p>
         </div>
-        <button
-          onClick={() => {
-            // Community creation requires an account
-            const user = (() => { try { const u=localStorage.getItem('dw_user'); return u?JSON.parse(u):null } catch { return null } })()
-            if (!user?.name) {
-              showToast('You need an account to create a community. Sign up coming soon! 🙏')
-              return
-            }
-            // Accounts can create communities — but show coming soon for now
-            showToast('Community creation is coming very soon! 🙏')
-          }}
-          className="flex items-center gap-1.5 px-3 py-2 rounded-full text-[13px] font-bold border-2 hover:opacity-80 transition-all"
-          style={{ borderColor:'#5B4FCF', color:'#5B4FCF' }}>
-          <Plus size={13} /> Create
-                </button>
+        <button onClick={cs} className="flex items-center gap-1.5 px-3.5 py-2 rounded-full text-[13px] font-bold border-2"
+          style={{borderColor:'#5B4FCF',color:'#5B4FCF'}}><Plus size={13}/> Create</button>
       </div>
 
       {/* Search */}
       <div className="px-4 mt-4">
         <div className="relative">
-          <Search size={15} className="absolute left-4 top-1/2 -translate-y-1/2" style={{ color:'#9CA3AF' }} />
-          <input type="text" value={query} onChange={e=>setQuery(e.target.value)} placeholder="Search communities..."
-            className="w-full pl-10 pr-10 py-3 rounded-full border border-gray-200 text-[14px] focus:outline-none focus:border-purple focus:ring-2 focus:ring-purple/20 bg-white transition-all"
-            style={{ color:'#1A1A2E' }} />
-          {query && (
-            <button onClick={()=>setQuery('')} className="absolute right-3 top-1/2 -translate-y-1/2 w-6 h-6 rounded-full bg-gray-100 flex items-center justify-center">
-              <XIcon size={12} style={{ color:'#6B7280' }} />
-            </button>
-          )}
+          <Search size={15} className="absolute left-4 top-1/2 -translate-y-1/2" style={{color:'#9CA3AF'}}/>
+          <input value={query} onChange={e=>setQuery(e.target.value)} placeholder="Search communities..."
+            className="w-full pl-10 pr-10 py-3 rounded-full border border-gray-200 text-[14px] focus:outline-none focus:border-purple-300 bg-white transition-all"
+            style={{color:'#1A1A2E'}}/>
+          {query&&<button onClick={()=>setQuery('')}
+            className="absolute right-3 top-1/2 -translate-y-1/2 w-6 h-6 rounded-full bg-gray-100 flex items-center justify-center">
+            <XIcon size={12} style={{color:'#6B7280'}}/></button>}
         </div>
       </div>
 
-      {/* Tabs */}
+      {/* Tab bar */}
       <div className="px-4 mt-4">
-        <div className="flex gap-1 p-1 rounded-full" style={{ background:'#EDE9FF' }}>
+        <div className="flex gap-1 p-1 rounded-full" style={{background:'#EDE9FF'}}>
           {TABS.map(t=>(
             <button key={t.key} onClick={()=>setTab(t.key)}
               className="relative flex-1 py-2 rounded-full text-[12px] font-bold transition-all"
               style={tab===t.key?{color:'#5B4FCF'}:{color:'#6B7280'}}>
-              {tab===t.key&&<motion.div layoutId="comm-tab" className="absolute inset-0 bg-white rounded-full shadow-card"
-                transition={{type:'spring',stiffness:400,damping:35}}/>}
+              {tab===t.key&&<motion.div layoutId="ctab" className="absolute inset-0 bg-white rounded-full"
+                style={{boxShadow:'0 1px 6px rgba(0,0,0,0.1)'}} transition={{type:'spring',stiffness:400,damping:35}}/>}
               <span className="relative z-10">{t.label}</span>
             </button>
           ))}
         </div>
       </div>
 
-      <AnimatePresence mode="wait">
-        {tab==='foryou'&&(
-          <motion.div key="foryou" initial={{opacity:0}} animate={{opacity:1}} exit={{opacity:0}}
-            className="flex flex-col gap-3 px-4 py-4 pb-4">
-            {feedPosts.length===0?(
-              <motion.div initial={{opacity:0,scale:0.96}} animate={{opacity:1,scale:1}}
-                className="flex flex-col items-center gap-4 text-center py-16">
-                <div className="w-16 h-16 rounded-full flex items-center justify-center" style={{background:'#EDE9FF'}}>
-                  <Users size={28} style={{color:'#5B4FCF'}}/>
-                </div>
-                <div>
-                  <p className="font-display text-[17px] font-semibold" style={{color:'#1A1A2E'}}>Your feed is empty</p>
-                  <p className="text-[13px] mt-1" style={{color:'#6B7280'}}>Join communities to see posts from believers around the world</p>
-                </div>
-                <button onClick={()=>setCompose(true)}
-                  className="text-white rounded-full px-6 py-3 text-[14px] font-bold hover:opacity-90"
-                  style={{background:'#5B4FCF'}}>Share something</button>
-              </motion.div>
-            ):feedPosts.map((post,i)=>(
-              <FeedPostCard key={post.id} post={post} idx={i}
-                community={post._community} isGlobal={post._isGlobal}
-                onLike={post._isGlobal?handleLikeGlobal:handleLikeCommunity}
-                onShare={handleShare}/>
-            ))}
-          </motion.div>
-        )}
+      <div className="flex-1">
+        <AnimatePresence mode="wait">
 
-        {tab==='mine'&&(
-          <motion.div key="mine" initial={{opacity:0}} animate={{opacity:1}} exit={{opacity:0}}
-            className="flex flex-col gap-3 px-4 py-4 pb-10">
-            {mine.length===0?(
-              query?(
-                <div className="text-center py-12">
-                  <p className="font-semibold text-[15px]" style={{color:'#1A1A2E'}}>No communities found for "{query}"</p>
-                  <button onClick={()=>setQuery('')} className="text-[13px] mt-2 underline" style={{color:'#5B4FCF'}}>Clear search</button>
-                </div>
-              ):(
-                <motion.div initial={{opacity:0,scale:0.96}} animate={{opacity:1,scale:1}}
-                  className="flex flex-col items-center gap-4 text-center py-12">
-                  <div className="w-16 h-16 rounded-full flex items-center justify-center" style={{background:'#EDE9FF'}}>
-                    <Users size={28} style={{color:'#5B4FCF'}}/>
-                  </div>
-                  <div>
-                    <p className="font-display text-[17px] font-semibold" style={{color:'#1A1A2E'}}>No communities yet</p>
-                    <p className="text-[13px] mt-1" style={{color:'#6B7280'}}>Explore and find your people</p>
-                  </div>
-                  <button onClick={()=>setTab('explore')}
-                    className="text-white rounded-full px-6 py-3 text-[14px] font-bold hover:opacity-90"
-                    style={{background:'#5B4FCF'}}>Explore Communities</button>
-                </motion.div>
-              )
-            ):mine.map((c,i)=><MyCommunityCard key={c.id} community={c} idx={i}/>)}
-          </motion.div>
-        )}
-
-        {tab==='explore'&&(
-          <motion.div key="explore" initial={{opacity:0}} animate={{opacity:1}} exit={{opacity:0}}>
-            <div className="flex gap-2 px-4 mt-3 overflow-x-auto scroll-hide pb-1">
-              {COMMUNITY_CATEGORIES.map(cat=>(
-                <button key={cat} onClick={()=>setFilter(cat)}
-                  className="flex-shrink-0 px-3.5 py-1.5 rounded-full text-[12px] font-bold border-2 transition-all"
-                  style={filter===cat?{background:'#5B4FCF',borderColor:'#5B4FCF',color:'white'}:{background:'white',borderColor:'#E5E7EB',color:'#6B7280'}}>
-                  {cat}
-                </button>
-              ))}
-            </div>
-            <div className="flex flex-col gap-3 px-4 py-4 pb-10">
-              <motion.div initial={{opacity:0,y:8}} animate={{opacity:1,y:0}}
-                className="rounded-[20px] p-5 flex items-center gap-4 mb-1"
+          {/* For You */}
+          {tab==='foryou'&&(
+            <motion.div key="fy" initial={{opacity:0}} animate={{opacity:1}} exit={{opacity:0}}
+              className="flex flex-col gap-3 px-4 pt-4">
+              <motion.div initial={{opacity:0,y:-8}} animate={{opacity:1,y:0}}
+                className="flex items-center gap-3 px-4 py-3 rounded-[16px]"
                 style={{background:'linear-gradient(135deg,#5B4FCF,#3D3190)'}}>
-                <div className="w-10 h-10 rounded-full bg-white/20 flex items-center justify-center flex-shrink-0">
-                  <Sparkles size={20} className="text-white"/>
-                </div>
+                <Sparkles size={20} className="text-white flex-shrink-0"/>
                 <div>
-                  <p className="font-bold text-white text-[15px]">Find your people. Grow together.</p>
-                  <p className="text-[12px] mt-0.5" style={{color:'rgba(255,255,255,0.7)'}}>Join a community and never walk alone.</p>
+                  <p className="font-bold text-white text-[14px]">Communities launching soon</p>
+                  <p className="text-white/75 text-[12px] mt-0.5">Here's a preview of what's coming 👇</p>
                 </div>
               </motion.div>
-              {filtered.map((c,i)=><ExploreCard key={c.id} community={c} onToggleJoin={toggleJoin} idx={i}/>)}
-            </div>
-          </motion.div>
-        )}
-      </AnimatePresence>
+              {DEMO_POSTS.map((post,i)=>(
+                <motion.div key={post.id} initial={{opacity:0,y:8}} animate={{opacity:1,y:0}} transition={{delay:i*0.06}}>
+                  <PostCard post={post}/>
+                </motion.div>
+              ))}
+            </motion.div>
+          )}
 
-      {/* Compose FAB */}
-      <button onClick={()=>setCompose(true)}
-        className="fixed bottom-28 right-4 w-14 h-14 rounded-full text-white flex items-center justify-center z-40 active:scale-95 transition-all"
-        style={{background:'#5B4FCF',boxShadow:'0 4px 20px rgba(91,79,207,0.45)'}}
-        aria-label="New post">
-        <PenLine size={20}/>
-      </button>
+          {/* My Communities */}
+          {tab==='mine'&&(
+            <motion.div key="mine" initial={{opacity:0}} animate={{opacity:1}} exit={{opacity:0}}
+              className="flex flex-col gap-3 px-4 pt-4">
+              <div className="flex items-center gap-3 px-4 py-3 rounded-[16px]" style={{background:'#EDE9FF'}}>
+                <Users size={18} style={{color:'#5B4FCF',flexShrink:0}}/>
+                <p className="text-[13px] font-semibold" style={{color:'#5B4FCF'}}>
+                  Your communities will appear here when we launch 🙌
+                </p>
+              </div>
+              {DEMO_COMMS.slice(0,3).map((c,i)=>(
+                <MyCommunityCard key={c.id} community={c} dimmed/>
+              ))}
+            </motion.div>
+          )}
 
-      <AnimatePresence>
-        {compose && <PostComposer onClose={()=>setCompose(false)} />}
-      </AnimatePresence>
+          {/* Explore */}
+          {tab==='explore'&&(
+            <motion.div key="explore" initial={{opacity:0}} animate={{opacity:1}} exit={{opacity:0}}>
+              <div className="flex gap-2 px-4 mt-4 overflow-x-auto scroll-hide pb-1">
+                {CATEGORIES.map(cat=>(
+                  <button key={cat} onClick={()=>setFilter(cat)}
+                    className="flex-shrink-0 px-3.5 py-1.5 rounded-full text-[12px] font-bold border-2 transition-all"
+                    style={filter===cat?{background:'#5B4FCF',borderColor:'#5B4FCF',color:'white'}:{background:'white',borderColor:'#E5E7EB',color:'#6B7280'}}>
+                    {cat}
+                  </button>
+                ))}
+              </div>
+              <div className="flex flex-col gap-3 px-4 mt-4 pb-10">
+                {filtered.map((c,i)=><ExploreCard key={c.id} community={c} idx={i}/>)}
+              </div>
+            </motion.div>
+          )}
 
-      <ToastContainer/>
+        </AnimatePresence>
+      </div>
     </div>
   )
 }

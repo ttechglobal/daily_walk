@@ -23,9 +23,58 @@
   --shadow-purple:      0 4px 20px rgba(91,79,207,0.35);
 }
 
+/* ══════════════════════════════════════════════════
+   DARK MODE — CSS custom properties
+   Applied when <html data-theme="dark">
+   ══════════════════════════════════════════════════ */
+:root {
+  --dw-bg:           #FAF8F5;
+  --dw-bg-card:      #FFFFFF;
+  --dw-bg-card-alt:  #F8F7FF;
+  --dw-bg-input:     #FFFFFF;
+  --dw-bg-muted:     #F0EDE8;
+  --dw-bg-nav:       #FFFFFF;
+  --dw-text:         #1A1A2E;
+  --dw-text-muted:   #6B7280;
+  --dw-text-faint:   #9CA3AF;
+  --dw-border:       #F0EDE8;
+  --dw-border-input: #E5E7EB;
+  --dw-shadow:       0 2px 12px rgba(0,0,0,0.07);
+  --dw-shadow-heavy: 0 8px 32px rgba(0,0,0,0.14);
+  --dw-purple-light: #EDE9FF;
+  --dw-sage-light:   #E8F4ED;
+  --dw-amber-light:  #FFF4DC;
+}
+
+[data-theme="dark"] {
+  --dw-bg:           #0F1117;
+  --dw-bg-card:      #1A1A2E;
+  --dw-bg-card-alt:  #1E2035;
+  --dw-bg-input:     #1A1A2E;
+  --dw-bg-muted:     #252840;
+  --dw-bg-nav:       #0F1117;
+  --dw-text:         #E8E4DC;
+  --dw-text-muted:   #8A8FA8;
+  --dw-text-faint:   #555A72;
+  --dw-border:       #252840;
+  --dw-border-input: #2E3250;
+  --dw-shadow:       0 2px 12px rgba(0,0,0,0.4);
+  --dw-shadow-heavy: 0 8px 32px rgba(0,0,0,0.6);
+  --dw-purple-light: #2A244A;
+  --dw-sage-light:   #1A2E22;
+  --dw-amber-light:  #2E2210;
+  background-color:  #0F1117;
+  color:             #E8E4DC;
+  color-scheme:      dark;
+}
+
+[data-theme="dark"] body {
+  background-color: #0F1117 !important;
+}
+
 /* ── Flame flicker ── */
 @keyframes flicker {
-  0%, 100% { transform: scale(1) rotate(-1deg);   filter: brightness(1); }
+  0%, 100% { transform: scale(1) rotate(-1deg);    filter: brightness(1); }
   25%       { transform: scale(1.06) rotate(1deg);  filter: brightness(1.1); }
   50%       { transform: scale(0.97) rotate(-2deg); filter: brightness(0.93); }
   75%       { transform: scale(1.04) rotate(1.5deg);filter: brightness(1.07); }
@@ -80,13 +129,13 @@
   50%       { opacity: 0.6; }
 }
 
-.char-bounce      { animation: char-bounce      1.2s ease-in-out infinite; }
-.char-sway        { animation: char-sway        2s   ease-in-out infinite; }
-.char-breathe     { animation: char-breathe     3s   ease-in-out infinite; }
-.char-breathe-slow{ animation: char-breathe     4s   ease-in-out infinite; }
-.char-droop       { animation: char-droop-sway  3.5s ease-in-out infinite; }
-.char-nod         { animation: char-nod         5s   ease-in-out infinite; }
-.char-pulse-faint { animation: char-pulse-faint 4s   ease-in-out infinite; }
+.char-bounce       { animation: char-bounce       1.2s ease-in-out infinite; }
+.char-sway         { animation: char-sway         2s   ease-in-out infinite; }
+.char-breathe      { animation: char-breathe      3s   ease-in-out infinite; }
+.char-breathe-slow { animation: char-breathe      4s   ease-in-out infinite; }
+.char-droop        { animation: char-droop-sway   3.5s ease-in-out infinite; }
+.char-nod          { animation: char-nod          5s   ease-in-out infinite; }
+.char-pulse-faint  { animation: char-pulse-faint  4s   ease-in-out infinite; }
 
 /* ── Scrollbar hide ── */
 .scroll-hide { scrollbar-width: none; -ms-overflow-style: none; }
@@ -94,9 +143,13 @@
 
 /* ── Card ── */
 .card {
-  background: #ffffff;
+  background:    #ffffff;
   border-radius: 20px;
-  box-shadow: 0 2px 12px rgba(0,0,0,0.07);
+  box-shadow:    0 2px 12px rgba(0,0,0,0.07);
+}
+[data-theme="dark"] .card {
+  background: #1A1A2E;
+  box-shadow: 0 2px 12px rgba(0,0,0,0.4);
 }
 
 /* ── Streak gradient ── */
@@ -115,11 +168,156 @@
   );
 }
 
-/* ── Responsive layout helpers ── */
+/* ══════════════════════════════════════════════════
+   GLOBAL BOTTOM PADDING
+   Ensures content is never hidden behind the fixed
+   bottom navigation bar (64px) on any screen.
+   ══════════════════════════════════════════════════ */
 
-/* Desktop: content gets more breathing room */
+/* Every scrollable page content area gets bottom clearance */
+.page-content {
+  padding-bottom: 96px;
+}
+
+/* The main <main> in layout gets it too as a backstop */
+main {
+  padding-bottom: 0; /* let children control their own padding */
+}
+
+/* Safe area support for devices with home indicators */
+@supports (padding-bottom: env(safe-area-inset-bottom)) {
+  .page-content {
+    padding-bottom: calc(96px + env(safe-area-inset-bottom));
+  }
+}
+
+/* Escape hatch — fullscreen pages (onboarding, auth, reader) */
+.no-bottom-pad {
+  padding-bottom: 0 !important;
+}
+
+/* ══════════════════════════════════════════════════
+   DARK MODE — Component overrides
+   Catches Tailwind utility classes automatically so
+   components using bg-white etc. get dark mode free.
+   ══════════════════════════════════════════════════ */
+
+/* Backgrounds */
+[data-theme="dark"] .bg-white,
+[data-theme="dark"] [class*="bg-white"],
+[data-theme="dark"] .bg-warm-bg,
+[data-theme="dark"] [class*="bg-warm-bg"] {
+  background-color: #1A1A2E !important;
+}
+
+[data-theme="dark"] .bg-gray-50,
+[data-theme="dark"] [class*="bg-gray-50"] {
+  background-color: #252840 !important;
+}
+
+[data-theme="dark"] .bg-gray-100,
+[data-theme="dark"] [class*="bg-gray-100"] {
+  background-color: #252840 !important;
+}
+
+[data-theme="dark"] .bg-gray-200,
+[data-theme="dark"] [class*="bg-gray-200"] {
+  background-color: #2E3250 !important;
+}
+
+/* Text */
+[data-theme="dark"] .text-gray-900,
+[data-theme="dark"] [class*="text-gray-900"],
+[data-theme="dark"] .text-text-primary,
+[data-theme="dark"] [class*="text-text-primary"] {
+  color: #E8E4DC !important;
+}
+
+[data-theme="dark"] .text-gray-700,
+[data-theme="dark"] .text-gray-800,
+[data-theme="dark"] [class*="text-gray-700"],
+[data-theme="dark"] [class*="text-gray-800"] {
+  color: #D0CCCA !important;
+}
+
+[data-theme="dark"] .text-gray-500,
+[data-theme="dark"] .text-gray-600,
+[data-theme="dark"] [class*="text-gray-500"],
+[data-theme="dark"] [class*="text-gray-600"],
+[data-theme="dark"] .text-text-muted,
+[data-theme="dark"] [class*="text-text-muted"] {
+  color: #8A8FA8 !important;
+}
+
+[data-theme="dark"] .text-gray-400,
+[data-theme="dark"] [class*="text-gray-400"] {
+  color: #555A72 !important;
+}
+
+/* Borders */
+[data-theme="dark"] [class*="border-gray"],
+[data-theme="dark"] [class*="border-warm"],
+[data-theme="dark"] .divide-y > *,
+[data-theme="dark"] [class*="divide-gray"] > * {
+  border-color: #252840 !important;
+}
+
+/* Inputs */
+[data-theme="dark"] input:not([type="range"]):not([type="checkbox"]):not([type="radio"]),
+[data-theme="dark"] textarea,
+[data-theme="dark"] select {
+  background-color: #252840 !important;
+  color:            #E8E4DC !important;
+  border-color:     #2E3250 !important;
+}
+
+[data-theme="dark"] input::placeholder,
+[data-theme="dark"] textarea::placeholder {
+  color: #555A72 !important;
+}
+
+/* Bottom navigation */
+[data-theme="dark"] nav {
+  background-color: rgba(15,17,23,0.97) !important;
+  border-top-color: #252840 !important;
+}
+
+/* Modals & bottom sheets */
+[data-theme="dark"] [class*="bg-warm-bg"],
+[data-theme="dark"] [class*="rounded-t-[28px]"] {
+  background-color: #1A1A2E !important;
+}
+
+/* Cards with rounded class patterns */
+[data-theme="dark"] [class*="rounded-[20px]"],
+[data-theme="dark"] [class*="rounded-[22px]"],
+[data-theme="dark"] [class*="rounded-[18px]"],
+[data-theme="dark"] [class*="rounded-[16px]"],
+[data-theme="dark"] [class*="rounded-[14px]"] {
+  /* Don't force bg-color here — too aggressive, some of these are coloured */
+}
+
+/* ── Smooth colour transitions (only non-transform props) ── */
+*,
+*::before,
+*::after {
+  transition-property: background-color, border-color, color, fill, stroke, opacity;
+  transition-duration: 0.18s;
+  transition-timing-function: ease;
+}
+
+/* Override: don't interfere with Framer Motion transforms / opacity animations */
+[style*="transform"],
+[style*="opacity"],
+.framer-motion-element {
+  transition: none !important;
+}
+
+/* ══════════════════════════════════════════════════
+   RESPONSIVE LAYOUT HELPERS
+   ══════════════════════════════════════════════════ */
+
 @media (min-width: 768px) {
-  /* Communities feed — two-column on desktop */
   .communities-layout {
     display: grid;
     grid-template-columns: 1fr 360px;
@@ -129,39 +327,32 @@
     padding: 24px;
   }
 
-  /* Home dashboard — cards in wider columns */
   .home-grid {
     max-width: 720px;
     margin: 0 auto;
     padding: 0 24px;
   }
 
-  /* Bible reader — comfortable reading width */
   .bible-reader-content {
     max-width: 680px;
     margin: 0 auto;
     padding: 0 32px;
   }
 
-  /* Hide mobile-only elements */
-  .mobile-only { display: none !important; }
-  
-  /* Show desktop-only elements */
+  .mobile-only  { display: none !important; }
   .desktop-only { display: block !important; }
 }
 
 @media (max-width: 767px) {
   .desktop-only { display: none !important; }
   .mobile-only  { display: block !important; }
-  
-  /* Reset communities layout to single column on mobile */
+
   .communities-layout {
     display: block;
     padding: 0;
   }
 }
 
-/* Tablet — middle ground */
 @media (min-width: 768px) and (max-width: 1023px) {
   .communities-layout {
     grid-template-columns: 1fr;

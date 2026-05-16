@@ -11,172 +11,18 @@ import { useLocalStorage } from '../../hooks/useLocalStorage'
 import { ToastContainer, showToast } from '../../components/Toast'
 import NotificationSettings from '../../components/NotificationSettings'
 import CharacterPicker from '../../components/CharacterPicker'
-import { CHARACTERS, getCharacterById } from '../../lib/characters'
+import { CHARACTERS, getCharacterById, } from '../../lib/characters'
 import {
   initials, avatarColor, formatDateLabel, formatTimestamp,
   lastSevenDays, todayStr, SEED_CHALLENGES
 } from '../../lib/constants'
+import { getImagePath } from '../../lib/character-state'
+import { useDarkMode } from '../../contexts/DarkModeContext'
+import Onboarding from '../../components/Onboarding'
 
 const WALK_STAGES   = ['Just starting', 'Growing', 'Recommitting', 'Consistent']
 const DAY_LABELS    = ['M','T','W','T','F','S','S']
 
-// ── Step dots ──
-function StepDots({ step, total }) {
-  return (
-    <div className="flex items-center gap-2 justify-center">
-      {Array.from({ length: total }).map((_, i) => (
-        <motion.div key={i}
-          animate={{ width: i+1===step ? 24 : 8, background: i+1===step ? '#5B4FCF' : '#EDE9FF' }}
-          className="h-2 rounded-full" />
-      ))}
-    </div>
-  )
-}
-
-// ── Companion card (inline, for onboarding) ──
-function CompanionCard({ character, selected, onSelect }) {
-  const color = character.accentColor
-  return (
-    <button onClick={() => onSelect(character.id)}
-      className="flex flex-col gap-2 p-3 rounded-[16px] transition-all text-left"
-      style={{
-        background: selected ? `${color}15` : 'white',
-        border: `2px solid ${selected ? color : '#F0EDE8'}`,
-        borderLeft: `4px solid ${color}`,
-      }}>
-      <div className="w-full h-[80px] rounded-[12px] flex flex-col items-center justify-center"
-        style={{ background: `${color}18` }}>
-        <span style={{ fontSize: 34 }}>{character.placeholderEmoji}</span>
-      </div>
-      <p className="font-display font-semibold text-[13px]" style={{ color: '#1A1A2E' }}>{character.name}</p>
-      <p className="text-[11px] font-semibold" style={{ color }}>{character.title}</p>
-      <p className="text-[10px] leading-snug line-clamp-2" style={{ color: '#9CA3AF' }}>
-        "{character.signatureVerse}"
-      </p>
-    </button>
-  )
-}
-
-// ─────────────────────────────────────────────
-//  Onboarding
-// ─────────────────────────────────────────────
-function Onboarding({ onComplete }) {
-  const [step,       setStep]       = useState(1)
-  const [name,       setName]       = useState('')
-  const [stage,      setStage]      = useState('')
-  const [goal,       setGoal]       = useState('')
-  const [companionId, setCompanionId] = useState('david')
-
-  const ic = "w-full border border-gray-200 rounded-input px-4 py-3.5 text-[15px] focus:outline-none focus:border-purple focus:ring-2 focus:ring-purple/20 transition-all placeholder:text-text-muted"
-
-  function finish() {
-    onComplete({
-      name: name.trim() || 'Friend',
-      walkStage: stage,
-      goal: goal.trim(),
-      companionId,
-      joinedAt: new Date().toLocaleDateString('en-US', { month: 'long', year: 'numeric' })
-    })
-  }
-
-  return (
-    <div className="flex flex-col min-h-screen px-5 py-8" style={{ background: '#FAF8F5' }}>
-      <StepDots step={step} total={3} />
-      <AnimatePresence mode="wait">
-
-        {/* Step 1 — Name */}
-        {step === 1 && (
-          <motion.div key="s1" initial={{ opacity:0, x:30 }} animate={{ opacity:1, x:0 }} exit={{ opacity:0, x:-30 }}
-            className="flex flex-col flex-1 mt-10 gap-6">
-            <div className="flex flex-col items-center gap-3 mb-2">
-              <div className="w-20 h-20 rounded-3xl flex items-center justify-center" style={{ background:'#EDE9FF' }}>
-                <Flame size={36} className="flame-flicker" style={{ color:'#5B4FCF' }} />
-              </div>
-              <h1 className="font-display text-[26px] font-bold text-center" style={{ color:'#1A1A2E' }}>
-                Welcome to Daily Walk
-              </h1>
-              <p className="text-[14px] text-center leading-relaxed" style={{ color:'#6B7280' }}>
-                Your daily devotion, together.
-              </p>
-            </div>
-            <div className="flex flex-col gap-2">
-              <label className="font-bold text-[14px]" style={{ color:'#1A1A2E' }}>
-                What should we call you? <span className="font-normal" style={{ color:'#9CA3AF' }}>(optional)</span>
-              </label>
-              <input type="text" value={name} onChange={e => setName(e.target.value)}
-                placeholder="Your name or nickname" className={ic} style={{ color:'#1A1A2E' }} />
-            </div>
-            <div className="flex flex-col gap-3 mt-auto">
-              <button onClick={() => setStep(2)}
-                className="w-full text-white rounded-pill py-4 text-[15px] font-bold hover:opacity-90 active:scale-[0.97]"
-                style={{ background:'#5B4FCF' }}>Continue →</button>
-              <button onClick={finish} className="text-[13px] font-semibold text-center underline underline-offset-2 hover:opacity-70"
-                style={{ color:'#9CA3AF' }}>Skip onboarding</button>
-            </div>
-          </motion.div>
-        )}
-
-        {/* Step 2 — Choose companion */}
-        {step === 2 && (
-          <motion.div key="s2" initial={{ opacity:0, x:30 }} animate={{ opacity:1, x:0 }} exit={{ opacity:0, x:-30 }}
-            className="flex flex-col flex-1 mt-8 gap-5">
-            <div>
-              <h2 className="font-display text-[22px] font-bold" style={{ color:'#1A1A2E' }}>Choose your companion</h2>
-              <p className="text-[13px] mt-1 leading-relaxed" style={{ color:'#6B7280' }}>
-                They will walk with you and reflect your spiritual health
-              </p>
-            </div>
-            <div className="grid grid-cols-2 gap-3 flex-1 overflow-y-auto scroll-hide">
-              {CHARACTERS.map(c => (
-                <CompanionCard key={c.id} character={c} selected={companionId === c.id} onSelect={setCompanionId} />
-              ))}
-            </div>
-            <div className="flex flex-col gap-3">
-              <button onClick={() => setStep(3)}
-                className="w-full text-white rounded-pill py-4 text-[15px] font-bold hover:opacity-90 active:scale-[0.97]"
-                style={{ background:'#5B4FCF' }}>Continue →</button>
-              <button onClick={() => setStep(3)} className="text-[13px] font-semibold text-center" style={{ color:'#9CA3AF' }}>
-                Skip — I'll choose later
-              </button>
-            </div>
-          </motion.div>
-        )}
-
-        {/* Step 3 — Account */}
-        {step === 3 && (
-          <motion.div key="s3" initial={{ opacity:0, x:30 }} animate={{ opacity:1, x:0 }} exit={{ opacity:0, x:-30 }}
-            className="flex flex-col flex-1 mt-8 gap-6">
-            <div className="flex flex-col items-center gap-2 mb-2">
-              <div className="w-16 h-16 rounded-full flex items-center justify-center text-3xl" style={{ background:'#EDE9FF' }}>☁️</div>
-              <h2 className="font-display text-[22px] font-bold text-center" style={{ color:'#1A1A2E' }}>Save your progress</h2>
-              <p className="text-[13px] text-center leading-relaxed" style={{ color:'#6B7280' }}>
-                Create a free account to back up your streak.
-              </p>
-            </div>
-            <div className="flex flex-col gap-3">
-              <div className="flex flex-col gap-1.5">
-                <label className="font-bold text-[13px]" style={{ color:'#1A1A2E' }}>Email</label>
-                <input type="email" placeholder="you@example.com" className={ic} />
-              </div>
-              <div className="flex flex-col gap-1.5">
-                <label className="font-bold text-[13px]" style={{ color:'#1A1A2E' }}>Password</label>
-                <input type="password" placeholder="Choose a password" className={ic} />
-              </div>
-            </div>
-            <div className="mt-auto flex flex-col gap-3">
-              <button onClick={() => { showToast('Account creation coming soon'); setTimeout(finish, 600) }}
-                className="w-full text-white rounded-pill py-4 text-[15px] font-bold hover:opacity-90"
-                style={{ background:'#5B4FCF' }}>Create account</button>
-              <button onClick={finish} className="text-[13px] font-semibold text-center underline underline-offset-2 hover:opacity-70"
-                style={{ color:'#9CA3AF' }}>Skip for now</button>
-            </div>
-          </motion.div>
-        )}
-      </AnimatePresence>
-      <ToastContainer />
-    </div>
-  )
-}
 
 // ─────────────────────────────────────────────
 //  Journey section (embedded in Profile)
@@ -460,6 +306,7 @@ function SettingsRow({ icon: Icon, iconBg, label, sub, danger, onClick }) {
 }
 
 function ProfileView({ user, streak, checkins }) {
+
   const [mainTab,    setMainTab]    = useState('profile')
   const [globalPosts]    = useLocalStorage('dw_global_posts', [])
   const [communities2]   = useLocalStorage('dw_communities', [])
@@ -468,8 +315,11 @@ function ProfileView({ user, streak, checkins }) {
   const [, setUser]      = useLocalStorage('dw_user', null)
   const [, setCheckins2] = useLocalStorage('dw_checkins', [])
   const [, setStreak]    = useLocalStorage('dw_streak', null)
+  const { dark, toggle: toggleDark } = useDarkMode()
 
   const companion   = getCharacterById(user?.companionId || 'david')
+
+    if (!setOnboarded) return <Onboarding onComplete={handleComplete} />
 
   function handleSignOut() {
     if (confirm('Reset all data?')) {
@@ -540,13 +390,35 @@ function ProfileView({ user, streak, checkins }) {
                 <p className="text-text-primary text-[14px] leading-relaxed font-display italic">"{user.goal}"</p>
               </div>
             )}
-            <NotificationSettings />
+
             <div className="mt-4 flex flex-col gap-3 mb-6">
-              <p className="text-[11px] font-bold uppercase tracking-widest" style={{ color:'#9CA3AF' }}>More</p>
               {/* Notification settings */}
               <div className="mb-4">
-                <p className="text-[11px] font-bold uppercase tracking-wider mb-3 px-1" style={{ color:'#9CA3AF' }}>Notifications</p>
-                <NotificationSettingsPanel />
+                <NotificationSettings />
+
+                <div className="bg-white rounded-[20px] px-5 py-2 mt-4"
+  style={{ boxShadow: '0 2px 12px rgba(0,0,0,0.06)' }}>
+  <div className="flex items-center gap-3 py-3.5">
+    <div className="w-9 h-9 rounded-xl flex items-center justify-center flex-shrink-0"
+      style={{ background: dark ? '#2A2440' : '#EDE9FF' }}>
+      <span style={{ fontSize: 18 }}>{dark ? '☀️' : '🌙'}</span>
+    </div>
+    <div className="flex-1 min-w-0">
+      <p className="font-semibold text-[14px]" style={{ color: '#1A1A2E' }}>Dark Mode</p>
+      <p className="text-[12px] mt-0.5" style={{ color: '#9CA3AF' }}>
+        {dark ? 'Currently on — tap to switch to light' : 'Currently off — tap to switch to dark'}
+      </p>
+    </div>
+    <button onClick={toggleDark}
+      className="relative flex-shrink-0 transition-all active:scale-95"
+      style={{ width: 44, height: 26 }}>
+      <div className="absolute inset-0 rounded-full transition-all"
+        style={{ background: dark ? '#5B4FCF' : '#D1D5DB' }} />
+      <div className="absolute top-0.5 transition-all rounded-full bg-white shadow-sm"
+        style={{ width: 22, height: 22, left: dark ? 20 : 2, transition: 'left 0.2s ease' }} />
+    </button>
+  </div>
+</div>
               </div>
               <SettingsRow icon={Shield} iconBg="bg-sage-light"   label="Privacy"          sub="Who can see your posts"   onClick={() => showToast('Coming soon')} />
               <SettingsRow icon={Info}   iconBg="bg-purple-light" label="About Daily Walk"                                onClick={() => showToast('v1.0.0 — Built with ♥')} />
