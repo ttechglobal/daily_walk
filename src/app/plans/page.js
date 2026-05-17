@@ -20,32 +20,35 @@ import { todayStr } from '../../lib/constants'
 import { useDarkMode, getDarkModeColors } from '../../contexts/DarkModeContext'
 
 // ─────────────────────────────────────────────
+//  Helper — build Bible reader URL
+// ─────────────────────────────────────────────
+function buildReaderUrl(passage) {
+  if (!passage) return '/read'
+  const match = passage.match(/^(.+?)\s+(\d+)(?::(\d+))?$/)
+  if (!match) return `/read?book=${encodeURIComponent(passage)}`
+  const [, book, chapter] = match
+  return `/read?book=${encodeURIComponent(book.trim())}&chapter=${chapter}`
+}
+
+// ─────────────────────────────────────────────
 //  Share plan — inline URL build, no require()
 // ─────────────────────────────────────────────
 async function sharePlan(plan) {
-  // Build URL inline — avoids require() crash in client components
   const origin  = typeof window !== 'undefined' ? window.location.origin : ''
-  const slug    = (plan.name || 'plan')
-    .toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/(^-|-$)/g, '').slice(0, 24)
+  const slug    = (plan.name || 'plan').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/(^-|-$)/g, '').slice(0, 24)
   const shortId = (plan.id || '').slice(-8)
   const url     = `${origin}/plan/${slug}-${shortId}`
 
-  // Store preview snapshot for landing page
   try {
     const preview = {
-      name:    plan.name,
-      desc:    plan.description || '',
-      days:    plan.totalDays,
-      type:    plan.type || 'topic',
-      preview: (plan.days || []).slice(0, 3).map(d => ({
-        day: d.day, passage: d.passage, title: d.title, focus: d.focus || '',
-      })),
+      name: plan.name, desc: plan.description || '',
+      days: plan.totalDays, type: plan.type || 'topic',
+      preview: (plan.days || []).slice(0, 3).map(d => ({ day: d.day, passage: d.passage, title: d.title, focus: d.focus || '' })),
     }
     localStorage.setItem(`dw_plan_share_${shortId}`, JSON.stringify(preview))
   } catch {}
 
   const text = `I'm reading "${plan.name}" on Daily Walk. Join me and let's grow together in the Word! 📖`
-
   try {
     if (typeof navigator !== 'undefined' && navigator.share) {
       await navigator.share({ title: plan.name, text, url })
@@ -53,11 +56,12 @@ async function sharePlan(plan) {
       await navigator.clipboard.writeText(url)
       showToast('Link copied to clipboard!')
     }
-  } catch {
-    // User cancelled — silent
-  }
+  } catch {}
 }
 
+// ─────────────────────────────────────────────
+//  Showcase data
+// ─────────────────────────────────────────────
 const SHOWCASE = [
   { name: "New Believer's Start", desc: '30 days of foundation for new Christians',     duration: 30, icon: '🌱', color: '#4A7C5F', type: 'topic'    },
   { name: 'Peace Over Anxiety',   desc: 'Replace fear with biblical peace',             duration: 30, icon: '🕊️', color: '#7CB9E8', type: 'topic'    },
@@ -72,6 +76,9 @@ const TYPE_COLORS = {
   character: { bg: '#FFF4DC', color: '#B07000', label: 'Character' },
 }
 
+// ─────────────────────────────────────────────
+//  Progress bar
+// ─────────────────────────────────────────────
 function ProgressBar({ pct, c }) {
   return (
     <div className="w-full h-1.5 rounded-full overflow-hidden" style={{ background: c.bgMuted }}>
@@ -82,8 +89,11 @@ function ProgressBar({ pct, c }) {
   )
 }
 
-function ActivePlanCard({ plan, idx, c, dark, onDelete }) {
-  const router = useRouter()
+// ─────────────────────────────────────────────
+//  Active plan card
+// ─────────────────────────────────────────────
+function ActivePlanCard({ plan, idx, c, dark, onMarkDone, onDelete }) {
+  const router    = useRouter()
   const [menu, setMenu] = useState(false)
 
   const pct       = getPlanProgress(plan)
@@ -97,12 +107,13 @@ function ActivePlanCard({ plan, idx, c, dark, onDelete }) {
     <motion.div
       initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }}
       transition={{ delay: idx * 0.06 }}
-      className="rounded-[22px] overflow-hidden"
+      className="rounded-[22px] overflow-hidden w-full"
       style={{ background: c.bgCard, boxShadow: c.shadowHeavy }}
     >
       <div className="h-1.5" style={{ background: 'linear-gradient(90deg,#5B4FCF,#7C6FCD)' }} />
 
       <div className="px-4 pt-4 pb-5">
+
         {/* Title row */}
         <div className="flex items-start justify-between gap-2 mb-3">
           <div className="flex-1 min-w-0">
@@ -117,6 +128,7 @@ function ActivePlanCard({ plan, idx, c, dark, onDelete }) {
               Day {plan.currentDay} of {plan.totalDays} · {plan.pace}
             </p>
           </div>
+
           {/* 3-dot menu */}
           <div className="relative flex-shrink-0">
             <button onClick={e => { e.stopPropagation(); setMenu(m => !m) }}
@@ -186,23 +198,33 @@ function ActivePlanCard({ plan, idx, c, dark, onDelete }) {
 
         {/* Action buttons */}
         <div className="flex gap-2">
-          <button onClick={() => router.push(dayUrl)}
-            className="flex-1 py-3 rounded-full font-bold text-[13px] text-white transition-all active:scale-95 truncate"
+          {/* Primary: open reading */}
+          <button
+            onClick={() => router.push(dayUrl)}
+            className="flex-1 min-w-0 py-3 rounded-full font-bold text-[13px] text-white transition-all active:scale-95 truncate"
             style={{ background: todayDone ? '#4A7C5F' : '#5B4FCF' }}>
             {todayDone ? '✓ Review today' : "Open today's reading →"}
           </button>
-          <button
-            onClick={() => sharePlan(plan)}
-            className="flex items-center gap-1.5 px-4 py-3 rounded-full font-bold text-[13px] transition-all active:scale-95 flex-shrink-0"
-            style={{ background: c.bgCardAlt, color: '#5B4FCF' }}>
-            <Share2 size={13} /> Share
-          </button>
+
+          {/* Mark Done — only when not yet done */}
+          {!todayDone && todayDay && (
+            <button
+              onClick={e => { e.stopPropagation(); onMarkDone(plan.id, plan.currentDay) }}
+              className="flex items-center gap-1.5 px-4 py-3 rounded-full font-bold text-[13px] transition-all active:scale-95 flex-shrink-0"
+              style={{ background: '#E8F4ED', color: '#4A7C5F' }}>
+              <CheckCircle2 size={13} /> Done
+            </button>
+          )}
         </div>
+
       </div>
     </motion.div>
   )
 }
 
+// ─────────────────────────────────────────────
+//  Showcase card
+// ─────────────────────────────────────────────
 function ShowcaseCard({ plan, c, onTap }) {
   return (
     <motion.button whileTap={{ scale: 0.96 }} onClick={() => onTap(plan)}
@@ -225,6 +247,9 @@ function ShowcaseCard({ plan, c, onTap }) {
   )
 }
 
+// ─────────────────────────────────────────────
+//  Create row
+// ─────────────────────────────────────────────
 function CreateRow({ icon: Icon, title, desc, href, color, c }) {
   const router = useRouter()
   return (
@@ -244,12 +269,15 @@ function CreateRow({ icon: Icon, title, desc, href, color, c }) {
   )
 }
 
+// ─────────────────────────────────────────────
+//  Main page
+// ─────────────────────────────────────────────
 export default function PlansPage() {
   const router = useRouter()
   const { dark } = useDarkMode()
   const c = getDarkModeColors(dark)
 
-  const [plans, setPlans]       = useState([])
+  const [plans,    setPlans]    = useState([])
   const [hydrated, setHydrated] = useState(false)
 
   useEffect(() => {
@@ -263,13 +291,21 @@ export default function PlansPage() {
 
   function handleDelete(planId) {
     const updated = plans.map(p => p.id === planId ? { ...p, status: 'archived' } : p)
-    writePlans(updated); setPlans(updated); showToast('Plan removed')
+    writePlans(updated)
+    setPlans(updated)
+    showToast('Plan removed')
+  }
+
+  function handleMarkDone(planId, dayNum) {
+    markDayComplete(planId, dayNum, '')
+    setPlans(readPlans())
+    showToast('Day complete! 🙌')
   }
 
   if (!hydrated) return null
 
   return (
-    <div className="flex flex-col" style={{ minHeight: '100dvh', background: c.bg, overflowX: 'hidden', maxWidth: '100vw' }}>
+    <div className="flex flex-col" style={{ minHeight: '100dvh', background: c.bg, overflowX: 'hidden' }}>
       <ToastContainer />
 
       {/* Header */}
@@ -293,7 +329,7 @@ export default function PlansPage() {
         </div>
       </header>
 
-      {/* Content */}
+      {/* Scrollable content */}
       <div className="flex-1 overflow-y-auto overflow-x-hidden" style={{ paddingBottom: 112 }}>
 
         {/* Active plans */}
@@ -301,7 +337,9 @@ export default function PlansPage() {
           <div className="px-4 mt-5 flex flex-col gap-3">
             <p className="text-[11px] font-bold uppercase tracking-wider" style={{ color: c.textFaint }}>Active</p>
             {activePlans.map((plan, i) => (
-              <ActivePlanCard key={plan.id} plan={plan} idx={i} c={c} dark={dark} onDelete={handleDelete} />
+              <ActivePlanCard
+                key={plan.id} plan={plan} idx={i} c={c} dark={dark}
+                onMarkDone={handleMarkDone} onDelete={handleDelete} />
             ))}
           </div>
         )}
@@ -324,7 +362,7 @@ export default function PlansPage() {
           </div>
         </div>
 
-        {/* Create */}
+        {/* Create your plan */}
         <div className="px-4 mt-7">
           <p className="text-[11px] font-bold uppercase tracking-wider mb-3" style={{ color: c.textFaint }}>Create a plan</p>
           <div className="flex flex-col gap-2.5">
@@ -353,6 +391,7 @@ export default function PlansPage() {
             </div>
           </div>
         )}
+
       </div>
     </div>
   )

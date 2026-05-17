@@ -60,12 +60,12 @@ function CharacterImage({ character, state }) {
 
   return (
     <motion.div animate={anim[state] || {}} className="relative"
-      style={{width:96,height:96}}>
+      style={{width:150,height:150}}>
       {!failed ? (
         <img src={src} alt={character.name}
           onLoad={()=>setImageLoaded(true)}
           onError={()=>setFailed(true)}
-          style={{width:96,height:96,objectFit:'contain',
+          style={{width:150,height:150,objectFit:'contain',
             opacity:imageLoaded?1:0,transition:'opacity 0.3s'}}/>
       ) : null}
       {(failed || !imageLoaded) && (

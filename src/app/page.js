@@ -2,9 +2,8 @@
 import React from 'react'
 
 // ── src/app/page.js ──
-// Fixed sticky header. Dark mode via useTheme() token system.
-// Content clears bottom nav via paddingBottom: 96.
-// All colours from theme tokens — no hardcoded hex.
+// Fix 1: Header is OUTSIDE the scroll container — never scrolls away.
+// Fix 2: TodaysReadingCard mark-done button works correctly.
 
 import { useMemo, useState, useRef } from 'react'
 import Link from 'next/link'
@@ -87,8 +86,8 @@ function HeroCard({ heroImg, verse }) {
 //  Today's Reading card
 // ─────────────────────────────────────────────
 function TodaysReadingCard({ plans, setPlans, onCheckin, t }) {
-  const router = useRouter()
-  const active = (plans || []).filter(p => p.status === 'active')
+  const router  = useRouter()
+  const active  = (plans || []).filter(p => p.status === 'active')
   const uncompleted    = getTodaysPlan(active)
   const completedToday = active.find(p => isPlanCompletedToday(p))
   const todayPlan      = uncompleted || completedToday
@@ -127,7 +126,7 @@ function TodaysReadingCard({ plans, setPlans, onCheckin, t }) {
     )
   }
 
-  const todayDay   = todayPlan.days?.[todayPlan.currentDay - 1]
+  const todayDay   = todayPlan.days?.find(d => d.day === todayPlan.currentDay)
   const pct        = getPlanProgress(todayPlan)
   const isComplete = isPlanCompletedToday(todayPlan)
   const dayUrl     = `/plans/${todayPlan.id}/day/${todayPlan.currentDay}`
@@ -156,9 +155,11 @@ function TodaysReadingCard({ plans, setPlans, onCheckin, t }) {
           </div>
           <span className="text-[12px] font-semibold" style={{ color: t.textMuted }}>Open →</span>
         </div>
+
         <p className="font-display font-semibold text-[16px]" style={{ color: t.text }}>
           {todayPlan.name}
         </p>
+
         {todayDay && (
           <div className="flex items-center justify-between mt-1">
             <p className="text-[13px]" style={{ color: t.textMuted }}>
@@ -173,6 +174,8 @@ function TodaysReadingCard({ plans, setPlans, onCheckin, t }) {
             </span>
           </div>
         )}
+
+        {/* Progress bar */}
         <div className="mt-3 mb-4">
           <div className="w-full h-1.5 rounded-full overflow-hidden" style={{ background: t.bgMuted }}>
             <motion.div
@@ -181,6 +184,8 @@ function TodaysReadingCard({ plans, setPlans, onCheckin, t }) {
             />
           </div>
         </div>
+
+        {/* Mark done / done state */}
         {isComplete ? (
           <div
             className="flex items-center gap-2 py-3 rounded-[14px] justify-center"
@@ -214,7 +219,7 @@ function HomeFAB({ onPost, t }) {
   const [nugOpen, setNug]     = useState(false)
   const [input,   setInput]   = useState('')
   const [nuggets, setNuggets] = useLocalStorage('dw_nuggets', [])
- 
+
   function saveNugget() {
     const text = input.trim()
     if (!text) return
@@ -225,7 +230,7 @@ function HomeFAB({ onPost, t }) {
     showToast('Nugget saved!')
     setNug(false); setInput(''); setOpen(false)
   }
- 
+
   const actions = [
     {
       icon: PenLine, bg: t.purpleBg, color: '#5B4FCF',
@@ -238,10 +243,10 @@ function HomeFAB({ onPost, t }) {
       action: () => { setOpen(false); setTimeout(() => setNug(true), 120) },
     },
   ]
- 
+
   return (
     <>
-      {/* FAB button — stays at bottom-20 */}
+      {/* FAB button */}
       <button
         onClick={() => setOpen(v => !v)}
         className="fixed bottom-20 right-4 w-[52px] h-[52px] rounded-full text-white flex items-center justify-center z-40 active:scale-95 transition-all"
@@ -251,17 +256,16 @@ function HomeFAB({ onPost, t }) {
           <Plus size={24} />
         </motion.div>
       </button>
- 
+
       <AnimatePresence>
         {open && (
           <>
-            {/* Backdrop */}
             <motion.div
               className="fixed inset-0 z-30"
               initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
               onClick={() => setOpen(false)}
             />
-            {/* Popup — bottom-[148px] clears the FAB (52px) + nav (80px) + 16px gap */}
+            {/* Popup — positioned above the FAB */}
             <motion.div
               className="fixed bottom-[148px] right-4 flex flex-col gap-2 z-40 items-end"
               initial={{ opacity: 0, y: 12, scale: 0.95 }}
@@ -291,7 +295,7 @@ function HomeFAB({ onPost, t }) {
           </>
         )}
       </AnimatePresence>
- 
+
       {/* Nugget sheet */}
       <AnimatePresence>
         {nugOpen && (
@@ -318,10 +322,10 @@ function HomeFAB({ onPost, t }) {
                 rows={4}
                 className="w-full rounded-[14px] px-4 py-3.5 text-[15px] resize-none focus:outline-none mb-4"
                 style={{
-                  background:  t.bgMuted,
-                  color:       t.text,
-                  border:      `1px solid ${t.borderInput}`,
-                  lineHeight:  1.7,
+                  background: t.bgMuted,
+                  color:      t.text,
+                  border:     `1px solid ${t.borderInput}`,
+                  lineHeight: 1.7,
                 }}
               />
               <button
@@ -343,12 +347,12 @@ function HomeFAB({ onPost, t }) {
 //  Main screen
 // ─────────────────────────────────────────────
 export default function HomeScreen() {
-  const router = useRouter()
+  const router    = useRouter()
   const scrollRef = useRef(null)
   const { t, dark, toggle: toggleDark } = useTheme()
 
-  const { scrollY }     = useScroll({ container: scrollRef })
-  const headerOpacity   = useTransform(scrollY, [0, 40], [0, 1])
+  const { scrollY }   = useScroll({ container: scrollRef })
+  const headerOpacity = useTransform(scrollY, [0, 40], [0, 1])
 
   const [user,  , hydrated] = useLocalStorage('dw_user',  null)
   const [plans, setPlans]   = useLocalStorage('dw_plans', [])
@@ -376,15 +380,19 @@ export default function HomeScreen() {
       className="flex flex-col"
       style={{ height: '100dvh', overflow: 'hidden', background: t.bg }}
     >
-      {/* ── STICKY HEADER — never scrolls away ── */}
+      {/*
+        ── STICKY HEADER ──
+        Placed OUTSIDE and ABOVE the scrollRef div.
+        The outer div is flex-col + height:100dvh + overflow:hidden,
+        so this header is a fixed-height row that never moves.
+        The scroll container below it fills the remaining space.
+      */}
       <header
         className="flex-shrink-0 flex items-center justify-between px-4 z-40"
         style={{
-          height:     56,
-          background: t.bgNav,
+          height:       56,
+          background:   t.bgNav,
           borderBottom: `1px solid ${t.border}`,
-          position:   'sticky',
-          top:        0,
         }}
       >
         {/* Wordmark */}
@@ -400,11 +408,10 @@ export default function HomeScreen() {
 
         {/* Right actions */}
         <div className="flex items-center gap-1.5">
-          {/* Dark mode toggle */}
           <button
             onClick={toggleDark}
             className="w-9 h-9 rounded-full flex items-center justify-center transition-all active:scale-90 min-h-[44px] min-w-[44px]"
-            style={{ background: t.bgMuted, color: dark ? '#C77DFF' : '#5B4FCF' }}
+            style={{ background: t.bgMuted, color: dark ? '#F5C518' : '#5B4FCF' }}
             aria-label={dark ? 'Switch to light mode' : 'Switch to dark mode'}
           >
             {dark ? <Sun size={17} /> : <Moon size={17} />}
@@ -422,7 +429,12 @@ export default function HomeScreen() {
         </div>
       </header>
 
-      {/* ── SCROLLABLE CONTENT ── */}
+      {/*
+        ── SCROLLABLE CONTENT ──
+        Header is above this div, not inside it.
+        flex-1 makes this fill all remaining vertical space.
+        overflow-y-auto handles the scroll.
+      */}
       <div
         ref={scrollRef}
         className="flex-1 overflow-y-auto scroll-hide"
@@ -479,7 +491,7 @@ export default function HomeScreen() {
         </div>
       </div>
 
-      {/* FAB */}
+      {/* FAB — fixed position, outside all scroll containers */}
       <HomeFAB onPost={() => setCompose(true)} t={t} />
 
       <AnimatePresence>
