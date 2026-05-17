@@ -8,12 +8,13 @@
 
 import './globals.css'
 import Script from 'next/script'
-import BottomNav  from '../components/BottomNav'
-import Sidebar    from '../components/Sidebar'
+import BottomNav     from '../components/BottomNav'
+import Sidebar       from '../components/Sidebar'
 import InstallPrompt from '../components/InstallPrompt'
-import AppInit    from '../components/AppInit'
+import AppInit       from '../components/AppInit'
 import OfflineBanner from '../components/OfflineBanner'
 import { DarkModeProvider } from '../contexts/DarkModeContext'
+import { AuthGateProvider } from '../components/AuthGate'
 
 export const metadata = {
   title:       'Daily Walk — Your daily devotion, together.',
@@ -34,20 +35,12 @@ export default function RootLayout({ children }) {
   return (
     <html lang="en" suppressHydrationWarning>
       <head>
-        {/*
-          ── NO-FLASH DARK MODE SCRIPT ──
-          Runs synchronously before first paint.
-          Sets data-theme="dark" if the user previously enabled dark mode,
-          so the page renders dark immediately — no white flash.
-        */}
-        <script dangerouslySetInnerHTML={{ __html: `
-          try {
-            if (localStorage.getItem('dw_dark_mode') === 'true') {
-              document.documentElement.setAttribute('data-theme', 'dark');
-              document.documentElement.classList.add('dark');
-            }
-          } catch(e) {}
-        ` }} />
+        {/* No-flash dark mode — must run before first paint, next/script beforeInteractive is correct here */}
+        <Script
+          id="dark-mode-init"
+          strategy="beforeInteractive"
+          dangerouslySetInnerHTML={{ __html: `try{if(localStorage.getItem('dw_dark_mode')==='true'){document.documentElement.setAttribute('data-theme','dark');document.documentElement.classList.add('dark');}}catch(e){}` }}
+        />
 
         <link rel="preconnect" href="https://fonts.googleapis.com" />
         <link rel="preconnect" href="https://fonts.gstatic.com" crossOrigin="anonymous" />
@@ -66,7 +59,8 @@ export default function RootLayout({ children }) {
 
       <body style={{ margin: 0 }}>
         <DarkModeProvider>
-          <OfflineBanner />
+          <AuthGateProvider>
+            <OfflineBanner />
 
           {/*
             ── LAYOUT STRATEGY ──
@@ -106,6 +100,7 @@ export default function RootLayout({ children }) {
 
           <AppInit />
           <InstallPrompt />
+          </AuthGateProvider>
         </DarkModeProvider>
 
         <Script src="/sw-register.js" strategy="afterInteractive" />

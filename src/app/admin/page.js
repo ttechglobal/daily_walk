@@ -1,539 +1,565 @@
 'use client'
 
-// ── /admin — Daily Walk Admin Panel ──
-// Password: set NEXT_PUBLIC_ADMIN_PASSWORD in .env.local
-// Tabs: Plans | Analytics | Ads (coming soon)
+// ── src/app/admin/page.js ──
+// Replaces the existing localStorage-only admin panel.
+// Requires role = 'superadmin' in profiles table — redirects otherwise.
+// Desktop: persistent left sidebar. Mobile: hamburger menu.
+// All data live from Supabase. No mock data.
 
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useCallback } from 'react'
+import { useRouter } from 'next/navigation'
 import { motion, AnimatePresence } from 'framer-motion'
 import {
-  Lock, Plus, Sparkles, Trash2, CheckCircle2, AlertCircle,
-  Copy, BarChart2, Users, BookOpen, TrendingUp, Eye, Megaphone
+  LayoutDashboard, Users, Globe, FileText, Bell,
+  Settings, Menu, X, LogOut, Trash2, Eye,
+  RefreshCw, Plus, Shield, ChevronDown,
 } from 'lucide-react'
 import { createClient } from '../../lib/supabase/client'
-import { showToast, ToastContainer } from '../../components/Toast'
+import { useTheme } from '../../lib/theme'
 
 // ─────────────────────────────────────────────
-//  Gemini prompt builder
+//  Auth guard — redirect if not superadmin
 // ─────────────────────────────────────────────
-function buildGeminiPrompt(topic, days) {
-  return `Create a ${days}-day Bible reading plan on the topic of "${topic}".
+function useAdminGuard() {
+  const router = useRouter()
+  const [ready,  setReady]  = useState(false)
+  const [isAdmin,setIsAdmin] = useState(false)
 
-Return ONLY valid JSON — no markdown backticks, no explanation, no preamble. Start your response with { and end with }.
-
-Use exactly this structure:
-{
-  "id": "${topic.toLowerCase().replace(/[^a-z0-9]/g,'-').replace(/-+/g,'-')}-plan",
-  "name": "[Short catchy plan name, 2-4 words]",
-  "description": "[2 sentences: what this plan covers and who it is for]",
-  "theme": "${topic}",
-  "color": "[choose one: #5B4FCF, #4A7C5F, #E8A838, #7CB9E8, #C77DFF]",
-  "icon": "[one Lucide React icon name that fits, e.g. Heart, Shield, Flame, Star, Wind]",
-  "duration": ${days},
-  "days": [
-    { "day": 1, "passage": "Book Chapter:Verse-Verse", "title": "4-6 word title", "focus": "One sentence about this passage for this topic." },
-    { "day": 2, "passage": "Book Chapter:Verse-Verse", "title": "4-6 word title", "focus": "One sentence." }
-  ]
-}
-
-Rules:
-- Only use real, accurate Bible passages that genuinely address "${topic}"
-- Vary the books — no two consecutive days from the same book
-- Progress from foundational to deeper passages across ${days} days
-- Keep focus sentences encouraging, not preachy
-- Return ALL ${days} days, no skipping or truncating
-- The "days" array must have exactly ${days} items`
-}
-
-// ─────────────────────────────────────────────
-//  Password gate
-// ─────────────────────────────────────────────
-function PasswordGate({ onAuth }) {
-  const [pwd,   setPwd]   = useState('')
-  const [error, setError] = useState(false)
-  const [shake, setShake] = useState(false)
-
-  function attempt() {
-    const env = process.env.NEXT_PUBLIC_ADMIN_PASSWORD
-    if (!env) { alert('Set NEXT_PUBLIC_ADMIN_PASSWORD in .env.local then restart dev server'); return }
-    if (pwd === env) {
-      try { sessionStorage.setItem('dw_admin_auth', '1') } catch {}
-      onAuth()
-    } else {
-      setError(true); setShake(true); setPwd('')
-      setTimeout(() => { setError(false); setShake(false) }, 1800)
+  useEffect(() => {
+    async function check() {
+      const sb = createClient()
+      if (!sb) { router.replace('/'); return }
+      const { data: { user } } = await sb.auth.getUser()
+      if (!user) { router.replace('/admin/login'); return }
+      const { data: profile } = await sb.from('profiles')
+        .select('role').eq('id', user.id).single()
+      if (profile?.role !== 'superadmin') { router.replace('/admin/login'); return }
+      setIsAdmin(true)
+      setReady(true)
     }
-  }
+    check()
+  }, []) // eslint-disable-line
 
+  return { ready, isAdmin }
+}
+
+// ─────────────────────────────────────────────
+//  Table helpers
+// ─────────────────────────────────────────────
+function Table({ headers, rows, emptyText = 'No data' }) {
+  const { t } = useTheme()
+  if (!rows.length) return (
+    <p className="text-center py-10 text-[13px]" style={{color:t.textFaint}}>{emptyText}</p>
+  )
   return (
-    <div className="min-h-screen flex flex-col items-center justify-center px-6"
-      style={{ background:'#FAF8F5' }}>
-      <motion.div className="w-full max-w-[360px] flex flex-col gap-5"
-        animate={shake ? { x:[-8,8,-6,6,-3,3,0] } : {}} transition={{ duration:0.4 }}>
-        <div className="flex flex-col items-center gap-3 text-center">
-          <div className="w-14 h-14 rounded-full flex items-center justify-center"
-            style={{ background:'#EDE9FF' }}>
-            <Lock size={24} style={{ color:'#5B4FCF' }} />
-          </div>
-          <p className="font-bold text-[22px]" style={{ color:'#1A1A2E' }}>Daily Walk Admin</p>
-          <p className="text-[13px]" style={{ color:'#9CA3AF' }}>Developer access only</p>
-        </div>
-        <input type="password" value={pwd}
-          onChange={e => setPwd(e.target.value)}
-          onKeyDown={e => e.key === 'Enter' && attempt()}
-          placeholder="Admin password"
-          className="w-full border rounded-[14px] px-4 py-3.5 text-[15px] focus:outline-none focus:border-purple transition-all"
-          style={{ borderColor:error?'#EF4444':'#E5E7EB', color:'#1A1A2E' }}
-          autoFocus />
-        {error && <p className="text-[13px] text-center" style={{ color:'#EF4444' }}>Incorrect password</p>}
-        <button onClick={attempt}
-          className="w-full text-white rounded-full py-3.5 font-bold text-[15px] hover:opacity-90 transition-all"
-          style={{ background:'#5B4FCF' }}>
-          Enter
-        </button>
-      </motion.div>
+    <div className="overflow-x-auto rounded-[16px]" style={{border:`1px solid ${t.border}`}}>
+      <table className="w-full min-w-[600px]">
+        <thead>
+          <tr style={{background:t.bgMuted, borderBottom:`1px solid ${t.border}`}}>
+            {headers.map(h => (
+              <th key={h} className="px-4 py-3 text-left text-[12px] font-bold uppercase tracking-wider"
+                style={{color:t.textFaint}}>{h}</th>
+            ))}
+          </tr>
+        </thead>
+        <tbody>
+          {rows.map((row, i) => (
+            <tr key={i} className="border-b last:border-0" style={{borderColor:t.border,background:t.bgCard}}>
+              {row.map((cell, j) => (
+                <td key={j} className="px-4 py-3 text-[13px]" style={{color:t.text}}>{cell}</td>
+              ))}
+            </tr>
+          ))}
+        </tbody>
+      </table>
     </div>
   )
 }
 
-// ─────────────────────────────────────────────
-//  Plan preview card
-// ─────────────────────────────────────────────
-function PlanPreviewCard({ plan }) {
-  const [expanded, setExpanded] = useState(false)
-  const days = plan.days || []
-  const shown = expanded ? days : days.slice(0, 3)
-
+function StatCard({ icon: Icon, label, value, color }) {
+  const { t } = useTheme()
   return (
-    <div className="bg-white rounded-[16px] overflow-hidden border" style={{ borderColor:'#E8E5E0' }}>
-      <div className="h-1.5 w-full" style={{ background: plan.color || '#5B4FCF' }} />
-      <div className="p-4 flex flex-col gap-3">
-        <div className="flex items-start justify-between gap-2">
-          <div>
-            <p className="font-bold text-[16px]" style={{ color:'#1A1A2E' }}>{plan.name}</p>
-            <p className="text-[12px] mt-0.5" style={{ color:'#6B7280' }}>
-              {plan.theme} · {days.length} days
-            </p>
-          </div>
-          <div className="flex items-center gap-1.5">
-            <div className="w-4 h-4 rounded-full flex-shrink-0" style={{ background:plan.color||'#5B4FCF' }} />
-            <span className="text-[11px] font-bold px-2 py-0.5 rounded-full" style={{ background:'#E8F4ED', color:'#4A7C5F' }}>
-              Valid ✓
-            </span>
-          </div>
-        </div>
-        {plan.description && (
-          <p className="text-[13px] leading-relaxed" style={{ color:'#6B7280' }}>{plan.description}</p>
-        )}
-        {/* Day rows */}
-        <div className="flex flex-col gap-1.5">
-          {shown.map(d => (
-            <div key={d.day} className="flex items-start gap-2.5 py-1.5 border-b last:border-0"
-              style={{ borderColor:'#F5F5F5' }}>
-              <div className="w-6 h-6 rounded-full flex items-center justify-center text-white text-[10px] font-bold flex-shrink-0"
-                style={{ background: plan.color||'#5B4FCF' }}>{d.day}</div>
-              <div className="min-w-0">
-                <p className="font-bold text-[12px]" style={{ color:'#1A1A2E' }}>{d.passage}</p>
-                <p className="text-[11px]" style={{ color:'#6B7280' }}>{d.title}</p>
-                <p className="text-[11px] italic mt-0.5" style={{ color:'#9CA3AF' }}>{d.focus}</p>
-              </div>
-            </div>
-          ))}
-        </div>
-        {days.length > 3 && (
-          <button onClick={() => setExpanded(v => !v)}
-            className="text-[12px] font-semibold text-center"
-            style={{ color:'#5B4FCF' }}>
-            {expanded ? 'Show less ↑' : `Show all ${days.length} days ↓`}
-          </button>
-        )}
+    <div className="rounded-[18px] p-5 flex items-center gap-4"
+      style={{background:t.bgCard, boxShadow:t.shadow}}>
+      <div className="w-12 h-12 rounded-2xl flex items-center justify-center flex-shrink-0"
+        style={{background:`${color}18`}}>
+        <Icon size={22} style={{color}}/>
+      </div>
+      <div>
+        <p className="font-extrabold text-[26px] leading-none" style={{color:t.text}}>{value}</p>
+        <p className="text-[12px] mt-1" style={{color:t.textMuted}}>{label}</p>
       </div>
     </div>
   )
 }
 
 // ─────────────────────────────────────────────
-//  Plans tab
+//  Dashboard page
 // ─────────────────────────────────────────────
-function PlansTab() {
-  const [sbPlans,   setSbPlans]   = useState([])
-  const [jsonInput, setJsonInput] = useState('')
-  const [parsed,    setParsed]    = useState(null)
-  const [parseErr,  setParseErr]  = useState(null)
-  const [saving,    setSaving]    = useState(false)
-  const [prompt,    setPrompt]    = useState({ topic:'', days:'30', copied:false })
+function DashboardPage() {
+  const { t } = useTheme()
+  const [stats, setStats] = useState(null)
+  const [loading, setLoading] = useState(true)
 
-  useEffect(() => { loadSbPlans() }, [])
-
-  async function loadSbPlans() {
+  const load = useCallback(async () => {
+    setLoading(true)
     const sb = createClient()
-    if (!sb) return
+    if (!sb) { setLoading(false); return }
     try {
-      const { data } = await sb.from('topical_plans').select('*').eq('is_active', true).order('created_at')
-      if (data) setSbPlans(data)
-    } catch {}
-  }
-
-  function handleValidate() {
-    setParseErr(null); setParsed(null)
-    try {
-      const p = JSON.parse(jsonInput)
-      if (!p.id)            { setParseErr('Missing: id'); return }
-      if (!p.name)          { setParseErr('Missing: name'); return }
-      if (!Array.isArray(p.days) || p.days.length === 0) { setParseErr('Missing: days[]'); return }
-      const d = p.days[0]
-      if (!d.day || !d.passage || !d.title) { setParseErr('Each day needs: day, passage, title, focus'); return }
-      setParsed({ ...p, duration: p.days.length })
-      showToast(`✓ Valid — ${p.days.length} days`)
-    } catch (e) {
-      setParseErr(`JSON error: ${e.message}`)
-    }
-  }
-
-  async function handleSave(plan) {
-    setSaving(true)
-    const sb = createClient()
-    if (!sb) {
-      showToast('Supabase not configured — wire NEXT_PUBLIC_SUPABASE_URL in .env.local')
-      setSaving(false); return
-    }
-    try {
-      const { error } = await sb.from('topical_plans').upsert({
-        id: plan.id, name: plan.name, description: plan.description || '',
-        theme: plan.theme || plan.name, color: plan.color || '#5B4FCF',
-        icon: plan.icon || 'BookOpen', duration: plan.days.length,
-        days: plan.days, is_active: true,
+      // Parallel queries
+      const [users, communities, posts, plans] = await Promise.all([
+        sb.from('profiles').select('id', {count:'exact',head:true}),
+        sb.from('communities').select('id', {count:'exact',head:true}),
+        sb.from('posts').select('id', {count:'exact',head:true}).gte('created_at', new Date().toISOString().slice(0,10)),
+        sb.from('plans').select('id', {count:'exact',head:true}).eq('status','active'),
+      ])
+      setStats({
+        users:       users.count || 0,
+        communities: communities.count || 0,
+        postsToday:  posts.count || 0,
+        activePlans: plans.count || 0,
       })
-      if (error) throw error
-      showToast('Plan saved — users will see it immediately!')
-      setJsonInput(''); setParsed(null); loadSbPlans()
-    } catch (e) { showToast('Save failed: ' + e.message) }
-    setSaving(false)
-  }
+    } catch (e) { console.error('[admin]', e.message) }
+    setLoading(false)
+  }, [])
 
-  async function copyPrompt() {
-    const text = buildGeminiPrompt(prompt.topic || 'Prayer', prompt.days)
-    await navigator.clipboard.writeText(text).catch(() => {})
-    setPrompt(p => ({ ...p, copied: true }))
-    setTimeout(() => setPrompt(p => ({ ...p, copied: false })), 2000)
-    showToast('Prompt copied — paste into Gemini!')
-  }
+  useEffect(() => { load() }, [load])
+
+  if (loading) return (
+    <div className="grid grid-cols-2 gap-4">
+      {[1,2,3,4].map(i=>(
+        <div key={i} className="rounded-[18px] p-5 h-[88px] animate-pulse"
+          style={{background:t.bgCard}}/>
+      ))}
+    </div>
+  )
 
   return (
     <div className="flex flex-col gap-6">
-
-      {/* ── STEP 1: Generate prompt ── */}
-      <section className="bg-white rounded-[20px] p-5 border flex flex-col gap-4"
-        style={{ borderColor:'#E8E5E0' }}>
+      <div className="flex items-center justify-between">
         <div>
-          <p className="font-bold text-[16px]" style={{ color:'#1A1A2E' }}>
-            Step 1 — Generate a plan with Gemini
-          </p>
-          <p className="text-[13px] mt-0.5" style={{ color:'#6B7280' }}>
-            Fill in topic + length, copy the prompt, paste into Gemini, paste the JSON back below.
+          <h2 className="font-bold text-[20px]" style={{color:t.text}}>Dashboard</h2>
+          <p className="text-[13px] mt-0.5" style={{color:t.textMuted}}>
+            {new Date().toLocaleDateString('en-US',{weekday:'long',month:'long',day:'numeric'})}
           </p>
         </div>
-
-        <div className="flex gap-3">
-          <div className="flex flex-col gap-1 flex-1">
-            <label className="text-[11px] font-bold uppercase tracking-wider" style={{ color:'#9CA3AF' }}>Topic</label>
-            <input type="text" value={prompt.topic}
-              onChange={e => setPrompt(p => ({...p, topic: e.target.value}))}
-              placeholder="e.g. Self-Control, Prayer, Grief, Purpose"
-              className="border rounded-[12px] px-3 py-2.5 text-[14px] focus:outline-none focus:border-purple"
-              style={{ borderColor:'#E5E7EB', color:'#1A1A2E' }} />
-          </div>
-          <div className="flex flex-col gap-1 w-20">
-            <label className="text-[11px] font-bold uppercase tracking-wider" style={{ color:'#9CA3AF' }}>Days</label>
-            <input type="number" value={prompt.days} min="7" max="90"
-              onChange={e => setPrompt(p => ({...p, days: e.target.value}))}
-              className="border rounded-[12px] px-3 py-2.5 text-[14px] focus:outline-none focus:border-purple text-center"
-              style={{ borderColor:'#E5E7EB', color:'#1A1A2E' }} />
-          </div>
-        </div>
-
-        {/* Prompt preview */}
-        <div className="rounded-[12px] p-3 text-[11px] font-mono leading-relaxed"
-          style={{ background:'#F8F7FF', color:'#5B4FCF', border:'1px solid #EDE9FF', maxHeight:120, overflow:'hidden', position:'relative' }}>
-          <div style={{ position:'absolute', inset:0, background:'linear-gradient(to bottom, transparent 60%, #F8F7FF)' }} />
-          {buildGeminiPrompt(prompt.topic||'Prayer', prompt.days).slice(0, 300)}...
-        </div>
-
-        <button onClick={copyPrompt}
-          className="w-full flex items-center justify-center gap-2 text-white rounded-full py-3.5 text-[14px] font-bold hover:opacity-90 active:scale-[0.97] transition-all"
-          style={{ background: prompt.copied ? '#4A7C5F' : '#5B4FCF' }}>
-          <Copy size={15} />
-          {prompt.copied ? 'Copied! Paste into Gemini ↗' : 'Copy Gemini Prompt'}
+        <button onClick={load} className="w-9 h-9 rounded-full flex items-center justify-center"
+          style={{background:t.bgMuted}}>
+          <RefreshCw size={15} style={{color:t.textMuted}}/>
         </button>
+      </div>
 
-        <p className="text-[12px] text-center" style={{ color:'#9CA3AF' }}>
-          Paste the prompt into gemini.google.com → copy the JSON response → paste below
-        </p>
-      </section>
-
-      {/* ── STEP 2: Paste + validate ── */}
-      <section className="bg-white rounded-[20px] p-5 border flex flex-col gap-4"
-        style={{ borderColor:'#E8E5E0' }}>
-        <div>
-          <p className="font-bold text-[16px]" style={{ color:'#1A1A2E' }}>Step 2 — Paste JSON & preview</p>
-          <p className="text-[13px] mt-0.5" style={{ color:'#6B7280' }}>Paste the JSON Gemini gave you. Click Validate to check it.</p>
-        </div>
-
-        <textarea value={jsonInput} onChange={e => { setJsonInput(e.target.value); setParsed(null); setParseErr(null) }}
-          placeholder={'{\n  "id": "prayer-plan",\n  "name": "Powerful Prayer",\n  "days": [...]\n}'}
-          rows={8}
-          className="w-full border rounded-[12px] px-4 py-3 text-[12px] font-mono focus:outline-none focus:border-purple resize-none"
-          style={{ borderColor:'#E5E7EB', color:'#1A1A2E', background:'#FAFAFA' }} />
-
-        {parseErr && (
-          <div className="flex items-start gap-2 p-3 rounded-[12px]" style={{ background:'#FFF0F0' }}>
-            <AlertCircle size={14} style={{ color:'#EF4444', flexShrink:0, marginTop:1 }} />
-            <p className="text-[12px]" style={{ color:'#EF4444' }}>{parseErr}</p>
-          </div>
-        )}
-
-        <button onClick={handleValidate} disabled={!jsonInput.trim()}
-          className="w-full border-2 rounded-full py-3 text-[14px] font-bold disabled:opacity-40 hover:bg-purple-light transition-all"
-          style={{ borderColor:'#5B4FCF', color:'#5B4FCF' }}>
-          Validate & Preview
-        </button>
-
-        {/* Preview */}
-        {parsed && (
-          <motion.div initial={{ opacity:0, y:8 }} animate={{ opacity:1, y:0 }}
-            className="flex flex-col gap-3">
-            <p className="text-[12px] font-bold" style={{ color:'#4A7C5F' }}>
-              ✓ Looks good — {parsed.days.length} days ready to publish
-            </p>
-            <PlanPreviewCard plan={parsed} />
-            <button onClick={() => handleSave(parsed)} disabled={saving}
-              className="w-full text-white rounded-full py-4 text-[15px] font-bold disabled:opacity-60 hover:opacity-90 active:scale-[0.97] transition-all"
-              style={{ background:'#5B4FCF' }}>
-              {saving ? 'Saving to Supabase...' : 'Publish Plan →'}
-            </button>
-          </motion.div>
-        )}
-      </section>
-
-      {/* ── STEP 3: Live plans ── */}
-      {sbPlans.length > 0 && (
-        <section className="flex flex-col gap-3">
-          <p className="text-[12px] font-bold uppercase tracking-wider" style={{ color:'#9CA3AF' }}>
-            Live in app ({sbPlans.length} from Supabase)
-          </p>
-          {sbPlans.map(p => <PlanPreviewCard key={p.id} plan={p} />)}
-        </section>
-      )}
-
-      {/* Supabase not configured notice */}
-      {!createClient() && (
-        <div className="p-4 rounded-[14px] border" style={{ borderColor:'#FDE68A', background:'#FFFBEB' }}>
-          <p className="font-bold text-[13px]" style={{ color:'#92400E' }}>Supabase not connected</p>
-          <p className="text-[12px] mt-1" style={{ color:'#B45309' }}>
-            Plans will save locally for now. Add NEXT_PUBLIC_SUPABASE_URL + NEXT_PUBLIC_SUPABASE_ANON_KEY to .env.local to publish to all users.
-          </p>
-        </div>
-      )}
+      <div className="grid grid-cols-2 gap-4">
+        <StatCard icon={Users}   label="Total users"       value={stats?.users||0}       color="#5B4FCF"/>
+        <StatCard icon={Globe}   label="Communities"       value={stats?.communities||0}  color="#4A7C5F"/>
+        <StatCard icon={FileText}label="Posts today"       value={stats?.postsToday||0}   color="#E8A838"/>
+        <StatCard icon={Settings}label="Active plans"      value={stats?.activePlans||0}  color="#E84060"/>
+      </div>
     </div>
   )
 }
 
 // ─────────────────────────────────────────────
-//  Analytics tab (real localStorage metrics)
+//  Communities page
 // ─────────────────────────────────────────────
-function AnalyticsTab() {
-  const [stats, setStats] = useState(null)
+function CommunitiesPage() {
+  const { t }  = useTheme()
+  const router = useRouter()
+  const [data,    setData]    = useState([])
+  const [loading, setLoading] = useState(true)
+  const [creating,setCreating]= useState(false)
+  const [newName, setNewName] = useState('')
+  const [newDesc, setNewDesc] = useState('')
+  const [saving,  setSaving]  = useState(false)
 
-  useEffect(() => {
-    try {
-      const checkins    = JSON.parse(localStorage.getItem('dw_checkins')    || '[]')
-      const plans       = JSON.parse(localStorage.getItem('dw_plans')       || '[]')
-      const communities = JSON.parse(localStorage.getItem('dw_communities') || '[]')
-      const nuggets     = JSON.parse(localStorage.getItem('dw_nuggets')     || '[]')
-      const globalPosts = JSON.parse(localStorage.getItem('dw_global_posts')|| '[]')
-      const streak      = JSON.parse(localStorage.getItem('dw_streak')      || '{}')
-      const user        = JSON.parse(localStorage.getItem('dw_user')        || 'null')
-
-      const allPosts = [...globalPosts]
-      communities.forEach(c => allPosts.push(...(c.posts||[])))
-
-      setStats({
-        checkins:       checkins.length,
-        streak:         streak.current || 0,
-        longestStreak:  streak.longest || 0,
-        activePlans:    plans.filter(p => p.status === 'active').length,
-        completedPlans: plans.filter(p => p.status === 'completed').length,
-        communities:    communities.filter(c => c.joined).length,
-        nuggets:        nuggets.length,
-        posts:          allPosts.length,
-        userName:       user?.name || 'Not set',
-        companion:      user?.companionId || 'david',
-        joinedAt:       user?.joinedAt || 'Unknown',
-      })
-    } catch {}
+  const load = useCallback(async () => {
+    setLoading(true)
+    const sb = createClient()
+    const { data: rows, error } = await sb.from('communities')
+      .select('id,name,slug,member_count,owner_name,created_at,created_by_admin,is_featured')
+      .order('created_at', { ascending: false })
+      .limit(100)
+    if (!error) setData(rows||[])
+    setLoading(false)
   }, [])
 
-  if (!stats) return <p className="text-center py-8" style={{ color:'#9CA3AF' }}>Loading...</p>
+  useEffect(() => { load() }, [load])
 
-  const metrics = [
-    { icon:BookOpen,    label:'Total check-ins',       value:stats.checkins,       color:'#5B4FCF' },
-    { icon:TrendingUp,  label:'Current streak',        value:`${stats.streak} days`,  color:'#E8A838' },
-    { icon:TrendingUp,  label:'Longest streak',        value:`${stats.longestStreak} days`, color:'#E8A838' },
-    { icon:Eye,         label:'Active plans',          value:stats.activePlans,    color:'#4A7C5F' },
-    { icon:CheckCircle2,label:'Completed plans',       value:stats.completedPlans, color:'#4A7C5F' },
-    { icon:Users,       label:'Communities joined',    value:stats.communities,    color:'#C77DFF' },
-    { icon:Sparkles,    label:'Nuggets saved',         value:stats.nuggets,        color:'#E8A838' },
-    { icon:BarChart2,   label:'Posts written',         value:stats.posts,          color:'#5B4FCF' },
-  ]
+  async function handleDelete(id, name) {
+    if (!window.confirm(`Delete "${name}"? This cannot be undone.`)) return
+    const sb = createClient()
+    const { error } = await sb.from('communities').delete().eq('id', id)
+    if (error) { alert('Error: ' + error.message); return }
+    setData(prev => prev.filter(r => r.id !== id))
+  }
+
+  async function handleCreate() {
+    if (!newName.trim()) return
+    setSaving(true)
+    const sb = createClient()
+    const { data: { user } } = await sb.auth.getUser()
+    const slug = newName.trim().toLowerCase().replace(/[^a-z0-9]+/g,'-').replace(/^-|-$/g,'').slice(0,40)
+      + '-' + Math.random().toString(36).slice(2,5)
+    const { data: row, error } = await sb.from('communities').insert({
+      name:             newName.trim(),
+      description:      newDesc.trim(),
+      slug,
+      created_by:       user?.id,
+      owner_name:       'Daily Walk App',
+      is_featured:      true,
+      created_by_admin: true,
+      member_count:     0,
+    }).select().single()
+    if (error) { alert('Error: '+error.message); setSaving(false); return }
+    setData(prev => [row, ...prev])
+    setNewName(''); setNewDesc(''); setCreating(false)
+    setSaving(false)
+  }
+
+  const rows = data.map(c => [
+    <span className="font-semibold">{c.name}{c.is_featured&&<span className="ml-2 text-[10px] font-bold px-1.5 py-0.5 rounded-full" style={{background:'#EDE9FF',color:'#5B4FCF'}}>Featured</span>}</span>,
+    c.slug,
+    c.member_count||0,
+    c.owner_name||'—',
+    new Date(c.created_at).toLocaleDateString(),
+    <div className="flex items-center gap-2">
+      <button onClick={() => router.push(`/community/${c.slug}`)}
+        className="flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-[12px] font-semibold min-h-[32px]"
+        style={{background:'#EDE9FF',color:'#5B4FCF'}}>
+        <Eye size={12}/> View
+      </button>
+      <button onClick={() => handleDelete(c.id, c.name)}
+        className="flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-[12px] font-semibold min-h-[32px]"
+        style={{background:'#FEE2E2',color:'#EF4444'}}>
+        <Trash2 size={12}/> Delete
+      </button>
+    </div>,
+  ])
 
   return (
     <div className="flex flex-col gap-5">
-      {/* User summary */}
-      <div className="bg-white rounded-[20px] p-5 border" style={{ borderColor:'#E8E5E0' }}>
-        <p className="font-bold text-[15px] mb-3" style={{ color:'#1A1A2E' }}>This device</p>
-        <div className="flex flex-col gap-2">
-          <div className="flex justify-between text-[13px]">
-            <span style={{ color:'#6B7280' }}>User name</span>
-            <span className="font-semibold" style={{ color:'#1A1A2E' }}>{stats.userName}</span>
-          </div>
-          <div className="flex justify-between text-[13px]">
-            <span style={{ color:'#6B7280' }}>Companion</span>
-            <span className="font-semibold capitalize" style={{ color:'#1A1A2E' }}>{stats.companion}</span>
-          </div>
-        </div>
+      <div className="flex items-center justify-between flex-wrap gap-3">
+        <h2 className="font-bold text-[20px]" style={{color:t.text}}>Communities</h2>
+        <button onClick={()=>setCreating(v=>!v)}
+          className="flex items-center gap-2 px-4 py-2.5 rounded-full text-[13px] font-bold text-white"
+          style={{background:'#5B4FCF'}}>
+          <Plus size={14}/> Create Default Community
+        </button>
       </div>
 
-      {/* Metrics grid */}
-      <div className="grid grid-cols-2 gap-3">
-        {metrics.map(m => (
-          <div key={m.label} className="bg-white rounded-[16px] p-4 flex flex-col gap-2 border"
-            style={{ borderColor:'#F0EDE8' }}>
-            <div className="w-8 h-8 rounded-xl flex items-center justify-center"
-              style={{ background:`${m.color}18` }}>
-              <m.icon size={16} style={{ color: m.color }} />
+      <AnimatePresence>
+        {creating && (
+          <motion.div initial={{opacity:0,y:-8}} animate={{opacity:1,y:0}} exit={{opacity:0,y:-8}}
+            className="rounded-[18px] p-5 flex flex-col gap-3"
+            style={{background:t.bgCard,boxShadow:t.shadow}}>
+            <p className="font-bold text-[15px]" style={{color:t.text}}>New Default Community</p>
+            <input value={newName} onChange={e=>setNewName(e.target.value)} placeholder="Community name"
+              className="w-full px-4 py-3 rounded-[12px] border text-[14px] focus:outline-none"
+              style={{background:t.bgInput,color:t.text,borderColor:t.borderInput}}/>
+            <textarea value={newDesc} onChange={e=>setNewDesc(e.target.value)} rows={2}
+              placeholder="Short description (optional)"
+              className="w-full px-4 py-3 rounded-[12px] border text-[14px] resize-none focus:outline-none"
+              style={{background:t.bgInput,color:t.text,borderColor:t.borderInput}}/>
+            <div className="flex gap-2">
+              <button onClick={handleCreate} disabled={!newName.trim()||saving}
+                className="px-5 py-2.5 rounded-full text-white text-[13px] font-bold disabled:opacity-50"
+                style={{background:'#5B4FCF'}}>
+                {saving?'Creating…':'Create'}
+              </button>
+              <button onClick={()=>setCreating(false)}
+                className="px-5 py-2.5 rounded-full text-[13px] font-semibold"
+                style={{background:t.bgMuted,color:t.textMuted}}>
+                Cancel
+              </button>
             </div>
-            <p className="font-bold text-[22px]" style={{ color:'#1A1A2E' }}>{m.value}</p>
-            <p className="text-[11px]" style={{ color:'#9CA3AF' }}>{m.label}</p>
-          </div>
-        ))}
-      </div>
-
-      <div className="p-4 rounded-[14px] border text-center" style={{ borderColor:'#E8E5E0', background:'white' }}>
-        <p className="font-semibold text-[13px]" style={{ color:'#6B7280' }}>
-          📊 These are device-level stats from localStorage.
-        </p>
-        <p className="text-[12px] mt-1" style={{ color:'#9CA3AF' }}>
-          Once Supabase is connected, this panel will show real-time aggregate stats across all users.
-        </p>
-      </div>
-    </div>
-  )
-}
-
-// ─────────────────────────────────────────────
-//  Ads tab (placeholder for future)
-// ─────────────────────────────────────────────
-function AdsTab() {
-  return (
-    <div className="flex flex-col gap-4">
-      <div className="bg-white rounded-[20px] p-6 border text-center flex flex-col items-center gap-4"
-        style={{ borderColor:'#E8E5E0' }}>
-        <div className="w-16 h-16 rounded-full flex items-center justify-center"
-          style={{ background:'#EDE9FF' }}>
-          <Megaphone size={28} style={{ color:'#5B4FCF' }} />
-        </div>
-        <div>
-          <p className="font-bold text-[18px]" style={{ color:'#1A1A2E' }}>Ads Management</p>
-          <p className="text-[13px] mt-1 leading-relaxed" style={{ color:'#6B7280' }}>
-            This is where you'll manage sponsored content, promoted communities, and partner integrations when Daily Walk scales.
-          </p>
-        </div>
-        <div className="w-full flex flex-col gap-2 text-left">
-          {[
-            'Banner ads in the For You feed',
-            'Sponsored Bible reading plans',
-            'Promoted communities from churches',
-            'CPM/CPC reporting dashboard',
-            'Ad approval workflow',
-          ].map((item, i) => (
-            <div key={i} className="flex items-center gap-2.5 py-2 border-b last:border-0"
-              style={{ borderColor:'#F5F5F5' }}>
-              <div className="w-2 h-2 rounded-full flex-shrink-0" style={{ background:'#C4C1BC' }} />
-              <p className="text-[13px]" style={{ color:'#6B7280' }}>{item}</p>
-            </div>
-          ))}
-        </div>
-        <p className="text-[12px] font-semibold px-4 py-2 rounded-full"
-          style={{ background:'#EDE9FF', color:'#5B4FCF' }}>
-          Coming in v2.0
-        </p>
-      </div>
-    </div>
-  )
-}
-
-// ─────────────────────────────────────────────
-//  Main admin panel
-// ─────────────────────────────────────────────
-function AdminPanel() {
-  const [tab, setTab] = useState('plans')
-
-  const TABS = [
-    { key:'plans',     label:'Plans',     icon:BookOpen  },
-    { key:'analytics', label:'Analytics', icon:BarChart2 },
-    { key:'ads',       label:'Ads',       icon:Megaphone },
-  ]
-
-  return (
-    <div className="min-h-screen" style={{ background:'#FAF8F5' }}>
-      {/* Header */}
-      <div className="bg-white px-5 py-4 border-b" style={{ borderColor:'#F0EDE8' }}>
-        <p className="font-bold text-[20px]" style={{ color:'#1A1A2E' }}>Daily Walk Admin</p>
-        <p className="text-[12px] mt-0.5" style={{ color:'#9CA3AF' }}>
-          {new Date().toLocaleDateString('en-US', { weekday:'long', month:'long', day:'numeric' })}
-        </p>
-      </div>
-
-      {/* Tab nav */}
-      <div className="flex gap-1 px-4 pt-4">
-        {TABS.map(t => (
-          <button key={t.key} onClick={() => setTab(t.key)}
-            className="flex items-center gap-1.5 px-3.5 py-2 rounded-full text-[13px] font-bold transition-all"
-            style={tab===t.key
-              ? { background:'#5B4FCF', color:'white' }
-              : { background:'white', color:'#6B7280', border:'1.5px solid #E5E7EB' }}>
-            <t.icon size={13} />
-            {t.label}
-          </button>
-        ))}
-      </div>
-
-      <div className="px-4 py-5 pb-16">
-        <AnimatePresence mode="wait">
-          <motion.div key={tab} initial={{ opacity:0, y:6 }} animate={{ opacity:1, y:0 }}
-            exit={{ opacity:0 }} transition={{ duration:0.15 }}>
-            {tab === 'plans'     && <PlansTab />}
-            {tab === 'analytics' && <AnalyticsTab />}
-            {tab === 'ads'       && <AdsTab />}
           </motion.div>
-        </AnimatePresence>
-      </div>
-      <ToastContainer />
+        )}
+      </AnimatePresence>
+
+      {loading
+        ? <div className="h-40 rounded-[16px] animate-pulse" style={{background:t.bgCard}}/>
+        : <Table headers={['Name','Slug','Members','Owner','Created','Actions']} rows={rows}
+            emptyText="No communities yet"/>
+      }
     </div>
   )
 }
 
 // ─────────────────────────────────────────────
-export default function AdminPage() {
-  const [authed,   setAuthed]   = useState(false)
-  const [checking, setChecking] = useState(true)
+//  Users page
+// ─────────────────────────────────────────────
+function UsersPage() {
+  const { t }  = useTheme()
+  const [data,    setData]    = useState([])
+  const [loading, setLoading] = useState(true)
 
-  useEffect(() => {
-    try { if (sessionStorage.getItem('dw_admin_auth') === '1') setAuthed(true) } catch {}
-    setChecking(false)
+  const load = useCallback(async () => {
+    setLoading(true)
+    const sb = createClient()
+    const { data: rows, error } = await sb.from('profiles')
+      .select('id,username,full_name,spiritual_level,heard_from,goals,companion_id,onboarding_complete,role,created_at')
+      .order('created_at', { ascending: false })
+      .limit(200)
+    if (!error) setData(rows||[])
+    setLoading(false)
   }, [])
 
-  if (checking) return null
-  if (!authed)  return <PasswordGate onAuth={() => setAuthed(true)} />
-  return <AdminPanel />
+  useEffect(() => { load() }, [load])
+
+  async function handleRemove(id, username) {
+    if (!window.confirm(`Remove user "${username}"? This will delete their profile data.`)) return
+    const sb = createClient()
+    await sb.from('profiles').delete().eq('id', id)
+    setData(prev => prev.filter(r => r.id !== id))
+  }
+
+  const rows = data.map(u => [
+    <span className="font-mono text-[12px]">@{u.username||'—'}</span>,
+    u.full_name||'—',
+    u.spiritual_level||'—',
+    u.heard_from||'—',
+    <span className={`text-[11px] font-bold px-2 py-0.5 rounded-full ${u.role==='superadmin'?'text-purple-600':'text-gray-500'}`}
+      style={{background:u.role==='superadmin'?'#EDE9FF':t.bgMuted}}>
+      {u.role||'user'}
+    </span>,
+    new Date(u.created_at).toLocaleDateString(),
+    <button onClick={() => handleRemove(u.id, u.username)}
+      className="flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-[12px] font-semibold"
+      style={{background:'#FEE2E2',color:'#EF4444'}}>
+      <Trash2 size={12}/> Remove
+    </button>,
+  ])
+
+  return (
+    <div className="flex flex-col gap-5">
+      <div className="flex items-center justify-between">
+        <h2 className="font-bold text-[20px]" style={{color:t.text}}>Users</h2>
+        <span className="text-[13px]" style={{color:t.textMuted}}>{data.length} total</span>
+      </div>
+      {loading
+        ? <div className="h-40 rounded-[16px] animate-pulse" style={{background:t.bgCard}}/>
+        : <Table headers={['Username','Name','Level','Heard from','Role','Joined','Actions']} rows={rows}
+            emptyText="No users yet"/>
+      }
+    </div>
+  )
+}
+
+// ─────────────────────────────────────────────
+//  Posts page
+// ─────────────────────────────────────────────
+function PostsPage() {
+  const { t } = useTheme()
+  const [data,    setData]    = useState([])
+  const [loading, setLoading] = useState(true)
+
+  const load = useCallback(async () => {
+    setLoading(true)
+    const sb = createClient()
+    const { data: rows, error } = await sb.from('posts')
+      .select('id,content,created_at,user_id,community_id,profiles(username),communities(name)')
+      .order('created_at', { ascending: false })
+      .limit(200)
+    if (!error) setData(rows||[])
+    setLoading(false)
+  }, [])
+
+  useEffect(() => { load() }, [load])
+
+  async function handleDelete(id) {
+    if (!window.confirm('Delete this post?')) return
+    const sb = createClient()
+    await sb.from('posts').delete().eq('id', id)
+    setData(prev => prev.filter(r => r.id !== id))
+  }
+
+  const rows = data.map(p => [
+    <span className="font-mono text-[12px]">@{p.profiles?.username||'—'}</span>,
+    p.communities?.name||'—',
+    <span className="line-clamp-2 max-w-[300px]">{p.content}</span>,
+    new Date(p.created_at).toLocaleDateString(),
+    <button onClick={() => handleDelete(p.id)}
+      className="flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-[12px] font-semibold"
+      style={{background:'#FEE2E2',color:'#EF4444'}}>
+      <Trash2 size={12}/> Delete
+    </button>,
+  ])
+
+  return (
+    <div className="flex flex-col gap-5">
+      <div className="flex items-center justify-between">
+        <h2 className="font-bold text-[20px]" style={{color:t.text}}>Posts</h2>
+        <span className="text-[13px]" style={{color:t.textMuted}}>{data.length} shown</span>
+      </div>
+      {loading
+        ? <div className="h-40 rounded-[16px] animate-pulse" style={{background:t.bgCard}}/>
+        : <Table headers={['Username','Community','Content','Date','Actions']} rows={rows}
+            emptyText="No posts yet"/>
+      }
+    </div>
+  )
+}
+
+// ─────────────────────────────────────────────
+//  Onboarding data page
+// ─────────────────────────────────────────────
+function OnboardingPage() {
+  const { t } = useTheme()
+  const [data, setData] = useState([])
+  const [loading, setLoading] = useState(true)
+
+  const load = useCallback(async () => {
+    setLoading(true)
+    const sb = createClient()
+    const { data: rows } = await sb.from('profiles')
+      .select('username,spiritual_level,heard_from,goals,companion_id,onboarding_complete,created_at')
+      .order('created_at',{ascending:false}).limit(200)
+    setData(rows||[])
+    setLoading(false)
+  }, [])
+
+  useEffect(() => { load() }, [load])
+
+  const rows = data.map(u => [
+    <span className="font-mono text-[12px]">@{u.username||'—'}</span>,
+    u.spiritual_level||'—',
+    u.heard_from||'—',
+    (u.goals||[]).join(', ')||'—',
+    u.companion_id||'david',
+    u.onboarding_complete?'✓ Done':'Pending',
+    new Date(u.created_at).toLocaleDateString(),
+  ])
+
+  return (
+    <div className="flex flex-col gap-5">
+      <h2 className="font-bold text-[20px]" style={{color:t.text}}>Onboarding Data</h2>
+      <p className="text-[13px]" style={{color:t.textMuted}}>
+        Answers from the post-signup onboarding flow.
+      </p>
+      {loading
+        ? <div className="h-40 rounded-[16px] animate-pulse" style={{background:t.bgCard}}/>
+        : <Table headers={['Username','Level','Heard From','Goals','Companion','Status','Joined']} rows={rows}
+            emptyText="No onboarding data yet"/>
+      }
+    </div>
+  )
+}
+
+// ─────────────────────────────────────────────
+//  Sidebar nav
+// ─────────────────────────────────────────────
+const SIDEBAR_ITEMS = [
+  { key:'dashboard',  label:'Dashboard',       icon:LayoutDashboard },
+  { key:'communities',label:'Communities',      icon:Globe           },
+  { key:'users',      label:'Users',            icon:Users           },
+  { key:'posts',      label:'Posts',            icon:FileText        },
+  { key:'onboarding', label:'Onboarding Data',  icon:Shield          },
+]
+
+function Sidebar({ page, setPage, onClose }) {
+  const { t } = useTheme()
+  return (
+    <div className="flex flex-col h-full py-6 px-3" style={{background:t.bgCard}}>
+      <div className="px-3 mb-6">
+        <p className="font-display font-bold text-[18px]" style={{color:t.text}}>Daily Walk</p>
+        <p className="text-[11px] font-bold uppercase tracking-wider mt-0.5" style={{color:'#5B4FCF'}}>Admin Panel</p>
+      </div>
+      <nav className="flex flex-col gap-1 flex-1">
+        {SIDEBAR_ITEMS.map(item => (
+          <button key={item.key}
+            onClick={() => { setPage(item.key); onClose?.() }}
+            className="flex items-center gap-3 px-3 py-2.5 rounded-[12px] text-[14px] font-semibold transition-all text-left min-h-[44px] w-full"
+            style={page===item.key
+              ? {background:'#5B4FCF',color:'white'}
+              : {color:t.textMuted,background:'transparent'}}>
+            <item.icon size={17}/>
+            {item.label}
+          </button>
+        ))}
+      </nav>
+    </div>
+  )
+}
+
+// ─────────────────────────────────────────────
+//  Main admin page
+// ─────────────────────────────────────────────
+export default function AdminPage() {
+  const { ready, isAdmin } = useAdminGuard()
+  const { t }     = useTheme()
+  const router    = useRouter()
+  const [page,    setPage]    = useState('dashboard')
+  const [sideOpen,setSideOpen]= useState(false)
+
+  if (!ready) return (
+    <div className="flex items-center justify-center min-h-screen" style={{background:t.bg}}>
+      <div className="w-8 h-8 rounded-full border-2 border-t-transparent animate-spin"
+        style={{borderColor:'#5B4FCF'}}/>
+    </div>
+  )
+  if (!isAdmin) return null
+
+  const PAGE_COMPONENTS = {
+    dashboard:   DashboardPage,
+    communities: CommunitiesPage,
+    users:       UsersPage,
+    posts:       PostsPage,
+    onboarding:  OnboardingPage,
+  }
+  const PageComponent = PAGE_COMPONENTS[page] || DashboardPage
+
+  return (
+    <div className="flex min-h-screen" style={{background:t.bg}}>
+
+      {/* Desktop sidebar */}
+      <div className="hidden md:block w-56 flex-shrink-0 border-r" style={{borderColor:t.border}}>
+        <Sidebar page={page} setPage={setPage}/>
+      </div>
+
+      {/* Mobile sidebar drawer */}
+      <AnimatePresence>
+        {sideOpen && (
+          <>
+            <motion.div className="fixed inset-0 bg-black/50 z-[60] md:hidden"
+              initial={{opacity:0}} animate={{opacity:1}} exit={{opacity:0}}
+              onClick={()=>setSideOpen(false)}/>
+            <motion.div className="fixed top-0 left-0 bottom-0 w-64 z-[70] md:hidden"
+              initial={{x:-64*4}} animate={{x:0}} exit={{x:-64*4}}
+              transition={{type:'spring',stiffness:340,damping:36}}>
+              <Sidebar page={page} setPage={setPage} onClose={()=>setSideOpen(false)}/>
+            </motion.div>
+          </>
+        )}
+      </AnimatePresence>
+
+      {/* Main content */}
+      <div className="flex-1 flex flex-col min-h-screen min-w-0">
+        {/* Top bar */}
+        <div className="flex items-center justify-between px-5 py-3.5 border-b flex-shrink-0"
+          style={{background:t.bgCard,borderColor:t.border}}>
+          <div className="flex items-center gap-3">
+            <button className="w-9 h-9 rounded-full flex items-center justify-center md:hidden"
+              onClick={()=>setSideOpen(true)} style={{background:t.bgMuted}}>
+              <Menu size={18} style={{color:t.text}}/>
+            </button>
+            <div className="md:hidden">
+              <p className="font-bold text-[15px]" style={{color:t.text}}>
+                {SIDEBAR_ITEMS.find(i=>i.key===page)?.label||'Admin'}
+              </p>
+            </div>
+          </div>
+          <button onClick={()=>router.push('/')}
+            className="flex items-center gap-1.5 px-3 py-2 rounded-full text-[13px] font-semibold"
+            style={{background:t.bgMuted,color:t.textMuted}}>
+            <LogOut size={14}/> Exit Admin
+          </button>
+        </div>
+
+        {/* Page content */}
+        <div className="flex-1 overflow-y-auto p-5 md:p-8" style={{paddingBottom:80}}>
+          <PageComponent/>
+        </div>
+      </div>
+    </div>
+  )
 }
