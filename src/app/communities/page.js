@@ -1,12 +1,6 @@
 'use client'
 
 // ── src/app/communities/page.js ──
-// Uses exact same visual language as Home and Profile:
-//   • Cards: bg-white rounded-[20px] shadow-card
-//   • Tab bar: same pill style as Profile tab
-//   • Buttons: rounded-pill, border-purple, bg-purple
-//   • Search: same input style as Profile inputs (rounded-input border-gray-200)
-//   • Dark mode: Tailwind class-based — globals.css handles bg-white automatically
 
 import { useState, useEffect, useMemo, useCallback } from 'react'
 import { useRouter } from 'next/navigation'
@@ -25,19 +19,19 @@ import CommunitySkeleton from '../../components/communities/CommunitySkeleton'
 const CATEGORIES = ['All','Bible Study','Prayer','Mental Health','Youth','Worship','General']
 
 // ─────────────────────────────────────────────
-//  Skeleton for explore cards — matches card shape
+//  Skeleton
 // ─────────────────────────────────────────────
 function ExploreCardSkeleton() {
   return (
-    <div className="bg-white rounded-[20px] overflow-hidden shadow-card animate-pulse">
+    <div className="bg-white rounded-[20px] overflow-hidden shadow-card animate-pulse w-full">
       <div className="h-[72px] bg-warm-outer" />
       <div className="p-4 flex flex-col gap-2.5">
         <div className="h-4 rounded-full w-2/3 bg-warm-outer" />
         <div className="h-3 rounded-full w-full bg-warm-outer" />
         <div className="h-3 rounded-full w-4/5 bg-warm-outer" />
-        <div className="flex items-center justify-between mt-1">
-          <div className="h-3 rounded-full w-1/4 bg-warm-outer" />
-          <div className="h-9 w-20 rounded-pill bg-warm-outer" />
+        <div className="flex items-center gap-2 mt-1">
+          <div className="h-3 rounded-full flex-1 bg-warm-outer" />
+          <div className="h-9 flex-shrink-0 rounded-pill bg-warm-outer" style={{ width: 72 }} />
         </div>
       </div>
     </div>
@@ -45,7 +39,7 @@ function ExploreCardSkeleton() {
 }
 
 // ─────────────────────────────────────────────
-//  Empty states — same tone as app's existing empties
+//  Empty states
 // ─────────────────────────────────────────────
 function EmptyFeed({ onExplore }) {
   return (
@@ -86,7 +80,7 @@ function EmptyMine({ onExplore }) {
 }
 
 // ─────────────────────────────────────────────
-//  My Community row — same as SettingsRow in Profile
+//  My Community row
 // ─────────────────────────────────────────────
 function MyCommunityRow({ community, onPress }) {
   return (
@@ -110,7 +104,7 @@ function MyCommunityRow({ community, onPress }) {
 }
 
 // ─────────────────────────────────────────────
-//  Explore community card — same card DNA as everywhere
+//  Explore card
 // ─────────────────────────────────────────────
 function ExploreCard({ community, onJoin, joiningId }) {
   const router  = useRouter()
@@ -118,13 +112,15 @@ function ExploreCard({ community, onJoin, joiningId }) {
   const loading = joiningId === community.id
 
   return (
-    <div className="bg-white rounded-[20px] overflow-hidden shadow-card">
-      {/* Tappable content area */}
+    // KEY FIX: style prop for width — guarantees the card never exceeds its
+    // container regardless of how Framer Motion's animation wrapper behaves.
+    // min-width:0 overrides the browser default min-width:auto on flex children.
+    <div style={{ width: '100%', minWidth: 0, boxSizing: 'border-box' }} className="bg-white rounded-[20px] overflow-hidden shadow-card">
+
+      {/* Tappable area */}
       <button
         className="w-full text-left block active:opacity-75 transition-opacity"
-        onClick={() => router.push(`/community/${community.slug || community.id}`)}
-      >
-        {/* Colour header — same gradient as streak card */}
+        onClick={() => router.push(`/community/${community.slug || community.id}`)}>
         <div className="h-[72px] flex items-end px-4 pb-3 relative"
           style={{ background: 'linear-gradient(135deg,#5B4FCF,#3D3190)' }}>
           <div className="absolute inset-0 opacity-10"
@@ -133,51 +129,39 @@ function ExploreCard({ community, onJoin, joiningId }) {
             {community.category || 'General'}
           </span>
         </div>
-
         <div className="px-4 pt-3 pb-1">
-          {/* Name — text-text-primary font-bold, same as card titles everywhere */}
           <p className="font-bold text-[16px] text-text-primary leading-snug truncate">
             {community.name}
           </p>
           {community.description && (
             <p className="text-[13px] text-text-muted mt-1 leading-relaxed"
-              style={{
-                display: '-webkit-box',
-                WebkitLineClamp: 2,
-                WebkitBoxOrient: 'vertical',
-                overflow: 'hidden',
-              }}>
+              style={{ display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical', overflow: 'hidden' }}>
               {community.description}
             </p>
           )}
         </div>
       </button>
 
-      {/* Footer — member count + join button */}
-      <div className="flex items-center justify-between px-4 pb-4 pt-2">
-        <div className="flex items-center gap-1.5 min-w-0">
+      {/* Footer */}
+      <div className="flex items-center px-4 pb-4 pt-2 gap-2">
+        <div className="flex items-center gap-1.5 flex-1 min-w-0">
           <Users size={13} className="text-text-muted flex-shrink-0" />
-          <span className="text-[12px] text-text-muted">
+          <span className="text-[12px] text-text-muted truncate">
             {(community.member_count || 0).toLocaleString()} members
           </span>
         </div>
-
-        {/* Join button — same pill as all buttons, min 44px, 80px wide */}
         <button
           onClick={e => { e.stopPropagation(); onJoin(community) }}
           disabled={loading}
-          className={`flex items-center justify-center gap-1.5 rounded-pill font-bold text-[13px] transition-all active:scale-95 disabled:opacity-60 flex-shrink-0 ${
+          className={`flex items-center justify-center gap-1 rounded-pill font-bold text-[13px] transition-all active:scale-95 disabled:opacity-60 flex-shrink-0 ${
             joined
               ? 'border-2 border-gray-200 text-text-muted bg-transparent'
               : 'bg-purple text-white shadow-purple'
           }`}
-          style={{ height: 44, minWidth: 80, paddingLeft: 16, paddingRight: 16 }}
-        >
+          style={{ height: 44, width: 72 }}>
           {loading
-            ? <Loader2 size={15} className="animate-spin" />
-            : joined
-              ? <><Check size={13} strokeWidth={3} /> Joined</>
-              : 'Join'
+            ? <Loader2 size={14} className="animate-spin" />
+            : joined ? <><Check size={12} strokeWidth={3} /> Joined</> : 'Join'
           }
         </button>
       </div>
@@ -207,9 +191,21 @@ export default function CommunitiesPage() {
 
   useEffect(() => { getAuthUser().then(setAuthUser) }, [])
 
-  const loadFeed    = useCallback(async () => { setFeedLoading(true);    try { setFeedPosts(await getForYouFeed(40)) }    catch {} setFeedLoading(false)    }, [])
-  const loadMine    = useCallback(async () => { setMineLoading(true);    try { setMyCommunities(await getJoinedCommunities()) } catch {} setMineLoading(false) }, [])
-  const loadAll     = useCallback(async () => { setExploreLoading(true); try { setAllCommunities(await getCommunities()) }  catch {} setExploreLoading(false) }, [])
+  const loadFeed = useCallback(async () => {
+    setFeedLoading(true)
+    try { setFeedPosts(await getForYouFeed(40)) } catch {}
+    setFeedLoading(false)
+  }, [])
+  const loadMine = useCallback(async () => {
+    setMineLoading(true)
+    try { setMyCommunities(await getJoinedCommunities()) } catch {}
+    setMineLoading(false)
+  }, [])
+  const loadAll = useCallback(async () => {
+    setExploreLoading(true)
+    try { setAllCommunities(await getCommunities()) } catch {}
+    setExploreLoading(false)
+  }, [])
 
   useEffect(() => { loadFeed(); loadMine(); loadAll() }, []) // eslint-disable-line
   useEffect(() => {
@@ -228,7 +224,7 @@ export default function CommunitiesPage() {
     ))
     try {
       if (wasJoined) { await leaveCommunity(community.id); showToast('Left community') }
-      else           { await joinCommunity(community.id);  showToast(`Joined ${community.name} 🙌`); loadMine(); loadFeed() }
+      else           { await joinCommunity(community.id); showToast(`Joined ${community.name} 🙌`); loadMine(); loadFeed() }
     } catch {
       setAllCommunities(prev => prev.map(c =>
         c.id === community.id ? { ...c, joined: wasJoined, member_count: (c.member_count||0)+(wasJoined?1:-1) } : c
@@ -255,34 +251,36 @@ export default function CommunitiesPage() {
   }, [myCommunities, query])
 
   const TABS = [
-    { key: 'foryou',  label: 'For You'        },
-    { key: 'mine',    label: 'My Communities'  },
-    { key: 'explore', label: 'Explore'         },
+    { key: 'foryou',  label: 'For You'       },
+    { key: 'mine',    label: 'My Communities' },
+    { key: 'explore', label: 'Explore'        },
   ]
 
   return (
-    <div className="flex flex-col min-h-screen bg-warm-bg">
+    // FIX 2: Root gets w-full so it establishes a real 100% containing block.
+    // overflow-x-hidden is retained to clip anything that still tries to escape.
+    // The old inline maxWidth:'100%' was removed — it only clamps, doesn't constrain.
+    <div className="flex flex-col min-h-screen w-full bg-warm-bg overflow-x-hidden">
       <ToastContainer />
 
-      {/* ── Header — same as Profile header ── */}
+      {/* Header */}
       <div className="flex items-center justify-between px-4 pt-5 pb-3">
         <h1 className="font-display text-[24px] font-bold text-text-primary">Communities</h1>
         <button
           onClick={() => authUser ? router.push('/communities/create') : requireAuth('community')}
-          className="flex items-center gap-1.5 px-3 py-2 rounded-pill text-[13px] font-bold border-2 border-purple text-purple min-h-[40px] hover:opacity-80 transition-opacity">
+          className="flex items-center gap-1.5 px-3 py-2 rounded-pill text-[13px] font-bold border-2 border-purple text-purple min-h-[40px] hover:opacity-80 transition-opacity flex-shrink-0">
           <Plus size={13} /> Create
         </button>
       </div>
 
-      {/* Search — same as Profile inputs */}
+      {/* Search */}
       <div className="px-4 pb-3">
-        <div className="relative" style={{ minHeight: 44 }}>
+        <div className="relative" style={{ height: 44 }}>
           <Search size={15} className="absolute left-3.5 top-1/2 -translate-y-1/2 text-text-muted pointer-events-none" />
           <input
             value={query} onChange={e => setQuery(e.target.value)}
             placeholder="Search communities…"
-            className="w-full bg-white border border-gray-200 rounded-pill pl-9 pr-9 text-[14px] focus:outline-none focus:border-purple focus:ring-2 focus:ring-purple/20 transition-all"
-            style={{ height: 44 }}
+            className="w-full h-full bg-white border border-gray-200 rounded-pill pl-9 pr-9 text-[14px] focus:outline-none focus:border-purple focus:ring-2 focus:ring-purple/20 transition-all"
           />
           {query && (
             <button onClick={() => setQuery('')}
@@ -293,7 +291,7 @@ export default function CommunitiesPage() {
         </div>
       </div>
 
-      {/* Tab bar — same pill style as Profile */}
+      {/* Tab bar */}
       <div className="px-4 pb-3">
         <div className="flex gap-1 p-1 rounded-full bg-purple-light">
           {TABS.map(tab_ => (
@@ -311,7 +309,7 @@ export default function CommunitiesPage() {
         </div>
       </div>
 
-      {/* Content — pb-24 clears nav */}
+      {/* Content */}
       <div className="flex-1 overflow-y-auto overflow-x-hidden pb-24">
         <AnimatePresence mode="wait">
 
@@ -357,57 +355,70 @@ export default function CommunitiesPage() {
 
           {/* EXPLORE */}
           {tab === 'explore' && (
-            <motion.div key="explore" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}>
-              {/* Category pills — same style as tags in app */}
-              <div className="flex gap-2 px-4 pt-2 pb-3 overflow-x-auto scroll-hide">
-                {CATEGORIES.map(cat => (
-                  <button key={cat} onClick={() => setFilter(cat)}
-                    className={`flex-shrink-0 px-3.5 py-1.5 rounded-pill text-[12px] font-bold border-2 transition-all min-h-[36px] ${
-                      filter === cat
-                        ? 'bg-purple border-purple text-white'
-                        : 'bg-white border-gray-200 text-text-muted'
-                    }`}>
-                    {cat}
-                  </button>
-                ))}
+            // KEY FIX: style prop sets width/overflow directly on the DOM node.
+            // Framer Motion applies its own inline styles during animation which
+            // can override Tailwind classes — using style={} here guarantees the
+            // constraint is always present regardless of animation state.
+            // position:relative is required so the overflow-x:hidden actually
+            // creates a new stacking/clipping context instead of being ignored.
+            <motion.div key="explore" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
+              style={{ width: '100%', maxWidth: '100%', overflowX: 'hidden', position: 'relative' }}>
+
+              {/* Pills container: overflow-hidden outer shell is essential.
+                  flex-shrink-0 pill buttons make the inner scrollable div's
+                  scrollWidth wider than the viewport. On mobile WebKit that
+                  scrollWidth propagates to the parent's layout width unless
+                  an overflow-hidden ancestor explicitly clips it first. */}
+              <div style={{ width: '100%', overflowX: 'hidden' }}>
+                <div className="flex gap-2 px-4 pt-2 pb-3 overflow-x-auto scroll-hide">
+                  {CATEGORIES.map(cat => (
+                    <button key={cat} onClick={() => setFilter(cat)}
+                      className={`flex-shrink-0 px-3.5 py-1.5 rounded-pill text-[12px] font-bold border-2 transition-all min-h-[36px] ${
+                        filter === cat
+                          ? 'bg-purple border-purple text-white'
+                          : 'bg-white border-gray-200 text-text-muted'
+                      }`}>
+                      {cat}
+                    </button>
+                  ))}
+                </div>
               </div>
 
-              {/* Responsive grid — 1 col mobile, 2 tablet, 3 desktop */}
-              <div className="px-4 pb-10">
-                {exploreLoading ? (
-                  <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
-                    {[1,2,3,4,5,6].map(i => <ExploreCardSkeleton key={i} />)}
-                  </div>
-                ) : filteredExplore.length === 0 ? (
-                  <div className="flex flex-col items-center gap-4 py-16 text-center px-4">
-                    <div className="w-16 h-16 rounded-full flex items-center justify-center bg-warm-outer">
-                      <Users size={28} className="text-text-muted" />
-                    </div>
-                    <div>
-                      <p className="font-display font-semibold text-[17px] text-text-primary">
-                        {query ? 'No communities found' : 'No communities yet'}
-                      </p>
-                      <p className="text-[13px] text-text-muted mt-1">
-                        {query ? 'Try a different search term' : 'Be the first to create one'}
-                      </p>
-                    </div>
-                    {query && (
-                      <button onClick={() => setQuery('')}
-                        className="text-[13px] font-semibold text-purple underline">
-                        Clear search
-                      </button>
-                    )}
-                  </div>
-                ) : (
-                  <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
-                    {filteredExplore.map((c, i) => (
-                      <motion.div key={c.id} initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }}
-                        transition={{ delay: i * 0.03 }}>
-                        <ExploreCard community={c} onJoin={handleJoin} joiningId={joiningId} />
-                      </motion.div>
-                    ))}
-                  </div>
-                )}
+              {/* Cards container: style prop ensures padding is factored into
+                  the 100% width (box-sizing:border-box) and the flex column
+                  never escapes its parent's clipping context. */}
+              <div style={{ width: '100%', boxSizing: 'border-box', padding: '0 16px 40px', display: 'flex', flexDirection: 'column', gap: 12 }}>
+                {exploreLoading
+                  ? [1,2,3,4].map(i => <ExploreCardSkeleton key={i} />)
+                  : filteredExplore.length === 0
+                    ? (
+                      <div className="flex flex-col items-center gap-4 py-16 text-center px-4">
+                        <div className="w-16 h-16 rounded-full flex items-center justify-center bg-warm-outer">
+                          <Users size={28} className="text-text-muted" />
+                        </div>
+                        <div>
+                          <p className="font-display font-semibold text-[17px] text-text-primary">
+                            {query ? 'No communities found' : 'No communities yet'}
+                          </p>
+                          <p className="text-[13px] text-text-muted mt-1">
+                            {query ? 'Try a different search term' : 'Be the first to create one'}
+                          </p>
+                        </div>
+                        {query && (
+                          <button onClick={() => setQuery('')}
+                            className="text-[13px] font-semibold text-purple underline">
+                            Clear search
+                          </button>
+                        )}
+                      </div>
+                    )
+                    : filteredExplore.map((c, i) => (
+                        <motion.div key={c.id} initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }}
+                          transition={{ delay: i * 0.03 }}>
+                          <ExploreCard community={c} onJoin={handleJoin} joiningId={joiningId} />
+                        </motion.div>
+                      ))
+                }
               </div>
             </motion.div>
           )}

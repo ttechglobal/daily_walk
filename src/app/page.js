@@ -210,11 +210,11 @@ function TodaysReadingCard({ plans, setPlans, onCheckin, t }) {
 //  FAB
 // ─────────────────────────────────────────────
 function HomeFAB({ onPost, t }) {
-  const [open,    setOpen]   = useState(false)
-  const [nugOpen, setNug]    = useState(false)
-  const [input,   setInput]  = useState('')
+  const [open,    setOpen]    = useState(false)
+  const [nugOpen, setNug]     = useState(false)
+  const [input,   setInput]   = useState('')
   const [nuggets, setNuggets] = useLocalStorage('dw_nuggets', [])
-
+ 
   function saveNugget() {
     const text = input.trim()
     if (!text) return
@@ -225,7 +225,7 @@ function HomeFAB({ onPost, t }) {
     showToast('Nugget saved!')
     setNug(false); setInput(''); setOpen(false)
   }
-
+ 
   const actions = [
     {
       icon: PenLine, bg: t.purpleBg, color: '#5B4FCF',
@@ -238,9 +238,10 @@ function HomeFAB({ onPost, t }) {
       action: () => { setOpen(false); setTimeout(() => setNug(true), 120) },
     },
   ]
-
+ 
   return (
     <>
+      {/* FAB button — stays at bottom-20 */}
       <button
         onClick={() => setOpen(v => !v)}
         className="fixed bottom-20 right-4 w-[52px] h-[52px] rounded-full text-white flex items-center justify-center z-40 active:scale-95 transition-all"
@@ -250,18 +251,23 @@ function HomeFAB({ onPost, t }) {
           <Plus size={24} />
         </motion.div>
       </button>
-
+ 
       <AnimatePresence>
         {open && (
           <>
+            {/* Backdrop */}
             <motion.div
               className="fixed inset-0 z-30"
               initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
               onClick={() => setOpen(false)}
             />
+            {/* Popup — bottom-[148px] clears the FAB (52px) + nav (80px) + 16px gap */}
             <motion.div
-              className="fixed bottom-[84px] right-4 flex flex-col gap-2 z-40 items-end"
-              initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: 12 }}
+              className="fixed bottom-[148px] right-4 flex flex-col gap-2 z-40 items-end"
+              initial={{ opacity: 0, y: 12, scale: 0.95 }}
+              animate={{ opacity: 1, y: 0, scale: 1 }}
+              exit={{ opacity: 0, y: 12, scale: 0.95 }}
+              transition={{ type: 'spring', stiffness: 400, damping: 30 }}
             >
               {actions.map((a, i) => (
                 <motion.button
@@ -285,7 +291,7 @@ function HomeFAB({ onPost, t }) {
           </>
         )}
       </AnimatePresence>
-
+ 
       {/* Nugget sheet */}
       <AnimatePresence>
         {nugOpen && (

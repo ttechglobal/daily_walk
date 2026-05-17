@@ -27,8 +27,11 @@ export const metadata = {
     shortcut:'/icons/favicon-32.png',
   },
 }
+
 export const viewport = {
-  width:'device-width', initialScale:1, maximumScale:1, themeColor:'#5B4FCF',
+  width:        'device-width',
+  initialScale: 1,
+  themeColor:   '#5B4FCF',
 }
 
 export default function RootLayout({ children }) {
@@ -75,17 +78,22 @@ export default function RootLayout({ children }) {
             <Sidebar />
 
             {/* Main content column */}
-            <div className="flex-1 flex justify-center md:justify-start">
+            <div className="flex-1 min-w-0 flex justify-center md:justify-start">
+              {/*
+                FIX: Added min-w-0 to BOTH the outer and inner content divs.
+                Without it, flex children default to min-width:auto (their content
+                size). The Explore tab's horizontal pill row is wider than the
+                viewport by design, which inflates the flex child's intrinsic width
+                beyond max-w-[430px] — because max-w only clamps, it doesn't shrink.
+                min-w-0 allows the element to shrink below its content size so
+                max-w-[430px] can actually enforce the boundary.
+                This is why every other page was fine — nothing else had
+                intentionally wider-than-screen content inside it.
+              */}
               <div
-                className="w-full max-w-[430px] md:max-w-none md:w-full relative flex flex-col min-h-screen"
+                className="w-full min-w-0 max-w-[430px] md:max-w-none md:w-full relative flex flex-col min-h-screen"
                 style={{ background: 'var(--bg, #FAF8F5)' }}
               >
-                {/*
-                  <main> is the scrollable region between any sticky page header
-                  and the fixed BottomNav.
-                  pb-20 = BottomNav height (64px) + 16px safe area buffer.
-                  Pages that also have their own sticky header add pt-[60px] or similar.
-                */}
                 <main className="flex-1" style={{ background: 'var(--bg, #FAF8F5)' }}>
                   {children}
                 </main>

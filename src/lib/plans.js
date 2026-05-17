@@ -1,7 +1,5 @@
-// ─────────────────────────────────────────────────────────────
-//  lib/plans.js — Plans feature helpers
-//  Update 3: proper completion state — don't advance day until next day
-// ─────────────────────────────────────────────────────────────
+// ── lib/plans.js — Plans feature helpers ──
+// Update: buildPlanShareUrl no longer uses require() — safe in client components
 
 function today() { return new Date().toISOString().split('T')[0] }
 
@@ -18,7 +16,6 @@ export function getTodaysPlan(plans) {
     if (p.status !== 'active') return false
     const day = p.days[p.currentDay - 1]
     if (!day) return false
-    // Show plan if not yet completed today
     return !day.completedAt || !day.completedAt.startsWith(today())
   }) || null
 }
@@ -49,7 +46,7 @@ export function markDayComplete(planId, dayNumber, reflection = '') {
 }
 
 /** Call on app load / plans page open.
- *  If current day was completed before today → advance currentDay.  */
+ *  If current day was completed before today → advance currentDay. */
 export function advancePlanIfNeeded(planId) {
   const plans = readPlans()
   const plan  = plans.find(p => p.id === planId)
@@ -124,27 +121,40 @@ export async function prefetchPlanPassages(days) {
   await Promise.allSettled(promises)
 }
 
-/** Build a short shareable URL for a plan.
- *  Stores a preview snapshot in localStorage so the landing page can read it.
- *  URL is clean: /plan/{shortId}  — no long query params.
+/**
+ * Build a short shareable URL for a plan.
+ * Stores a preview snapshot in localStorage so the landing page can read it.
+ * URL format: /plan/{slug}-{shortId}
+ *
+ * FIX: No longer uses require('./config') — that crashes in client components.
+ * Uses window.location.origin directly (safe — this is always called client-side).
  */
 export function buildPlanShareUrl(plan) {
-  const { createShareUrl } = require('./config')
-  const slug    = (plan.name || 'plan').toLowerCase().replace(/[^a-z0-9]+/g,'-').replace(/(^-|-$)/g,'').slice(0,24)
-  const shortId = plan.id.slice(-8)
+  // Safe client-side origin — no require(), no import at call time
+  const origin  = typeof window !== 'undefined'
+    ? window.location.origin
+    : (process.env.NEXT_PUBLIC_APP_URL || 'https://dailywalk.app')
+
+  const slug    = (plan.name || 'plan')
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/(^-|-$)/g, '')
+    .slice(0, 24)
+
+  const shortId = (plan.id || '').slice(-8)
   const urlId   = `${slug}-${shortId}`
 
-  // Store preview data keyed by shortId so the landing page can read it
+  // Store preview data so the landing page can read it without an API call
   const preview = {
     name:    plan.name,
     desc:    plan.description || '',
     days:    plan.totalDays,
     type:    plan.type || 'topic',
     preview: (plan.days || []).slice(0, 3).map(d => ({
-      day: d.day, passage: d.passage, title: d.title, focus: d.focus || ''
+      day: d.day, passage: d.passage, title: d.title, focus: d.focus || '',
     })),
   }
   try { localStorage.setItem(`dw_plan_share_${shortId}`, JSON.stringify(preview)) } catch {}
 
-  return createShareUrl(`/plan/${urlId}`)
+  return `${origin}/plan/${urlId}`
 }

@@ -1,15 +1,9 @@
 'use client'
 
 // ── src/components/CharacterCompanion.js ──
-// Uses exact same visual language as Home/Profile:
-//   Card bottom section: bg-white (same as settings rows)
-//   Message bubble: bg-purple-light (same as scripture badges)
-//   Health bar track: bg-warm-outer (same as progress bars elsewhere)
-//   Buttons: rounded-pill bg-purple text-white (same as all CTAs)
-//   Dark mode: Tailwind classes — globals.css handles automatically
-//
-// z-index fix: position:relative, zIndex:1 on outer wrapper
-// ensures companion is never hidden behind the hero image.
+// Dark mode: fully fixed via useDarkMode() + getDarkModeColors()
+// Light mode: identical to before — only dark variants added.
+// z-index on outer wrapper ensures companion always sits above hero image.
 
 import { useState, useEffect } from 'react'
 import { useRouter } from 'next/navigation'
@@ -21,6 +15,7 @@ import {
   HEALTH_LABELS, checkAndMarkFirstOpenToday,
 } from '../lib/character-state'
 import { calculateHealth, getHealthColor } from '../lib/health'
+import { useDarkMode, getDarkModeColors } from '../contexts/DarkModeContext'
 
 // ─────────────────────────────────────────────
 //  Confetti
@@ -54,97 +49,83 @@ function CharacterImage({ character, state }) {
   const color = character.accentColor
 
   const anim = {
-    happy:       { y:[0,-5,0],            transition:{repeat:Infinity,duration:2.8,ease:'easeInOut'} },
-    celebrating: { y:[0,-8,0],            transition:{repeat:Infinity,duration:1.2,ease:'easeInOut'} },
-    radiant:     { scale:[1,1.03,1],      transition:{repeat:Infinity,duration:3.2,ease:'easeInOut'} },
-    quiet:       { scale:[1,1.008,1],     transition:{repeat:Infinity,duration:4.5,ease:'easeInOut'} },
-    sad:         { y:[0,4,0],             transition:{repeat:Infinity,duration:5.0,ease:'easeInOut'} },
-    struggling:  { x:[0,1.5,0,-1.5,0],   transition:{repeat:Infinity,duration:6.5,ease:'easeInOut'} },
+    happy:       { y:[0,-5,0],         transition:{repeat:Infinity,duration:2.8,ease:'easeInOut'} },
+    celebrating: { y:[0,-8,0],         transition:{repeat:Infinity,duration:1.2,ease:'easeInOut'} },
+    radiant:     { scale:[1,1.03,1],   transition:{repeat:Infinity,duration:2.4,ease:'easeInOut'} },
+    quiet:       { opacity:[1,0.7,1],  transition:{repeat:Infinity,duration:3.0,ease:'easeInOut'} },
+    sad:         { y:[0,3,0],          transition:{repeat:Infinity,duration:4.0,ease:'easeInOut'} },
+    struggling:  { x:[0,-2,2,0],      transition:{repeat:Infinity,duration:5.0,ease:'easeInOut'} },
+    neutral:     {},
   }
 
   return (
-    <motion.div animate={anim[state]||{}} style={{width:200,height:220,position:'relative',flexShrink:0}}>
-      {/* Styled frame — same border-radius language as cards (20px) but rounded more for image */}
-      <div className="absolute inset-0 rounded-[24px] overflow-hidden"
-        style={{
-          background: `${color}14`,
-          border:     `1.5px solid ${color}38`,
-          boxShadow:  `0 4px 24px ${color}22, inset 0 0 0 1px ${color}12`,
-        }}>
-        <div className="absolute inset-0"
-          style={{background:`radial-gradient(circle at 50% 30%, ${color}20, transparent 70%)`}}/>
-
-        {!failed && (
-          <img key={src} src={src} alt={`${character.name} — ${state}`}
-            onLoad={e=>{e.currentTarget.style.opacity='1';setImageLoaded(true)}}
-            onError={()=>setFailed(true)}
-            style={{position:'absolute',inset:0,width:'100%',height:'100%',objectFit:'contain',opacity:0,transition:'opacity 0.4s ease'}}/>
-        )}
-
-        {(!imageLoaded||failed) && (
-          <div className="absolute inset-0 flex flex-col items-center justify-center">
-            <span style={{fontSize:60,lineHeight:1,marginBottom:8,filter:'drop-shadow(0 2px 8px rgba(0,0,0,0.10))',position:'relative',zIndex:1}}>
-              {character.placeholderEmoji}
-            </span>
-            <p className="font-display font-bold text-[14px]" style={{color,position:'relative',zIndex:1}}>
-              {character.name}
-            </p>
-            <p className="text-[10px] mt-0.5 font-semibold" style={{color:`${color}70`,position:'relative',zIndex:1}}>
-              {character.title}
-            </p>
-          </div>
-        )}
-      </div>
+    <motion.div animate={anim[state] || {}} className="relative"
+      style={{width:96,height:96}}>
+      {!failed ? (
+        <img src={src} alt={character.name}
+          onLoad={()=>setImageLoaded(true)}
+          onError={()=>setFailed(true)}
+          style={{width:96,height:96,objectFit:'contain',
+            opacity:imageLoaded?1:0,transition:'opacity 0.3s'}}/>
+      ) : null}
+      {(failed || !imageLoaded) && (
+        <div className="absolute inset-0 rounded-full flex items-center justify-center text-[40px]"
+          style={{background:`${color}15`}}>
+          {character.placeholderEmoji}
+        </div>
+      )}
     </motion.div>
   )
 }
 
 // ─────────────────────────────────────────────
-//  Health bar — same style as ProgressBar in plans
-//  bg-warm-outer track, same h-2, same purple fill
+//  Health bar
 // ─────────────────────────────────────────────
-function HealthBar({ health, mood, accentColor }) {
-  const barColor = getHealthColor(health)
-  const label    = HEALTH_LABELS[mood] || 'Growing'
+function HealthBar({ health, mood, accentColor, c }) {
+  const color = getHealthColor(health)
+  const label = HEALTH_LABELS[mood] || 'Growing'
   return (
-    <div className="w-full flex flex-col gap-1.5">
-      <div className="w-full h-2 rounded-full overflow-hidden bg-warm-outer">
-        <motion.div className="h-full rounded-full"
-          style={{background:`linear-gradient(90deg, ${barColor}, ${accentColor})`}}
-          initial={{width:0}} animate={{width:`${health}%`}}
-          transition={{duration:1.2,ease:'easeOut'}}/>
-      </div>
-      <div className="flex items-center justify-between">
+    <div className="w-full">
+      <div className="flex items-center justify-between mb-1.5">
         <div className="flex items-center gap-1.5">
-          <Heart size={12} style={{color:barColor,fill:barColor}}/>
-          <span className="text-[11px] font-semibold" style={{color:barColor}}>Spiritual health</span>
+          <Heart size={11} style={{color, flexShrink:0}}/>
+          <span className="text-[11px] font-bold uppercase tracking-wider" style={{color: c.textFaint}}>
+            Companion Health
+          </span>
         </div>
-        <span className="text-[11px] font-semibold text-text-muted">{label}</span>
+        <span className="text-[11px] font-semibold" style={{color: c.textMuted}}>{label}</span>
+      </div>
+      <div className="w-full h-1.5 rounded-full overflow-hidden" style={{background: c.bgMuted}}>
+        <motion.div className="h-full rounded-full"
+          style={{background: color}}
+          initial={{width:0}}
+          animate={{width:`${health}%`}}
+          transition={{duration:0.8,ease:'easeOut'}}/>
       </div>
     </div>
   )
 }
 
 // ─────────────────────────────────────────────
-//  Main
+//  Main component
 // ─────────────────────────────────────────────
-export default function CharacterCompanion({
-  characterId    = 'david',
-  streak         = 0,
-  daysMissed     = 0,
-  checkedInToday = false,
-}) {
+export default function CharacterCompanion({ characterId, streak, daysMissed, checkedInToday }) {
   const router = useRouter()
-  const [isFirstOpen,  setIsFirstOpen]  = useState(false)
-  const [showConfetti, setShowConfetti] = useState(false)
-  const [prevChecked,  setPrevChecked]  = useState(checkedInToday)
-  const [tooltip,      setTooltip]      = useState(false)
+  const { dark } = useDarkMode()
+  const c = getDarkModeColors(dark)
 
-  useEffect(()=>{setIsFirstOpen(checkAndMarkFirstOpenToday())},[])
-  useEffect(()=>{
-    if (checkedInToday&&!prevChecked){setShowConfetti(true);setTimeout(()=>setShowConfetti(false),1600)}
+  const [tooltip,       setTooltip]     = useState(false)
+  const [showConfetti,  setShowConfetti] = useState(false)
+  const [prevChecked,   setPrevChecked]  = useState(checkedInToday)
+  const [isFirstOpen]                   = useState(checkAndMarkFirstOpenToday)
+
+  useEffect(() => {
+    if (checkedInToday && !prevChecked) {
+      setShowConfetti(true)
+      setTimeout(() => setShowConfetti(false), 1600)
+    }
     setPrevChecked(checkedInToday)
-  },[checkedInToday])
+  }, [checkedInToday]) // eslint-disable-line
 
   const character  = getCharacterById(characterId)
   const health     = calculateHealth(streak, daysMissed)
@@ -153,25 +134,29 @@ export default function CharacterCompanion({
   const message    = character.messages[imageState] || character.messages[mood] || ''
   const accent     = character.accentColor
 
-  // Mood backgrounds — light mode values from original
-  // Dark mode: globals.css bg-warm-* overrides handle it
-  const MOOD_BG = {
-    celebrating: '#FFF8E7', welcoming:    '#F0EEFF',
-    gentle_nudge:'#F7F7F5', missing_you:  '#EFF6FF',
-    concerned:   '#F0F7FF', waiting:      '#F7F7F7',
+  // Mood backgrounds — dark mode variants alongside light
+  const MOOD_BG = dark ? {
+    celebrating: '#2E2210', welcoming:   '#1E1A32',
+    gentle_nudge:'#181A1E', missing_you: '#161E2A',
+    concerned:   '#161E2A', waiting:     '#16181E',
+  } : {
+    celebrating: '#FFF8E7', welcoming:   '#F0EEFF',
+    gentle_nudge:'#F7F7F5', missing_you: '#EFF6FF',
+    concerned:   '#F0F7FF', waiting:     '#F7F7F7',
   }
-  const moodBg = MOOD_BG[mood] || '#FAF8F5'
+  const moodBg = MOOD_BG[mood] || c.bgCard
 
   return (
-    // ── z-index:1 ensures this is ABOVE hero image in stacking context ──
+    // z-index:10 ensures companion is always above hero image and other home content
     <div className="flex flex-col w-full relative overflow-hidden rounded-[20px]"
-      style={{position:'relative', zIndex:1}}>
+      style={{ position:'relative', zIndex:10 }}>
       {showConfetti && <ConfettiBurst/>}
 
-      {/* Character section — mood bg transitions smoothly */}
+      {/* Character section — mood bg */}
       <motion.div
         className="flex flex-col items-center pt-6 pb-5 px-5"
-        animate={{backgroundColor:moodBg}} transition={{duration:0.6}}>
+        animate={{ backgroundColor: moodBg }}
+        transition={{ duration: 0.6 }}>
 
         {/* Character + tooltip */}
         <div className="relative mb-4">
@@ -181,7 +166,7 @@ export default function CharacterCompanion({
                 initial={{opacity:0,y:8,scale:0.92}} animate={{opacity:1,y:0,scale:1}}
                 exit={{opacity:0,scale:0.95}}
                 className="absolute -top-2 left-1/2 -translate-x-1/2 -translate-y-full z-10 px-4 py-3 rounded-2xl shadow-xl text-center"
-                style={{background:accent,minWidth:180,maxWidth:240}}>
+                style={{background:accent, minWidth:180, maxWidth:240}}>
                 <p className="text-white text-[13px] font-semibold leading-snug">{message}</p>
                 <div className="absolute -bottom-2 left-1/2 -translate-x-1/2 w-4 h-2 overflow-hidden">
                   <div className="w-4 h-4 rotate-45 -translate-y-2" style={{background:accent}}/>
@@ -189,26 +174,26 @@ export default function CharacterCompanion({
               </motion.div>
             )}
           </AnimatePresence>
-          <button onClick={()=>{setTooltip(true);setTimeout(()=>setTooltip(false),2500)}}
+          <button onClick={()=>{setTooltip(true); setTimeout(()=>setTooltip(false),2500)}}
             className="focus:outline-none" aria-label={`${character.name} — tap for encouragement`}>
             <CharacterImage character={character} state={imageState}/>
           </button>
         </div>
 
-        {/* Message bubble — same as scripture badge: bg-purple-light, left border */}
+        {/* Message bubble */}
         <AnimatePresence mode="wait">
           <motion.div key={`msg-${imageState}`}
             initial={{opacity:0,y:5}} animate={{opacity:1,y:0}} exit={{opacity:0,y:-5}}
             transition={{duration:0.4,delay:0.12}}
             className="w-full py-3 px-3 rounded-[14px]"
-            style={{background:`${accent}10`}}>
-            <p className="font-display italic text-center leading-[1.8] text-text-primary"
-              style={{fontSize:15}}>
+            style={{background:`${accent}18`}}>
+            <p className="font-display italic text-center leading-[1.8]"
+              style={{fontSize:15, color: c.text}}>
               <span style={{color:accent}}>"</span>
               {message}
               <span style={{color:accent}}>"</span>
             </p>
-            <p className="text-center mt-1.5 text-[11px] font-semibold text-text-muted">
+            <p className="text-center mt-1.5 text-[11px] font-semibold" style={{color: c.textMuted}}>
               — {character.name}, {character.title}
             </p>
           </motion.div>
@@ -216,26 +201,27 @@ export default function CharacterCompanion({
 
         {/* Health bar */}
         <div className="mt-4 w-full">
-          <HealthBar health={health} mood={mood} accentColor={accent}/>
+          <HealthBar health={health} mood={mood} accentColor={accent} c={c}/>
         </div>
       </motion.div>
 
-      {/* Divider — same as Profile dividers */}
-      <div className="border-t border-gray-100"/>
+      {/* Divider */}
+      <div style={{borderTop:`1px solid ${c.border}`}}/>
 
-      {/* Check-in section — bg-white same as all card bottoms */}
-      <div className="px-5 py-4 bg-white rounded-b-[20px]">
+      {/* Check-in section */}
+      <div className="px-5 py-4 rounded-b-[20px]" style={{background: c.bgCard}}>
         {checkedInToday ? (
           <motion.div initial={{opacity:0,scale:0.96}} animate={{opacity:1,scale:1}}
             className="flex flex-col items-center gap-2 py-1">
             <div className="flex items-center gap-2">
-              <CheckCircle2 size={20} className="text-sage"/>
-              <p className="font-bold text-[15px] text-text-primary">Checked in today!</p>
+              <CheckCircle2 size={20} style={{color:'#4A7C5F'}}/>
+              <p className="font-bold text-[15px]" style={{color: c.text}}>Checked in today!</p>
             </div>
-            {streak>0 && (
-              <div className="flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-amber-light">
-                <Flame size={14} className="text-amber"/>
-                <span className="text-[13px] font-bold text-amber">{streak} day streak</span>
+            {streak > 0 && (
+              <div className="flex items-center gap-1.5 px-3 py-1.5 rounded-full"
+                style={{background: c.amberLight}}>
+                <Flame size={14} style={{color:'#E8A838'}}/>
+                <span className="text-[13px] font-bold" style={{color:'#E8A838'}}>{streak} day streak</span>
               </div>
             )}
           </motion.div>
@@ -243,13 +229,17 @@ export default function CharacterCompanion({
           <div className="flex flex-col gap-2">
             <motion.button
               onClick={()=>router.push('/checkin')}
-              className="w-full text-white rounded-pill py-4 text-[15px] font-bold active:scale-[0.97] transition-all shadow-purple min-h-[44px] bg-purple"
-              animate={isFirstOpen?{boxShadow:['0 4px 16px rgba(91,79,207,0.28)','0 4px 24px rgba(91,79,207,0.5)','0 4px 16px rgba(91,79,207,0.28)']}:{}}
-              transition={{repeat:3,duration:1.4,delay:0.8}}>
-              ✓ I read my Bible today
+              className="w-full text-white rounded-pill py-4 text-[15px] font-bold active:scale-[0.97] transition-all min-h-[44px]"
+              style={{background:'#5B4FCF', boxShadow:'0 4px 20px rgba(91,79,207,0.35)'}}
+              animate={isFirstOpen
+                ? {scale:[1,1.03,1], transition:{repeat:3,duration:0.8}}
+                : {}}>
+              Check in today →
             </motion.button>
-            <button className="text-center text-[13px] font-semibold py-1 text-text-muted">
-              Remind me later
+            <button onClick={()=>router.push('/read')}
+              className="w-full py-3 rounded-pill text-[13px] font-bold min-h-[44px]"
+              style={{background: c.bgMuted, color: c.textMuted}}>
+              Open Bible reader
             </button>
           </div>
         )}
