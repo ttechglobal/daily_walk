@@ -5,6 +5,10 @@
 // My Posts: fetched from Supabase via getUserPosts()
 // Saved Posts: fetched from Supabase via getSavedPosts()
 // All colours use app Tailwind class system (bg-white, text-text-primary etc.)
+//
+// FIX: On mount, ProfileView fetches the real username from the profiles table
+//      and patches both state and localStorage. Hero now shows username correctly
+//      instead of falling back to 'Friend'.
 
 import { useState, useEffect } from 'react'
 import { useRouter } from 'next/navigation'
@@ -68,8 +72,8 @@ function WeekStrip({ checkedSet, today, weekDays }) {
 //  Journey tab
 // ─────────────────────────────────────────────
 function JourneyTab({ checkins, streak, user }) {
-  const [subTab,    setSubTab]  = useState('logs')
-  const [nuggets,   setNuggets] = useLocalStorage('dw_nuggets', [])
+  const [subTab,  setSubTab]  = useState('logs')
+  const [nuggets, setNuggets] = useLocalStorage('dw_nuggets', [])
 
   const today      = todayStr()
   const weekDays   = lastSevenDays()
@@ -111,7 +115,8 @@ function JourneyTab({ checkins, streak, user }) {
             className="relative flex-1 py-1.5 rounded-full text-[12px] font-bold transition-all min-h-[36px]"
             style={subTab === t.k ? { color: '#5B4FCF' } : { color: '#6B7280' }}>
             {subTab === t.k && (
-              <motion.div layoutId="j-sub" className="absolute inset-0 bg-white rounded-full shadow-card"
+              <motion.div layoutId="journey-subtab"
+                className="absolute inset-0 bg-white rounded-full shadow-card"
                 transition={{ type: 'spring', stiffness: 400, damping: 35 }} />
             )}
             <span className="relative z-10">{t.l}</span>
@@ -121,21 +126,23 @@ function JourneyTab({ checkins, streak, user }) {
 
       <AnimatePresence mode="wait">
         {subTab === 'logs' && (
-          <motion.div key="logs" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
+          <motion.div key="logs"
+            initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
+            transition={{ duration: 0.15 }}
             className="flex flex-col gap-3">
-            {(checkins || []).length === 0 ? (
+            {!checkins?.length ? (
               <div className="text-center py-10">
-                <p className="font-semibold text-[15px] text-text-primary">No logs yet</p>
-                <p className="text-[13px] text-text-muted mt-1">Complete your first check-in to start</p>
+                <p className="font-semibold text-[15px] text-text-primary">No check-ins yet</p>
+                <p className="text-[13px] text-text-muted mt-1">Start your streak by checking in on the home screen</p>
               </div>
-            ) : [...(checkins||[])].reverse().map(ci => (
-              <div key={ci.id} className="bg-white rounded-[16px] p-4 shadow-card flex flex-col gap-2">
+            ) : [...(checkins || [])].reverse().map(c => (
+              <div key={c.date || c.id} className="bg-white rounded-[16px] p-4 shadow-card flex flex-col gap-1.5">
                 <div className="flex items-center justify-between">
-                  <p className="font-bold text-[13px] text-purple">{ci.passage || 'Reading logged'}</p>
-                  <p className="text-[11px] text-text-muted">{formatTimestamp(ci.createdAt)}</p>
+                  <span className="font-bold text-[13px] text-purple">{c.date}</span>
+                  {c.passage && <span className="text-[12px] font-semibold text-text-muted">{c.passage}</span>}
                 </div>
-                {ci.reflection && (
-                  <p className="text-[13px] leading-relaxed italic text-text-muted">"{ci.reflection}"</p>
+                {c.reflection && (
+                  <p className="text-[13px] text-text-primary leading-relaxed italic">"{c.reflection}"</p>
                 )}
               </div>
             ))}
@@ -143,9 +150,11 @@ function JourneyTab({ checkins, streak, user }) {
         )}
 
         {subTab === 'nuggets' && (
-          <motion.div key="nuggets" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
+          <motion.div key="nuggets"
+            initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
+            transition={{ duration: 0.15 }}
             className="flex flex-col gap-3">
-            {(nuggets||[]).length === 0 ? (
+            {!(nuggets||[]).length ? (
               <div className="text-center py-10">
                 <p className="font-semibold text-[15px] text-text-primary">No nuggets yet</p>
                 <p className="text-[13px] text-text-muted mt-1">Tap + on the home screen to save insights</p>
@@ -314,7 +323,7 @@ function SettingsRow({ icon: Icon, iconBg, iconClass, label, sub, danger, onClic
 function DarkModeRow({ dark, onToggle }) {
   return (
     <div className="flex items-center gap-3 p-4 bg-white rounded-[18px] shadow-card min-h-[56px]">
-      <div className={`w-9 h-9 rounded-xl flex items-center justify-center flex-shrink-0 ${dark ? 'bg-purple-light' : 'bg-purple-light'}`}>
+      <div className="w-9 h-9 rounded-xl flex items-center justify-center flex-shrink-0 bg-purple-light">
         {dark ? <Sun size={17} className="text-purple" /> : <Moon size={17} className="text-purple" />}
       </div>
       <div className="flex-1 min-w-0">
@@ -366,14 +375,48 @@ function ProfileView({ user, streak, checkins }) {
   const { dark, toggle: toggleDark } = useDarkMode()
   const [mainTab,    setMainTab]    = useState('profile')
   const [pickerOpen, setPickerOpen] = useState(false)
-  const [, setUser]       = useLocalStorage('dw_user',     null)
-  const [, setOnboarded]  = useLocalStorage('dw_onboarding_complete', false)
-  const [, setCheckins2]  = useLocalStorage('dw_checkins', [])
-  const [, setStreak]     = useLocalStorage('dw_streak',   null)
+  const [, setUser]      = useLocalStorage('dw_user',                null)
+  const [, setOnboarded] = useLocalStorage('dw_onboarding_complete', false)
+  const [, setCheckins2] = useLocalStorage('dw_checkins',            [])
+  const [, setStreak]    = useLocalStorage('dw_streak',              null)
 
-  const companion = getCharacterById(user?.companionId || 'david')
-  const ini       = initials(user?.name || 'F')
-  const bg        = avatarColor(user?.name || 'Friend')
+  // ── FIX: Pull real username from Supabase on mount ──
+  // localStorage dw_user.name can be stale or missing the username.
+  // We fetch the profiles row and patch the displayed user object
+  // AND keep localStorage up to date so other pages benefit immediately.
+  const [liveUser, setLiveUser] = useState(user)
+
+  useEffect(() => {
+    const sb = createClient()
+    if (!sb) return
+    sb.auth.getUser().then(async ({ data }) => {
+      if (!data?.user) return
+      const { data: profile } = await sb.from('profiles')
+        .select('username, full_name, avatar_url, companion_id')
+        .eq('id', data.user.id)
+        .maybeSingle()
+      if (!profile?.username) return
+      // Merge fetched data into the local user object
+      const patched = {
+        ...(user || {}),
+        id:          data.user.id,
+        username:    profile.username,
+        name:        profile.full_name || profile.username,
+        companionId: profile.companion_id || user?.companionId || 'david',
+      }
+      setLiveUser(patched)
+      try {
+        const stored = JSON.parse(localStorage.getItem('dw_user') || '{}')
+        localStorage.setItem('dw_user', JSON.stringify({ ...stored, ...patched }))
+      } catch {}
+    })
+  }, []) // eslint-disable-line react-hooks/exhaustive-deps
+
+  const companion = getCharacterById(liveUser?.companionId || 'david')
+  // Use username first for initials/colour so the avatar matches the displayed name
+  const displayName = liveUser?.username || liveUser?.name || 'Friend'
+  const ini = initials(displayName)
+  const bg  = avatarColor(displayName)
 
   async function handleSignOut() {
     if (!confirm('Sign out?')) return
@@ -385,7 +428,8 @@ function ProfileView({ user, streak, checkins }) {
   }
 
   function handleCompanionConfirm(id) {
-    setUser(prev => ({...(prev||{}), companionId: id}))
+    setLiveUser(prev => ({ ...(prev || {}), companionId: id }))
+    setUser(prev => ({ ...(prev || {}), companionId: id }))
     setPickerOpen(false)
     showToast(`${getCharacterById(id).name} is your companion now 🙌`)
   }
@@ -408,15 +452,16 @@ function ProfileView({ user, streak, checkins }) {
           {ini}
         </div>
         <div className="text-center">
+          {/* FIX: username → full_name → 'Friend'. Never 'Friend' when a username exists. */}
           <h1 className="font-display text-[22px] font-bold text-white">
-            {user?.name || 'Friend'}
+            {liveUser?.username || liveUser?.name || 'Friend'}
           </h1>
           {/* Editable username */}
           <div className="mt-1">
             <EditUsername />
           </div>
           <p className="text-white/60 text-[13px] mt-1">
-            Member since {user?.joinedAt || 'today'}
+            Member since {liveUser?.joinedAt || 'today'}
           </p>
         </div>
 
@@ -463,10 +508,10 @@ function ProfileView({ user, streak, checkins }) {
             <motion.div key="profile" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
               transition={{ duration: 0.15 }} className="px-4 mt-4 flex flex-col gap-4">
 
-              {user?.goal && (
+              {liveUser?.goal && (
                 <div className="bg-white rounded-[16px] p-4 shadow-card">
                   <p className="text-[11px] font-bold uppercase tracking-widest text-text-muted mb-1">Spiritual Goal</p>
-                  <p className="font-display text-[14px] leading-relaxed italic text-text-primary">"{user.goal}"</p>
+                  <p className="font-display text-[14px] leading-relaxed italic text-text-primary">"{liveUser.goal}"</p>
                 </div>
               )}
 
@@ -509,7 +554,7 @@ function ProfileView({ user, streak, checkins }) {
           {mainTab === 'journey' && (
             <motion.div key="journey" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
               transition={{ duration: 0.15 }} className="px-4 mt-4">
-              <JourneyTab checkins={checkins} streak={streak} user={user} />
+              <JourneyTab checkins={checkins} streak={streak} user={liveUser} />
             </motion.div>
           )}
 
@@ -534,7 +579,7 @@ function ProfileView({ user, streak, checkins }) {
 
       <AnimatePresence>
         {pickerOpen && (
-          <CharacterPicker currentId={user?.companionId || 'david'}
+          <CharacterPicker currentId={liveUser?.companionId || 'david'}
             onConfirm={handleCompanionConfirm} onClose={() => setPickerOpen(false)} />
         )}
       </AnimatePresence>
