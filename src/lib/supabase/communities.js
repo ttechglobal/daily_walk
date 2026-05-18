@@ -1,6 +1,9 @@
 // ── src/lib/supabase/communities.js ──
 // All queries use the clean schema: profiles, communities, memberships, posts, comments, likes, saved_posts
 // createPostToMultiple: posts to one or more communities in a single call.
+//
+// FIX: getAuthUser now fetches the profile row to include username.
+//      This ensures username (not "Friend") is available throughout the app.
 
 import { createClient } from './client'
 
@@ -10,10 +13,20 @@ export async function getAuthUser() {
   try {
     const { data: { user } } = await sb.auth.getUser()
     if (!user) return null
+
+    // Always fetch the profile to get the username saved during sign-up/onboarding.
+    // This is the single source of truth — never derive username from auth metadata alone.
+    const { data: profile } = await sb.from('profiles')
+      .select('username, full_name, avatar_url')
+      .eq('id', user.id)
+      .maybeSingle()
+
     return {
-      id:    user.id,
-      name:  user.user_metadata?.full_name || user.user_metadata?.name || user.email?.split('@')[0] || 'Friend',
-      email: user.email,
+      id:         user.id,
+      name:       profile?.full_name || profile?.username || user.user_metadata?.full_name || user.email?.split('@')[0] || 'Friend',
+      username:   profile?.username  || user.user_metadata?.display_name || '',
+      email:      user.email,
+      avatar_url: profile?.avatar_url || user.user_metadata?.avatar_url || null,
     }
   } catch { return null }
 }
@@ -147,8 +160,6 @@ export async function getForYouFeed(limit = 50) {
 
 // ─────────────────────────────────────────────
 //  POSTS — WRITE
-//  createPost: single community
-//  createPostToMultiple: multiple communities at once
 // ─────────────────────────────────────────────
 
 export async function createPost(communityId, fields) {
@@ -162,11 +173,6 @@ export async function createPost(communityId, fields) {
   return normalisePost(data, user.id, new Set())
 }
 
-/**
- * Post to multiple communities at once.
- * communityIds: string[] — list of community UUIDs to post to
- * Returns array of created post objects.
- */
 export async function createPostToMultiple(communityIds, fields) {
   const user = await getAuthUser(); if (!user) throw new Error('not_authenticated')
   if (!communityIds?.length) throw new Error('Select at least one community')
@@ -241,7 +247,7 @@ export async function savePost(postId) {
   const user = await getAuthUser(); if (!user) throw new Error('not_authenticated')
   const sb = createClient()
   await sb.from('saved_posts').insert({ user_id: user.id, post_id: postId })
-    .then(()=>null, ()=>null)
+    .then(() => null, () => null)
 }
 
 export async function unsavePost(postId) {
@@ -286,8 +292,8 @@ export async function getUserPosts() {
 export function subscribeToNewPosts(communityId, onInsert) {
   const sb = createClient(); if (!sb) return () => null
   const ch = sb.channel(`posts:${communityId}`)
-    .on('postgres_changes', { event:'INSERT', schema:'public', table:'posts',
-      filter:`community_id=eq.${communityId}` }, async payload => {
+    .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'posts',
+      filter: `community_id=eq.${communityId}` }, async payload => {
       if (!payload.new) return
       const { data: profile } = await sb.from('profiles')
         .select('username,full_name,avatar_url').eq('id', payload.new.user_id).single()
@@ -301,8 +307,8 @@ export const subscribeToCommunityPosts = subscribeToNewPosts
 export function subscribeToNewComments(postId, onInsert) {
   const sb = createClient(); if (!sb) return () => null
   const ch = sb.channel(`comments:${postId}`)
-    .on('postgres_changes', { event:'INSERT', schema:'public', table:'comments',
-      filter:`post_id=eq.${postId}` }, async payload => {
+    .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'comments',
+      filter: `post_id=eq.${postId}` }, async payload => {
       if (!payload.new) return
       const { data: profile } = await sb.from('profiles')
         .select('username,full_name,avatar_url').eq('id', payload.new.user_id).single()
@@ -320,35 +326,34 @@ export const subscribeToComments = subscribeToNewComments
 function normalisePost(row, currentUserId, likedSet) {
   const p = row.profiles || {}
   return {
-    id:            row.id,
-    communityId:   row.community_id,
-    communityName: row.communities?.name || null,
-    communitySlug: row.communities?.slug || null,
-    authorId:      row.user_id,
-    authorName:    p.full_name  || p.username  || 'Anonymous',
-    authorUsername:p.username   || null,
-    authorAvatar:  p.avatar_url || null,
-    content:       row.content,
-    passage:       row.passage   || null,
-    type:          row.post_type || 'general',
-    liked:         currentUserId ? likedSet.has(row.id) : false,
-    like_count:    row.likes?.[0]?.count    ?? row.like_count    ?? 0,
-    comment_count: row.comments?.[0]?.count ?? row.comment_count ?? 0,
-    createdAt:     row.created_at,
-    updatedAt:     row.updated_at,
+    id:             row.id,
+    communityId:    row.community_id,
+    communityName:  row.communities?.name || null,
+    communitySlug:  row.communities?.slug || null,
+    authorId:       row.user_id,
+    authorName:     p.full_name  || p.username  || 'Anonymous',
+    authorUsername: p.username   || null,
+    authorAvatar:   p.avatar_url || null,
+    content:        row.content,
+    passage:        row.passage   || null,
+    type:           row.post_type || 'general',
+    liked:          currentUserId ? likedSet.has(row.id) : false,
+    like_count:     row.likes?.[0]?.count    ?? row.like_count    ?? 0,
+    comment_count:  row.comments?.[0]?.count ?? row.comment_count ?? 0,
+    createdAt:      row.created_at,
   }
 }
 
 function normaliseComment(row) {
   const p = row.profiles || {}
   return {
-    id:            row.id,
-    postId:        row.post_id,
-    authorId:      row.user_id,
-    authorName:    p.full_name  || p.username  || 'Anonymous',
-    authorUsername:p.username   || null,
-    authorAvatar:  p.avatar_url || null,
-    content:       row.content,
-    createdAt:     row.created_at,
+    id:             row.id,
+    postId:         row.post_id,
+    authorId:       row.user_id,
+    authorName:     p.full_name  || p.username  || 'Anonymous',
+    authorUsername: p.username   || null,
+    authorAvatar:   p.avatar_url || null,
+    content:        row.content,
+    createdAt:      row.created_at,
   }
 }
