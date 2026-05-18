@@ -1,37 +1,47 @@
 'use client'
 
-// ── AppInit — runs once on app mount ──
-// Advances plan day counters, re-registers notification timers.
+// ── src/components/AppInit.js ──
+// Runs once on app load (mounted in layout.js).
+// Listens for Supabase auth state changes.
+// On sign-in: pull from Supabase → localStorage, then push any local-only data up.
+// This is the trigger point for cross-device data sync.
 
 import { useEffect } from 'react'
-import { getNotificationSettings, scheduleDailyReminder, sendChallengeNudge, initNotifications } from '../lib/notifications'
-import { advanceAllPlans } from '../lib/plans'
+import { createClient } from '../lib/supabase/client'
+import { syncSupabaseToLocal, syncLocalToSupabase } from '../lib/supabase/sync'
 
 export default function AppInit() {
   useEffect(() => {
-    // Init notification timers (daily reminder, weekly summary)
-    initNotifications()
-    if (typeof window === 'undefined') return
-    try {
-      // Advance plan day counters if yesterday's reading is done
-      advanceAllPlans()
+    const sb = createClient()
+    if (!sb) return
 
-      const settings = getNotificationSettings()
-      if (settings.dailyReminder) scheduleDailyReminder(settings.hour, settings.minute)
-
-      if (settings.challengeNudges && settings.dailyReminder) {
-        const challenges = JSON.parse(localStorage.getItem('dw_challenges') || '[]')
-        const joined = challenges.filter(c => c.joined)
-        joined.forEach(challenge => {
-          const now  = new Date()
-          const next = new Date()
-          next.setHours(settings.hour, settings.minute + 2, 0, 0)
-          if (next <= now) next.setDate(next.getDate() + 1)
-          setTimeout(() => sendChallengeNudge(challenge.title), next.getTime() - now.getTime())
-        })
+    // Check current session on load (handles page refresh while logged in)
+    sb.auth.getSession().then(({ data: { session } }) => {
+      if (session?.user?.id) {
+        runSync(session.user.id)
       }
-    } catch {}
+    })
+
+    // Listen for sign-in / sign-out events
+    const { data: { subscription } } = sb.auth.onAuthStateChange((event, session) => {
+      if (event === 'SIGNED_IN' && session?.user?.id) {
+        runSync(session.user.id)
+      }
+    })
+
+    return () => subscription?.unsubscribe()
   }, [])
+
+  async function runSync(userId) {
+    try {
+      // 1. Pull authoritative data from Supabase into localStorage
+      await syncSupabaseToLocal(userId)
+      // 2. Push any local-only data (created before sign-in) up to account
+      await syncLocalToSupabase(userId)
+    } catch (e) {
+      console.warn('[AppInit] sync error (non-fatal):', e.message)
+    }
+  }
 
   return null
 }

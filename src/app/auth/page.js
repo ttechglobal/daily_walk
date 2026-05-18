@@ -1,15 +1,26 @@
 'use client'
 
 // ── src/app/auth/page.js ──
-// Sign Up: username + email + password (name field removed).
-// Sign In: email + password + forgot password.
-// Google button: visually blurred / pointer-events:none ("Coming soon").
-// Full dark mode via useTheme().
+//
+// BUGS FIXED:
+//  1. After sign-up, user now lands in the app — not back on sign-in.
+//     Fix: signUp → if email confirm is OFF, session is live immediately,
+//     write profile+username in the same call, then go to /onboarding (questions only).
+//     If email confirm is ON, show "check your email" state instead of looping.
+//
+//  2. Sign-in no longer routes through sign-up / onboarding for existing users.
+//     Fix: isNew = !profile?.onboarding_complete (username check removed from isNew logic).
+//     Returning users with a username but onboarding_complete=false go to onboarding.
+//     Returning users with onboarding_complete=true go straight to `next`.
+//
+//  3. Username is now written to the profiles table during sign-up, not later.
+//     Fix: After signUp(), immediately upsert the profile row with the username.
+//     The username uniqueness check at sign-in now correctly finds it.
 
 import { useState, useEffect, useCallback, Suspense } from 'react'
 import { useRouter, useSearchParams } from 'next/navigation'
 import { motion, AnimatePresence } from 'framer-motion'
-import { Eye, EyeOff, ArrowLeft, Loader2, Flame, Check } from 'lucide-react'
+import { Eye, EyeOff, ArrowLeft, Loader2, Flame, Check, Mail } from 'lucide-react'
 import { createClient } from '../../lib/supabase/client'
 import { useTheme } from '../../lib/theme'
 import { ToastContainer, showToast } from '../../components/Toast'
@@ -20,20 +31,13 @@ import { ToastContainer, showToast } from '../../components/Toast'
 function GoogleButton() {
   return (
     <div style={{ position: 'relative' }}>
-      {/* The button itself — code intact, visually blurred */}
-      <button
-        type="button"
+      <button type="button"
         className="w-full flex items-center justify-center gap-3 py-4 rounded-full font-bold text-[15px] border-2"
         style={{
-          background:    'white',
-          color:         '#1A1A2E',
-          borderColor:   '#E5E7EB',
-          opacity:       0.4,
-          filter:        'blur(0.5px)',
-          pointerEvents: 'none',   // non-interactive
-          cursor:        'default',
-        }}
-      >
+          background: 'white', color: '#1A1A2E', borderColor: '#E5E7EB',
+          opacity: 0.4, filter: 'blur(0.5px)',
+          pointerEvents: 'none', cursor: 'default',
+        }}>
         <svg width="20" height="20" viewBox="0 0 24 24">
           <path d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z" fill="#4285F4"/>
           <path d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z" fill="#34A853"/>
@@ -42,8 +46,6 @@ function GoogleButton() {
         </svg>
         Continue with Google
       </button>
-
-      {/* "Coming soon" label overlay */}
       <div className="absolute inset-0 flex items-end justify-center pb-1.5" style={{ pointerEvents: 'none' }}>
         <span className="text-[11px] font-bold px-2 py-0.5 rounded-full"
           style={{ background: 'rgba(0,0,0,0.12)', color: '#6B7280', letterSpacing: '0.05em' }}>
@@ -55,7 +57,7 @@ function GoogleButton() {
 }
 
 // ─────────────────────────────────────────────
-//  Password strength
+//  Password strength bar
 // ─────────────────────────────────────────────
 function passwordStrength(pw) {
   if (!pw) return { score: 0, label: '', color: '' }
@@ -65,7 +67,7 @@ function passwordStrength(pw) {
   if (/[0-9]/.test(pw))        s++
   if (/[^A-Za-z0-9]/.test(pw)) s++
   const map = [
-    { label: '',       color: '' },
+    { label: '', color: '' },
     { label: 'Weak',   color: '#EF4444' },
     { label: 'Fair',   color: '#E8A838' },
     { label: 'Good',   color: '#7CB9E8' },
@@ -75,20 +77,22 @@ function passwordStrength(pw) {
 }
 
 // ─────────────────────────────────────────────
-//  Sign Up
+//  Sign Up — email + password + username in one form
+//  Writes profile row immediately so username is locked in.
 // ─────────────────────────────────────────────
 function SignUp({ onToggle, onSuccess, t }) {
   const [username,       setUsername]       = useState('')
-  const [usernameStatus, setUsernameStatus] = useState(null) // null|'checking'|'ok'|'taken'|'invalid'
+  const [usernameStatus, setUsernameStatus] = useState(null)
   const [email,    setEmail]    = useState('')
   const [password, setPassword] = useState('')
   const [showPw,   setShowPw]   = useState(false)
   const [errors,   setErrors]   = useState({})
   const [loading,  setLoading]  = useState(false)
+  const [awaitEmail, setAwaitEmail] = useState(false)
 
   const emailRe = /^[^\s@]+@[^\s@]+\.[^\s@]+$/
 
-  // ── Username availability check ──
+  // Real-time username availability check
   const checkUsername = useCallback(async (val) => {
     if (!val || val.length < 3)          { setUsernameStatus('invalid'); return }
     if (!/^[a-z0-9_]{3,20}$/.test(val)) { setUsernameStatus('invalid'); return }
@@ -100,162 +104,209 @@ function SignUp({ onToggle, onSuccess, t }) {
   }, [])
 
   useEffect(() => {
-    const t = setTimeout(() => checkUsername(username), 480)
-    return () => clearTimeout(t)
+    const timer = setTimeout(() => checkUsername(username), 480)
+    return () => clearTimeout(timer)
   }, [username, checkUsername])
 
   function handleUsernameInput(v) {
     const cleaned = v.toLowerCase().replace(/[^a-z0-9_]/g, '').slice(0, 20)
     setUsername(cleaned)
     setUsernameStatus(null)
-    setErrors(e => { const n={...e}; delete n.username; return n })
+    setErrors(e => { const n = {...e}; delete n.username; return n })
   }
 
   async function submit() {
     const errs = {}
-    if (usernameStatus !== 'ok')         errs.username = usernameStatus === 'taken' ? 'Already taken' : '3–20 chars, letters numbers _'
-    if (!emailRe.test(email))            errs.email    = 'Enter a valid email'
+    if (usernameStatus !== 'ok')              errs.username = usernameStatus === 'taken' ? 'Already taken' : '3–20 chars, letters/numbers/_'
+    if (!emailRe.test(email))                 errs.email    = 'Enter a valid email'
     if (passwordStrength(password).score < 2) errs.password = 'Password too weak — add numbers or symbols'
     if (Object.keys(errs).length) { setErrors(errs); return }
 
     setLoading(true)
     const sb = createClient()
     if (!sb) { showToast('Supabase not configured'); setLoading(false); return }
+
     try {
-      // Create auth user
+      // Step 1: Create the auth user
       const { data, error } = await sb.auth.signUp({ email, password })
       if (error) throw error
-      const user = data.user
-      if (!user) throw new Error('Sign-up failed')
 
-      // Insert profile row
-      await sb.from('profiles').upsert(
-        { id: user.id, username, created_at: new Date().toISOString() },
-        { onConflict: 'id' }
-      )
+      const user    = data.user
+      const session = data.session  // null if email confirmation is required
 
-      // Write to localStorage for immediate use
+      if (!user) throw new Error('Account creation failed')
+
+      // Step 2: Write profile row with username NOW — before anything else.
+      // This locks in the username immediately regardless of email confirm state.
+      await sb.from('profiles').upsert({
+        id:       user.id,
+        username: username,
+        created_at: new Date().toISOString(),
+      }, { onConflict: 'id' })
+
+      // Step 3: Write to localStorage for immediate use
       try {
         localStorage.setItem('dw_user', JSON.stringify({
-          id: user.id, username, email,
+          id:       user.id,
+          username: username,
+          email:    user.email,
           companionId: 'david',
-          joinedAt: new Date().toLocaleDateString('en-US',{month:'long',year:'numeric'}),
+          joinedAt: new Date().toLocaleDateString('en-US', { month: 'long', year: 'numeric' }),
         }))
       } catch {}
 
-      onSuccess(user, true) // true = new user → go to onboarding
+      if (!session) {
+        // Email confirmation is enabled — tell user to check email
+        setAwaitEmail(true)
+        setLoading(false)
+        return
+      }
+
+      // Session is live — go to onboarding questions (spiritual level, goals etc.)
+      // onboarding_complete is still false, so the questions screen will show
+      onSuccess(user, true)
     } catch (e) {
       if (e.message?.toLowerCase().includes('already registered') || e.message?.includes('already exists')) {
-        setErrors({ email: 'An account with this email already exists' })
+        setErrors({ email: 'An account with this email already exists — try signing in' })
       } else {
         showToast(e.message || 'Sign-up failed — please try again')
       }
-    } finally { setLoading(false) }
+    } finally {
+      if (!awaitEmail) setLoading(false)
+    }
   }
 
-  const USERNAME_STATE = {
-    null:      { color: t.textFaint,  text: '3–20 chars · letters, numbers and _' },
-    checking:  { color: '#E8A838',    text: 'Checking…' },
-    ok:        { color: '#4A7C5F',    text: '✓ Available' },
-    taken:     { color: '#EF4444',    text: '✗ Already taken — try another' },
-    invalid:   { color: '#EF4444',    text: '3–20 chars · letters, numbers and _ only' },
+  // ── Check-your-email state ──
+  if (awaitEmail) {
+    return (
+      <motion.div initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }}
+        className="flex flex-col items-center gap-5 py-4 text-center">
+        <div className="w-16 h-16 rounded-full flex items-center justify-center"
+          style={{ background: t.purpleBg || '#EDE9FF' }}>
+          <Mail size={28} style={{ color: '#5B4FCF' }} />
+        </div>
+        <div>
+          <p className="font-display font-bold text-[20px]" style={{ color: t.text }}>
+            Check your email
+          </p>
+          <p className="text-[14px] mt-2 leading-relaxed" style={{ color: t.textMuted }}>
+            We sent a confirmation link to <strong>{email}</strong>.
+            Click it to activate your account, then come back and sign in.
+          </p>
+        </div>
+        <button onClick={() => { setAwaitEmail(false); onToggle() }}
+          className="w-full py-4 rounded-full text-white font-bold text-[15px]"
+          style={{ background: 'linear-gradient(135deg,#5B4FCF,#3D3190)' }}>
+          Go to Sign In
+        </button>
+      </motion.div>
+    )
   }
+
   const pw = passwordStrength(password)
+  const USERNAME_STATE = {
+    null:     { color: t.textFaint, text: '3–20 chars · letters, numbers and _' },
+    checking: { color: '#E8A838',   text: 'Checking…' },
+    ok:       { color: '#4A7C5F',   text: '✓ Available' },
+    taken:    { color: '#EF4444',   text: '✗ Already taken — try another' },
+    invalid:  { color: '#EF4444',   text: '3–20 chars · letters, numbers and _ only' },
+  }
 
   return (
-    <motion.div initial={{opacity:0,x:20}} animate={{opacity:1,x:0}} exit={{opacity:0,x:-20}}
+    <motion.div initial={{ opacity: 0, x: 20 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0, x: -20 }}
       className="flex flex-col gap-4">
 
       {/* Username */}
       <div className="flex flex-col gap-1.5">
-        <label className="font-bold text-[13px]" style={{color:t.text}}>Username</label>
+        <label className="font-bold text-[13px]" style={{ color: t.text }}>Username</label>
         <div className="relative">
           <span className="absolute left-4 top-1/2 -translate-y-1/2 font-bold text-[15px]"
-            style={{color:t.textFaint}}>@</span>
+            style={{ color: t.textFaint }}>@</span>
           <input value={username} onChange={e => handleUsernameInput(e.target.value)}
-            placeholder="yourname"
-            autoCapitalize="none" autoCorrect="off" spellCheck={false}
+            placeholder="yourname" autoCapitalize="none" autoCorrect="off" spellCheck={false}
             className="w-full pl-8 pr-10 py-3.5 rounded-[14px] border text-[15px] focus:outline-none"
-            style={{background:t.bgInput, color:t.text, borderColor:errors.username?'#EF4444':t.borderInput}}/>
+            style={{ background: t.bgInput, color: t.text, borderColor: errors.username ? '#EF4444' : t.borderInput }} />
           {usernameStatus === 'ok' && (
             <div className="absolute right-3 top-1/2 -translate-y-1/2 w-6 h-6 rounded-full flex items-center justify-center"
-              style={{background:'#4A7C5F'}}>
-              <Check size={12} className="text-white" strokeWidth={3}/>
+              style={{ background: '#4A7C5F' }}>
+              <Check size={12} className="text-white" strokeWidth={3} />
             </div>
           )}
         </div>
         {username && (
-          <p className="text-[12px] font-semibold" style={{color:USERNAME_STATE[usernameStatus]?.color||t.textFaint}}>
+          <p className="text-[12px] font-semibold" style={{ color: USERNAME_STATE[usernameStatus]?.color || t.textFaint }}>
             {USERNAME_STATE[usernameStatus]?.text}
           </p>
         )}
-        {errors.username && <p className="text-[12px]" style={{color:'#EF4444'}}>{errors.username}</p>}
+        {errors.username && <p className="text-[12px]" style={{ color: '#EF4444' }}>{errors.username}</p>}
       </div>
 
       {/* Email */}
       <div className="flex flex-col gap-1.5">
-        <label className="font-bold text-[13px]" style={{color:t.text}}>Email</label>
-        <input type="email" value={email} onChange={e=>{setEmail(e.target.value);setErrors(err=>({...err,email:undefined}))}}
+        <label className="font-bold text-[13px]" style={{ color: t.text }}>Email</label>
+        <input type="email" value={email}
+          onChange={e => { setEmail(e.target.value); setErrors(err => ({...err, email: undefined})) }}
           placeholder="you@example.com" autoComplete="email"
           className="w-full px-4 py-3.5 rounded-[14px] border text-[15px] focus:outline-none"
-          style={{background:t.bgInput, color:t.text, borderColor:errors.email?'#EF4444':t.borderInput}}/>
-        {errors.email && <p className="text-[12px]" style={{color:'#EF4444'}}>{errors.email}</p>}
+          style={{ background: t.bgInput, color: t.text, borderColor: errors.email ? '#EF4444' : t.borderInput }} />
+        {errors.email && <p className="text-[12px]" style={{ color: '#EF4444' }}>{errors.email}</p>}
       </div>
 
       {/* Password */}
       <div className="flex flex-col gap-1.5">
-        <label className="font-bold text-[13px]" style={{color:t.text}}>Password</label>
+        <label className="font-bold text-[13px]" style={{ color: t.text }}>Password</label>
         <div className="relative">
-          <input type={showPw?'text':'password'} value={password}
-            onChange={e=>{setPassword(e.target.value);setErrors(err=>({...err,password:undefined}))}}
+          <input type={showPw ? 'text' : 'password'} value={password}
+            onChange={e => { setPassword(e.target.value); setErrors(err => ({...err, password: undefined})) }}
             placeholder="Min. 8 characters" autoComplete="new-password"
             className="w-full px-4 py-3.5 pr-12 rounded-[14px] border text-[15px] focus:outline-none"
-            style={{background:t.bgInput, color:t.text, borderColor:errors.password?'#EF4444':t.borderInput}}/>
-          <button type="button" onClick={()=>setShowPw(v=>!v)}
+            style={{ background: t.bgInput, color: t.text, borderColor: errors.password ? '#EF4444' : t.borderInput }} />
+          <button type="button" onClick={() => setShowPw(v => !v)}
             className="absolute right-3 top-1/2 -translate-y-1/2 w-8 h-8 flex items-center justify-center"
-            style={{color:t.textMuted}}>
-            {showPw ? <EyeOff size={18}/> : <Eye size={18}/>}
+            style={{ color: t.textMuted }}>
+            {showPw ? <EyeOff size={18} /> : <Eye size={18} />}
           </button>
         </div>
-        {/* Strength bar */}
         {password && (
           <div className="flex items-center gap-2 mt-0.5">
             <div className="flex gap-1 flex-1">
-              {[1,2,3,4].map(i=>(
+              {[1,2,3,4].map(i => (
                 <div key={i} className="flex-1 h-1 rounded-full transition-all"
-                  style={{background: i<=pw.score ? pw.color : t.bgMuted}}/>
+                  style={{ background: i <= pw.score ? pw.color : t.bgMuted || '#F0EDE8' }} />
               ))}
             </div>
-            {pw.label && <span className="text-[11px] font-bold" style={{color:pw.color}}>{pw.label}</span>}
+            {pw.label && <span className="text-[11px] font-bold" style={{ color: pw.color }}>{pw.label}</span>}
           </div>
         )}
-        {errors.password && <p className="text-[12px]" style={{color:'#EF4444'}}>{errors.password}</p>}
+        {errors.password && <p className="text-[12px]" style={{ color: '#EF4444' }}>{errors.password}</p>}
       </div>
 
       <button onClick={submit} disabled={loading || usernameStatus !== 'ok'}
         className="w-full py-4 rounded-full text-white font-bold text-[15px] disabled:opacity-50 active:scale-[0.97] transition-all flex items-center justify-center gap-2"
-        style={{background:'linear-gradient(135deg,#5B4FCF,#3D3190)'}}>
-        {loading ? <><Loader2 size={18} className="animate-spin"/> Creating account…</> : 'Create account →'}
+        style={{ background: 'linear-gradient(135deg,#5B4FCF,#3D3190)' }}>
+        {loading ? <><Loader2 size={18} className="animate-spin" /> Creating account…</> : 'Create account →'}
       </button>
 
-      <p className="text-center text-[13px]" style={{color:t.textMuted}}>
+      <p className="text-center text-[13px]" style={{ color: t.textMuted }}>
         Already have an account?{' '}
-        <button onClick={onToggle} className="font-bold underline" style={{color:'#5B4FCF'}}>Sign in</button>
+        <button onClick={onToggle} className="font-bold underline" style={{ color: '#5B4FCF' }}>Sign in</button>
       </p>
     </motion.div>
   )
 }
 
 // ─────────────────────────────────────────────
-//  Sign In
+//  Sign In — email + password only.
+//  FIXED: only routes to onboarding if onboarding_complete is false.
+//  Never sends a returning user to the username step.
 // ─────────────────────────────────────────────
 function SignIn({ onToggle, onSuccess, t }) {
-  const [email,    setEmail]    = useState('')
-  const [password, setPassword] = useState('')
-  const [showPw,   setShowPw]   = useState(false)
-  const [errors,   setErrors]   = useState({})
-  const [loading,  setLoading]  = useState(false)
-  const [resetSent,setResetSent]= useState(false)
+  const [email,     setEmail]     = useState('')
+  const [password,  setPassword]  = useState('')
+  const [showPw,    setShowPw]    = useState(false)
+  const [errors,    setErrors]    = useState({})
+  const [loading,   setLoading]   = useState(false)
+  const [resetSent, setResetSent] = useState(false)
 
   const emailRe = /^[^\s@]+@[^\s@]+\.[^\s@]+$/
 
@@ -268,32 +319,45 @@ function SignIn({ onToggle, onSuccess, t }) {
     setLoading(true)
     const sb = createClient()
     if (!sb) { showToast('Supabase not configured'); setLoading(false); return }
+
     try {
       const { data, error } = await sb.auth.signInWithPassword({ email, password })
       if (error) throw error
 
       const user = data.user
-      // Check if onboarding is complete
-      const { data: profile } = await sb.from('profiles')
-        .select('onboarding_complete, username')
-        .eq('id', user.id).single()
 
-      // Write to localStorage
+      // Fetch profile to determine routing
+      const { data: profile } = await sb.from('profiles')
+        .select('onboarding_complete, username, companion_id, walk_stage')
+        .eq('id', user.id)
+        .maybeSingle()
+
+      // Write to localStorage for immediate use
       try {
         localStorage.setItem('dw_user', JSON.stringify({
-          id: user.id,
-          username: profile?.username || '',
-          email: user.email,
-          companionId: 'david',
-          joinedAt: new Date().toLocaleDateString('en-US',{month:'long',year:'numeric'}),
+          id:          user.id,
+          username:    profile?.username     || '',
+          email:       user.email,
+          companionId: profile?.companion_id || 'david',
+          walkStage:   profile?.walk_stage   || '',
+          joinedAt:    new Date().toLocaleDateString('en-US', { month: 'long', year: 'numeric' }),
         }))
+        // Mark onboarding complete in localStorage if it is in DB
+        if (profile?.onboarding_complete) {
+          localStorage.setItem('dw_onboarding_complete', 'true')
+        }
       } catch {}
 
-      const isNew = !profile?.onboarding_complete || !profile?.username
+      // FIXED: isNew only based on onboarding_complete, NOT username presence.
+      // A returning user who already chose their username should never hit the username screen again.
+      const isNew = !profile?.onboarding_complete
+
       onSuccess(user, isNew)
     } catch (e) {
-      if (e.message?.toLowerCase().includes('invalid login')) {
+      if (e.message?.toLowerCase().includes('invalid login') || e.message?.toLowerCase().includes('invalid credentials')) {
         setErrors({ password: 'Incorrect email or password' })
+      } else if (e.message?.toLowerCase().includes('email not confirmed')) {
+        setErrors({ email: 'Please confirm your email first — check your inbox' })
       } else {
         showToast(e.message || 'Sign in failed')
       }
@@ -311,48 +375,50 @@ function SignIn({ onToggle, onSuccess, t }) {
   }
 
   return (
-    <motion.div initial={{opacity:0,x:-20}} animate={{opacity:1,x:0}} exit={{opacity:0,x:20}}
+    <motion.div initial={{ opacity: 0, x: -20 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0, x: 20 }}
       className="flex flex-col gap-4">
+
       <div className="flex flex-col gap-1.5">
-        <label className="font-bold text-[13px]" style={{color:t.text}}>Email</label>
-        <input type="email" value={email} onChange={e=>{setEmail(e.target.value);setErrors({})}}
+        <label className="font-bold text-[13px]" style={{ color: t.text }}>Email</label>
+        <input type="email" value={email}
+          onChange={e => { setEmail(e.target.value); setErrors({}) }}
           placeholder="you@example.com" autoComplete="email"
           className="w-full px-4 py-3.5 rounded-[14px] border text-[15px] focus:outline-none"
-          style={{background:t.bgInput, color:t.text, borderColor:errors.email?'#EF4444':t.borderInput}}/>
-        {errors.email && <p className="text-[12px]" style={{color:'#EF4444'}}>{errors.email}</p>}
+          style={{ background: t.bgInput, color: t.text, borderColor: errors.email ? '#EF4444' : t.borderInput }} />
+        {errors.email && <p className="text-[12px]" style={{ color: '#EF4444' }}>{errors.email}</p>}
       </div>
 
       <div className="flex flex-col gap-1.5">
-        <label className="font-bold text-[13px]" style={{color:t.text}}>Password</label>
+        <label className="font-bold text-[13px]" style={{ color: t.text }}>Password</label>
         <div className="relative">
-          <input type={showPw?'text':'password'} value={password}
-            onChange={e=>{setPassword(e.target.value);setErrors({})}}
+          <input type={showPw ? 'text' : 'password'} value={password}
+            onChange={e => { setPassword(e.target.value); setErrors({}) }}
             placeholder="Your password" autoComplete="current-password"
             className="w-full px-4 py-3.5 pr-12 rounded-[14px] border text-[15px] focus:outline-none"
-            style={{background:t.bgInput, color:t.text, borderColor:errors.password?'#EF4444':t.borderInput}}/>
-          <button type="button" onClick={()=>setShowPw(v=>!v)}
+            style={{ background: t.bgInput, color: t.text, borderColor: errors.password ? '#EF4444' : t.borderInput }} />
+          <button type="button" onClick={() => setShowPw(v => !v)}
             className="absolute right-3 top-1/2 -translate-y-1/2 w-8 h-8 flex items-center justify-center"
-            style={{color:t.textMuted}}>
-            {showPw ? <EyeOff size={18}/> : <Eye size={18}/>}
+            style={{ color: t.textMuted }}>
+            {showPw ? <EyeOff size={18} /> : <Eye size={18} />}
           </button>
         </div>
-        {errors.password && <p className="text-[12px]" style={{color:'#EF4444'}}>{errors.password}</p>}
+        {errors.password && <p className="text-[12px]" style={{ color: '#EF4444' }}>{errors.password}</p>}
         {resetSent
-          ? <p className="text-[12px] font-semibold" style={{color:'#4A7C5F'}}>✓ Reset link sent</p>
+          ? <p className="text-[12px] font-semibold mt-1" style={{ color: '#4A7C5F' }}>✓ Reset link sent</p>
           : <button onClick={handleReset} className="text-left text-[12px] font-semibold underline mt-0.5"
-              style={{color:'#5B4FCF'}}>Forgot password?</button>
+              style={{ color: '#5B4FCF' }}>Forgot password?</button>
         }
       </div>
 
       <button onClick={submit} disabled={loading}
         className="w-full py-4 rounded-full text-white font-bold text-[15px] disabled:opacity-50 active:scale-[0.97] transition-all flex items-center justify-center gap-2"
-        style={{background:'linear-gradient(135deg,#5B4FCF,#3D3190)'}}>
-        {loading ? <><Loader2 size={18} className="animate-spin"/> Signing in…</> : 'Sign in →'}
+        style={{ background: 'linear-gradient(135deg,#5B4FCF,#3D3190)' }}>
+        {loading ? <><Loader2 size={18} className="animate-spin" /> Signing in…</> : 'Sign in →'}
       </button>
 
-      <p className="text-center text-[13px]" style={{color:t.textMuted}}>
+      <p className="text-center text-[13px]" style={{ color: t.textMuted }}>
         Don't have an account?{' '}
-        <button onClick={onToggle} className="font-bold underline" style={{color:'#5B4FCF'}}>Create one</button>
+        <button onClick={onToggle} className="font-bold underline" style={{ color: '#5B4FCF' }}>Create one</button>
       </p>
     </motion.div>
   )
@@ -384,65 +450,61 @@ function AuthPageInner() {
     plan:    'Sign in to save your reading plans.',
     default: '',
   }
-  const reason = searchParams.get('reason') || ''
+  const reason     = searchParams.get('reason') || ''
   const reasonCopy = REASON_COPY[reason] || ''
 
   return (
-    <div className="flex flex-col min-h-screen" style={{background:t.bg}}>
-      <ToastContainer/>
+    <div className="flex flex-col min-h-screen" style={{ background: t.bg }}>
+      <ToastContainer />
 
       {/* Back */}
       <div className="px-4 pt-6 flex-shrink-0">
-        <button onClick={()=>router.push(next)}
+        <button onClick={() => router.push(next)}
           className="w-9 h-9 rounded-full flex items-center justify-center"
-          style={{background:t.bgCard, boxShadow:t.shadow}}>
-          <ArrowLeft size={18} style={{color:t.text}}/>
+          style={{ background: t.bgCard, boxShadow: t.shadow }}>
+          <ArrowLeft size={18} style={{ color: t.text }} />
         </button>
       </div>
 
       {/* Logo + heading */}
       <div className="flex flex-col items-center pt-6 pb-8 px-6 flex-shrink-0">
         <div className="w-16 h-16 rounded-[20px] flex items-center justify-center mb-4"
-          style={{background:'linear-gradient(135deg,#5B4FCF,#3D3190)'}}>
-          <Flame size={32} className="text-white"/>
+          style={{ background: 'linear-gradient(135deg,#5B4FCF,#3D3190)' }}>
+          <Flame size={32} className="text-white" />
         </div>
-        <h1 className="font-display text-[26px] font-bold text-center" style={{color:t.text}}>
+        <h1 className="font-display text-[26px] font-bold text-center" style={{ color: t.text }}>
           {mode === 'signup' ? 'Create your account' : 'Welcome back'}
         </h1>
         {reasonCopy && (
-          <p className="text-[14px] text-center mt-2" style={{color:t.textMuted}}>{reasonCopy}</p>
+          <p className="text-[14px] text-center mt-2" style={{ color: t.textMuted }}>{reasonCopy}</p>
         )}
       </div>
 
       {/* Form card */}
-      <div className="flex-1 px-5 overflow-y-auto" style={{paddingBottom:40}}>
+      <div className="flex-1 px-5 overflow-y-auto" style={{ paddingBottom: 40 }}>
         <div className="rounded-[24px] p-5 flex flex-col gap-4"
-          style={{background:t.bgCard, boxShadow:t.shadowMd}}>
+          style={{ background: t.bgCard, boxShadow: t.shadowMd }}>
 
-          {/* Google — blurred / coming soon */}
-          <GoogleButton/>
+          <GoogleButton />
 
-          {/* Divider */}
           <div className="flex items-center gap-3">
-            <div className="flex-1 h-px" style={{background:t.border}}/>
-            <span className="text-[12px] font-semibold" style={{color:t.textFaint}}>or</span>
-            <div className="flex-1 h-px" style={{background:t.border}}/>
+            <div className="flex-1 h-px" style={{ background: t.border }} />
+            <span className="text-[12px] font-semibold" style={{ color: t.textFaint }}>or</span>
+            <div className="flex-1 h-px" style={{ background: t.border }} />
           </div>
 
-          {/* Email form */}
           <AnimatePresence mode="wait">
             {mode === 'signup'
-              ? <SignUp key="up" onToggle={()=>setMode('signin')} onSuccess={handleSuccess} t={t}/>
-              : <SignIn key="in" onToggle={()=>setMode('signup')} onSuccess={handleSuccess} t={t}/>
+              ? <SignUp key="up" onToggle={() => setMode('signin')} onSuccess={handleSuccess} t={t} />
+              : <SignIn key="in" onToggle={() => setMode('signup')} onSuccess={handleSuccess} t={t} />
             }
           </AnimatePresence>
         </div>
 
-        {/* Guest skip */}
         <div className="text-center py-6">
-          <button onClick={()=>router.push(next)}
+          <button onClick={() => router.push(next)}
             className="text-[13px] font-semibold underline underline-offset-2"
-            style={{color:t.textFaint}}>
+            style={{ color: t.textFaint }}>
             Continue without an account
           </button>
         </div>
@@ -453,8 +515,8 @@ function AuthPageInner() {
 
 export default function AuthPage() {
   return (
-    <Suspense fallback={<div style={{minHeight:'100dvh'}}/>}>
-      <AuthPageInner/>
+    <Suspense fallback={<div style={{ minHeight: '100dvh' }} />}>
+      <AuthPageInner />
     </Suspense>
   )
 }
