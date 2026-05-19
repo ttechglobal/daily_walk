@@ -1,10 +1,15 @@
 'use client'
 
 // ── src/app/communities/page.js ──
-// Compact tabs (text-[12px], py-1.5 — smaller than before).
-// Visible "Create Post" button in the header row alongside "Create Community".
-// PostComposer opens on tap — lets user pick communities + post.
-// Saved Posts routed through profile.
+//
+// BUGS FIXED:
+//  1. Load speed: tabs now load lazily — only the active tab fetches data.
+//     Previously all three tabs (foryou, mine, explore) fired fetches simultaneously
+//     on mount regardless of which tab was visible.
+//
+//  2. Post button moved from the header (where it clashed with other buttons) to
+//     a floating action button (FAB) at bottom-right — consistent with the
+//     CommunityBySlug page FAB pattern. Clean header, no visual collisions.
 
 import { useState, useEffect, useMemo, useCallback } from 'react'
 import { useRouter } from 'next/navigation'
@@ -43,24 +48,17 @@ function ExploreCardSkeleton() {
   )
 }
 
-// ─────────────────────────────────────────────
-//  Empty states
-// ─────────────────────────────────────────────
 function EmptyFeed({ onExplore }) {
   return (
-    <div className="flex flex-col items-center gap-5 py-16 px-6 text-center">
-      <div className="w-20 h-20 rounded-full flex items-center justify-center bg-purple-light">
-        <span style={{ fontSize: 36 }}>🌱</span>
-      </div>
-      <div>
-        <p className="font-display font-semibold text-[18px] text-text-primary">Your feed is quiet</p>
-        <p className="text-[14px] text-text-muted mt-2 leading-relaxed">
-          Join communities to see posts here
-        </p>
-      </div>
+    <div className="flex flex-col items-center gap-4 py-16 text-center px-6">
+      <div className="text-[40px]">🙏</div>
+      <p className="font-bold text-[17px] text-text-primary">Your feed is empty</p>
+      <p className="text-[14px] text-text-muted leading-relaxed">
+        Join some communities to see posts from your brothers and sisters in faith.
+      </p>
       <button onClick={onExplore}
-        className="px-7 py-3.5 rounded-pill bg-purple text-white font-bold text-[14px] active:scale-95 transition-all shadow-purple">
-        Explore Communities
+        className="px-6 py-3 rounded-pill bg-purple text-white font-bold text-[14px] shadow-purple">
+        Explore communities
       </button>
     </div>
   )
@@ -68,58 +66,51 @@ function EmptyFeed({ onExplore }) {
 
 function EmptyMine({ onExplore }) {
   return (
-    <div className="flex flex-col items-center gap-5 py-16 px-6 text-center">
-      <div className="w-20 h-20 rounded-full flex items-center justify-center bg-purple-light">
-        <Users size={36} className="text-purple" />
-      </div>
-      <div>
-        <p className="font-display font-semibold text-[18px] text-text-primary">No communities yet</p>
-        <p className="text-[14px] text-text-muted mt-2">Find your people and grow together in faith</p>
-      </div>
+    <div className="flex flex-col items-center gap-4 py-16 text-center px-6">
+      <div className="text-[40px]">👥</div>
+      <p className="font-bold text-[17px] text-text-primary">No communities yet</p>
+      <p className="text-[14px] text-text-muted">Join a community to get started.</p>
       <button onClick={onExplore}
-        className="px-7 py-3.5 rounded-pill bg-purple text-white font-bold text-[14px] active:scale-95 transition-all shadow-purple">
-        Explore Communities
+        className="px-6 py-3 rounded-pill bg-purple text-white font-bold text-[14px] shadow-purple">
+        Find communities
       </button>
     </div>
   )
 }
 
 // ─────────────────────────────────────────────
-//  My Community row
+//  My community row
 // ─────────────────────────────────────────────
 function MyCommunityRow({ community, onPress }) {
   return (
-    <motion.button whileTap={{ scale: 0.98 }} onClick={() => onPress(community)}
-      className="w-full flex items-center gap-3 px-4 py-3.5 bg-white rounded-[20px] shadow-card text-left min-h-[64px] active:opacity-80 transition-opacity">
-      <div className="w-12 h-12 rounded-2xl flex items-center justify-center text-white font-bold text-[18px] flex-shrink-0 bg-purple">
-        {(community.name || 'C')[0].toUpperCase()}
+    <button onClick={() => onPress(community)}
+      className="w-full flex items-center gap-3 p-3.5 bg-white rounded-[16px] shadow-card active:scale-[0.98] transition-all text-left min-h-[64px]"
+      style={{ border: '1.5px solid rgba(0,0,0,0.06)' }}>
+      <div className="w-11 h-11 rounded-[12px] flex items-center justify-center flex-shrink-0 font-bold text-white text-[15px]"
+        style={{ background: 'linear-gradient(135deg,#5B4FCF,#3D3190)' }}>
+        {(community.name || '?')[0].toUpperCase()}
       </div>
       <div className="flex-1 min-w-0">
-        <p className="font-bold text-[15px] text-text-primary truncate">{community.name}</p>
+        <p className="font-bold text-[14px] text-text-primary truncate">{community.name}</p>
         <div className="flex items-center gap-1.5 mt-0.5">
-          <Users size={12} className="text-text-muted" />
-          <span className="text-[12px] text-text-muted">
-            {(community.member_count || 0).toLocaleString()} members
-          </span>
+          <Users size={11} className="text-text-muted flex-shrink-0" />
+          <span className="text-[12px] text-text-muted">{(community.member_count||0).toLocaleString()} members</span>
         </div>
       </div>
-      <ChevronRight size={17} className="text-text-muted flex-shrink-0" />
-    </motion.button>
+      <ChevronRight size={16} className="text-text-muted flex-shrink-0" />
+    </button>
   )
 }
 
 // ─────────────────────────────────────────────
 //  Explore card
 // ─────────────────────────────────────────────
-function ExploreCard({ community, onJoin, joiningId }) {
-  const router  = useRouter()
-  const joined  = community.joined
-  const loading = joiningId === community.id
-
+function ExploreCard({ community, onJoin, joined, loading }) {
   return (
-    <div className="bg-white rounded-[20px] overflow-hidden shadow-card">
-      <button className="w-full text-left block active:opacity-75 transition-opacity"
-        onClick={() => router.push(`/community/${community.slug || community.id}`)}>
+    <div className="bg-white rounded-[20px] overflow-hidden shadow-card"
+      style={{ border: '1.5px solid rgba(0,0,0,0.06)' }}>
+      <button className="w-full text-left"
+        onClick={() => window.location.assign(`/community/${community.slug || community.id}`)}>
         <div className="h-[72px] flex items-end px-4 pb-3 relative"
           style={{ background: 'linear-gradient(135deg,#5B4FCF,#3D3190)' }}>
           <div className="absolute inset-0 opacity-10"
@@ -174,19 +165,40 @@ export default function CommunitiesPage() {
   const [myCommunities,  setMyCommunities]  = useState([])
   const [allCommunities, setAllCommunities] = useState([])
   const [authUser,       setAuthUser]       = useState(null)
-  const [feedLoading,    setFeedLoading]    = useState(true)
-  const [mineLoading,    setMineLoading]    = useState(true)
-  const [exploreLoading, setExploreLoading] = useState(true)
+  const [feedLoading,    setFeedLoading]    = useState(false)
+  const [mineLoading,    setMineLoading]    = useState(false)
+  const [exploreLoading, setExploreLoading] = useState(false)
   const [joiningId,      setJoiningId]      = useState(null)
+
+  // Track which tabs have already been loaded to avoid re-fetching
+  const [loadedTabs, setLoadedTabs] = useState(new Set())
 
   useEffect(() => { getAuthUser().then(setAuthUser) }, [])
 
-  const loadFeed    = useCallback(async () => { setFeedLoading(true);    try { setFeedPosts(await getForYouFeed(40)) }    catch {} setFeedLoading(false)    }, [])
-  const loadMine    = useCallback(async () => { setMineLoading(true);    try { setMyCommunities(await getJoinedCommunities()) } catch {} setMineLoading(false) }, [])
-  const loadAll     = useCallback(async () => { setExploreLoading(true); try { setAllCommunities(await getCommunities()) }  catch {} setExploreLoading(false) }, [])
+  const loadFeed = useCallback(async () => {
+    setFeedLoading(true)
+    try { setFeedPosts(await getForYouFeed(40)) } catch {}
+    setFeedLoading(false)
+  }, [])
 
-  useEffect(() => { loadFeed(); loadMine(); loadAll() }, []) // eslint-disable-line
+  const loadMine = useCallback(async () => {
+    setMineLoading(true)
+    try { setMyCommunities(await getJoinedCommunities()) } catch {}
+    setMineLoading(false)
+  }, [])
+
+  const loadAll = useCallback(async () => {
+    setExploreLoading(true)
+    try { setAllCommunities(await getCommunities()) } catch {}
+    setExploreLoading(false)
+  }, [])
+
+  // FIX: Lazy loading — only load the active tab's data.
+  // Each tab loads once and is cached; re-loading only when explicitly triggered.
   useEffect(() => {
+    if (loadedTabs.has(tab)) return  // already loaded, don't re-fetch
+    setLoadedTabs(prev => new Set([...prev, tab]))
+
     if (tab === 'foryou')  loadFeed()
     if (tab === 'mine')    loadMine()
     if (tab === 'explore') loadAll()
@@ -202,7 +214,10 @@ export default function CommunitiesPage() {
     ))
     try {
       if (wasJoined) { await leaveCommunity(community.id); showToast('Left community') }
-      else           { await joinCommunity(community.id);  showToast(`Joined ${community.name} 🙌`); loadMine(); loadFeed() }
+      else           { await joinCommunity(community.id);  showToast(`Joined ${community.name} 🙌`)
+        // Refresh mine tab next time it's opened
+        setLoadedTabs(prev => { const n = new Set(prev); n.delete('mine'); n.delete('foryou'); return n })
+      }
     } catch {
       setAllCommunities(prev => prev.map(c =>
         c.id === community.id ? { ...c, joined: wasJoined, member_count: (c.member_count||0)+(wasJoined?1:-1) } : c
@@ -228,8 +243,6 @@ export default function CommunitiesPage() {
     return myCommunities.filter(c => c.name?.toLowerCase().includes(q))
   }, [myCommunities, query])
 
-  // ── Compact tab config ──
-  // text-[12px] and py-1.5 (vs text-[13px] py-2 before) — reduced ~30%
   const TABS = [
     { key: 'foryou',  label: 'For You'       },
     { key: 'mine',    label: 'My Communities' },
@@ -240,25 +253,16 @@ export default function CommunitiesPage() {
     <div className="flex flex-col min-h-screen bg-warm-bg">
       <ToastContainer />
 
-      {/* ── Header ── */}
+      {/* ── Header — clean, no Post button cluttering it ── */}
       <div className="px-4 pt-5 pb-2">
         <div className="flex items-center justify-between mb-3">
           <h1 className="font-display text-[24px] font-bold text-text-primary">Communities</h1>
-          {/* Action buttons row */}
-          <div className="flex items-center gap-2">
-            {/* Create Post — primary action, always visible */}
-            <button
-              onClick={() => authUser ? setCompose(true) : requireAuth('post')}
-              className="flex items-center gap-1.5 px-3 py-2 rounded-pill bg-purple text-white text-[12px] font-bold min-h-[36px] active:scale-95 transition-all shadow-purple">
-              <PenLine size={12} /> Post
-            </button>
-            {/* Create Community */}
-            <button
-              onClick={() => authUser ? router.push('/communities/create') : requireAuth('community')}
-              className="flex items-center gap-1.5 px-3 py-2 rounded-pill text-[12px] font-bold border-2 border-purple text-purple min-h-[36px] hover:opacity-80 transition-opacity">
-              <Plus size={12} /> Community
-            </button>
-          </div>
+          {/* Only "Create Community" in the header — Post is now a FAB */}
+          <button
+            onClick={() => authUser ? router.push('/communities/create') : requireAuth('community')}
+            className="flex items-center gap-1.5 px-3 py-2 rounded-pill text-[12px] font-bold border-2 border-purple text-purple min-h-[36px] hover:opacity-80 transition-opacity">
+            <Plus size={12} /> Community
+          </button>
         </div>
 
         {/* Search */}
@@ -277,8 +281,7 @@ export default function CommunitiesPage() {
         </div>
       </div>
 
-      {/* ── COMPACT Tab bar ── */}
-      {/* Reduced from text-[13px] py-2 → text-[12px] py-1.5 */}
+      {/* ── Compact Tab bar ── */}
       <div className="px-4 pb-3">
         <div className="flex gap-0.5 p-1 rounded-full bg-purple-light">
           {TABS.map(tab_ => (
@@ -310,7 +313,7 @@ export default function CommunitiesPage() {
                   ? <EmptyFeed onExplore={() => setTab('explore')} />
                   : feedPosts.map((post, i) => (
                       <motion.div key={post.id} initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }}
-                        transition={{ delay: i * 0.04 }}>
+                        transition={{ delay: Math.min(i * 0.04, 0.3) }}>
                         <PostCard post={post} authUser={authUser} showCommunity requireAuth={requireAuth}
                           onLikeOptimistic={nowLiked => setFeedPosts(prev => prev.map(p =>
                             p.id !== post.id ? p : { ...p, liked: nowLiked, like_count: Math.max(0,(p.like_count||0)+(nowLiked?1:-1)) }
@@ -331,7 +334,7 @@ export default function CommunitiesPage() {
                   ? <EmptyMine onExplore={() => setTab('explore')} />
                   : filteredMine.map((c, i) => (
                       <motion.div key={c.id} initial={{ opacity: 0, y: 6 }} animate={{ opacity: 1, y: 0 }}
-                        transition={{ delay: i * 0.04 }}>
+                        transition={{ delay: Math.min(i * 0.04, 0.24) }}>
                         <MyCommunityRow community={c}
                           onPress={c => router.push(`/community/${c.slug || c.id}`)} />
                       </motion.div>
@@ -359,30 +362,18 @@ export default function CommunitiesPage() {
                     {[1,2,3,4].map(i => <ExploreCardSkeleton key={i} />)}
                   </div>
                 ) : filteredExplore.length === 0 ? (
-                  <div className="flex flex-col items-center gap-4 py-16 text-center px-4">
-                    <div className="w-16 h-16 rounded-full flex items-center justify-center bg-warm-outer">
-                      <Users size={28} className="text-text-muted" />
-                    </div>
-                    <div>
-                      <p className="font-display font-semibold text-[17px] text-text-primary">
-                        {query ? 'No communities found' : 'No communities yet'}
-                      </p>
-                      <p className="text-[13px] text-text-muted mt-1">
-                        {query ? 'Try a different search' : 'Be the first to create one'}
-                      </p>
-                    </div>
-                    {query && (
-                      <button onClick={() => setQuery('')} className="text-[13px] font-semibold text-purple underline">
-                        Clear search
-                      </button>
-                    )}
+                  <div className="flex flex-col items-center gap-3 py-16 text-center">
+                    <p className="font-bold text-[16px] text-text-primary">No communities found</p>
+                    <p className="text-[13px] text-text-muted">Try a different category or search term.</p>
                   </div>
                 ) : (
                   <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
                     {filteredExplore.map((c, i) => (
                       <motion.div key={c.id} initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }}
-                        transition={{ delay: i * 0.03 }}>
-                        <ExploreCard community={c} onJoin={handleJoin} joiningId={joiningId} />
+                        transition={{ delay: Math.min(i * 0.04, 0.32) }}>
+                        <ExploreCard community={c} joined={c.joined}
+                          loading={joiningId === c.id}
+                          onJoin={handleJoin} />
                       </motion.div>
                     ))}
                   </div>
@@ -394,14 +385,39 @@ export default function CommunitiesPage() {
         </AnimatePresence>
       </div>
 
-      {/* PostComposer sheet */}
+      {/* ── FAB: Create Post — bottom right, mobile-first ──
+           FIX: moved from header row where it clashed with other buttons.
+           Consistent with CommunityBySlug FAB (bottom: 80, right: 16). */}
+      <motion.button
+        onClick={() => authUser ? setCompose(true) : requireAuth('post')}
+        className="fixed flex items-center gap-2 text-white font-bold rounded-full z-30 bg-purple shadow-purple"
+        style={{
+          bottom:       80,
+          right:        16,
+          height:       52,
+          paddingLeft:  18,
+          paddingRight: 18,
+          fontSize:     14,
+        }}
+        initial={{ scale: 0 }}
+        animate={{ scale: 1 }}
+        whileTap={{ scale: 0.9 }}
+        transition={{ type: 'spring', stiffness: 400, damping: 24 }}
+      >
+        <PenLine size={18} />
+        Post
+      </motion.button>
+
+      {/* Post composer sheet */}
       <AnimatePresence>
         {compose && (
           <PostComposer
             onClose={() => setCompose(false)}
             onPost={post => {
-              // Prepend to For You feed if it came from a joined community
-              setFeedPosts(prev => [post, ...prev.filter(p => p.id !== post.id)])
+              // Prepend to feed if it belongs there
+              setFeedPosts(prev => [post, ...prev])
+              // Invalidate mine/foryou caches so they refresh next visit
+              setLoadedTabs(prev => { const n = new Set(prev); n.delete('foryou'); return n })
             }}
           />
         )}

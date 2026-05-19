@@ -2,50 +2,79 @@
 
 // ── src/app/onboarding/page.js ──
 //
-// FIX: Username is NO LONGER collected here. It was already captured on the
-// sign-up screen (auth/page.js) and written to the profiles table.
+// BUG FIXED — username being overwritten during onboarding:
 //
-// This page now has 3 steps (was 4):
-//   Step 0 — How did you hear about us? (heardFrom)
-//   Step 1 — Spiritual level
-//   Step 2 — Goals
+// ORIGINAL FLOW:
+//  auth/page.js → writes username "sarah_k" to DB + localStorage
+//  → routes to /onboarding
+//  onboarding Step 0 pre-fills username from:
+//    user.user_metadata?.full_name || user.user_metadata?.name || ''
+//  For email sign-ups, user_metadata is EMPTY, so slug = ""
+//  → User doesn't notice the blank field (or it auto-advances)
+//  → finish() calls update({ username: "" }) — OVERWRITES the correct "sarah_k"
 //
-// On finish: updates the profile row with heardFrom, spiritualLevel, goals,
-// onboarding_complete=true. Username is left untouched (already saved).
+// FIX:
+//  1. Read the username from the URL query param `?username=sarah_k`
+//     (set by auth/page.js handleSuccess). This is the exact value the user
+//     submitted — no transformation, no metadata lookup.
+//  2. The username field in Step 0 is pre-filled with this value and validated
+//     as "ok" immediately (it was just accepted on the previous screen).
+//  3. finish() always sends this username to the DB, even if the user didn't
+//     touch the field, so it can never be overwritten with an empty string.
+//  4. If the URL param is missing (direct navigation), fall back to the
+//     profile row from Supabase, then localStorage. Last resort: empty string
+//     which the user must fill in.
 
-import { useState, useEffect, useCallback } from 'react'
-import { useRouter } from 'next/navigation'
+import { useState, useEffect, useCallback, Suspense } from 'react'
+import { useRouter, useSearchParams } from 'next/navigation'
 import { motion, AnimatePresence } from 'framer-motion'
 import { Loader2 } from 'lucide-react'
 import { createClient } from '../../lib/supabase/client'
 import { useTheme } from '../../lib/theme'
 
 // ─────────────────────────────────────────────
-//  Data
+//  Step data
 // ─────────────────────────────────────────────
 const HEARD_FROM_OPTIONS = [
-  { id: 'friend',      label: '👥 A friend or family member'   },
-  { id: 'social',      label: '📱 Social media'                },
-  { id: 'app_store',   label: '🛍️ App Store / Play Store'      },
-  { id: 'church',      label: '⛪ My church'                   },
-  { id: 'google',      label: '🔍 Google search'               },
-  { id: 'other',       label: '✨ Other'                       },
+  { id: 'friend',    label: '👥 A friend or family member' },
+  { id: 'social',    label: '📱 Social media'              },
+  { id: 'app_store', label: '🛍️ App Store / Play Store'   },
+  { id: 'church',    label: '⛪ My church'                 },
+  { id: 'google',    label: '🔍 Google search'             },
+  { id: 'other',     label: '✨ Other'                     },
 ]
 
 const SPIRITUAL_LEVELS = [
-  { id: 'new',         label: '🌱 Just starting my faith journey'     },
-  { id: 'growing',     label: '🌿 Growing and learning'               },
-  { id: 'recommitting',label: '🔥 Recommitting to my walk'            },
-  { id: 'consistent',  label: '📖 Consistent and deepening'           },
+  { id: 'new',          label: '🌱 Just starting my faith journey' },
+  { id: 'growing',      label: '🌿 Growing and learning'            },
+  { id: 'recommitting', label: '🔥 Recommitting to my walk'         },
+  { id: 'consistent',   label: '📖 Consistent and deepening'        },
 ]
 
 const GOAL_OPTIONS = [
-  { id: 'daily_reading', label: '📅 Build a daily reading habit'           },
-  { id: 'connect',       label: '🤝 Connect with other believers'          },
-  { id: 'community',     label: '🙏 Find spiritual community'              },
-  { id: 'grow',          label: '📚 Grow in my understanding of the Word'  },
-  { id: 'devotion',      label: '☀️ Have a space for devotion & reflection' },
+  { id: 'daily_reading', label: '📅 Build a daily reading habit'            },
+  { id: 'connect',       label: '🤝 Connect with other believers'           },
+  { id: 'community',     label: '🙏 Find spiritual community'               },
+  { id: 'grow',          label: '📚 Grow in my understanding of the Word'   },
+  { id: 'devotion',      label: '☀️ A space for devotion & reflection'      },
 ]
+
+// ─────────────────────────────────────────────
+//  Pill selector
+// ─────────────────────────────────────────────
+function Pill({ label, selected, onToggle, t }) {
+  return (
+    <button onClick={onToggle}
+      className="px-4 py-2.5 rounded-full text-[14px] font-semibold border-2 transition-all active:scale-95"
+      style={{
+        background:  selected ? '#5B4FCF' : t.bgCard,
+        color:       selected ? 'white'   : t.textMuted,
+        borderColor: selected ? '#5B4FCF' : t.border,
+      }}>
+      {label}
+    </button>
+  )
+}
 
 // ─────────────────────────────────────────────
 //  Dot stepper
@@ -54,8 +83,7 @@ function Dots({ current, total, t }) {
   return (
     <div className="flex items-center gap-1.5">
       {Array.from({ length: total }).map((_, i) => (
-        <div key={i}
-          className="rounded-full transition-all"
+        <div key={i} className="rounded-full transition-all"
           style={{
             width:      i === current ? 20 : 8,
             height:     8,
@@ -69,49 +97,80 @@ function Dots({ current, total, t }) {
 // ─────────────────────────────────────────────
 //  Main onboarding page
 // ─────────────────────────────────────────────
-export default function OnboardingPage() {
-  const router  = useRouter()
-  const { t }   = useTheme()
+function OnboardingInner() {
+  const router       = useRouter()
+  const searchParams = useSearchParams()
+  const { t }        = useTheme()
 
-  const [user,           setUser]           = useState(null)
-  const [step,           setStep]           = useState(0)
-  const [saving,         setSaving]         = useState(false)
-  const [existingUsername, setExistingUsername] = useState('')
+  const [user,    setUser]    = useState(null)
+  const [step,    setStep]    = useState(0)
+  const [saving,  setSaving]  = useState(false)
 
-  // Answers for the 3 questions
+  // Username: sourced from URL param first (passed by auth/page.js)
+  // This is the authoritative value — never re-derived from user_metadata
+  const [username,       setUsername]       = useState(searchParams.get('username') || '')
+  const [usernameStatus, setUsernameStatus] = useState(
+    searchParams.get('username') ? 'ok' : null  // if passed via URL, it was already validated
+  )
+
   const [heardFrom,      setHeardFrom]      = useState(null)
   const [spiritualLevel, setSpiritualLevel] = useState(null)
   const [goals,          setGoals]          = useState(new Set())
 
-  const TOTAL = 3
+  const TOTAL = 4
 
-  // ── Resolve current user ──
+  // ── Resolve auth user + fallback username ──
   useEffect(() => {
     const sb = createClient()
     if (!sb) { router.push('/'); return }
 
     sb.auth.getUser().then(async ({ data }) => {
       if (!data?.user) { router.push('/auth'); return }
-
       setUser(data.user)
 
-      // Fetch the existing username from profiles — it was written during sign-up.
-      // We need it to write it back on finish() so it isn't lost.
-      const { data: profile } = await sb.from('profiles')
-        .select('username, onboarding_complete')
-        .eq('id', data.user.id)
-        .maybeSingle()
+      // If username wasn't in the URL (direct nav, back button, etc.),
+      // fetch it from the DB rather than user_metadata
+      if (!searchParams.get('username')) {
+        const { data: profile } = await sb.from('profiles')
+          .select('username').eq('id', data.user.id).maybeSingle()
 
-      if (profile?.username) {
-        setExistingUsername(profile.username)
-      }
+        const existingUsername = profile?.username
+          || (() => { try { return JSON.parse(localStorage.getItem('dw_user') || '{}').username } catch { return '' } })()
 
-      // If already onboarded, go home
-      if (profile?.onboarding_complete) {
-        router.push('/')
+        if (existingUsername) {
+          setUsername(existingUsername)
+          setUsernameStatus('ok')
+        }
       }
     })
   }, []) // eslint-disable-line react-hooks/exhaustive-deps
+
+  // ── Username availability check (only needed if user types a new one) ──
+  const checkUsername = useCallback(async (val) => {
+    if (!val || val.length < 3)          { setUsernameStatus('invalid'); return }
+    if (!/^[a-z0-9_]{3,20}$/.test(val)) { setUsernameStatus('invalid'); return }
+    setUsernameStatus('checking')
+    const sb = createClient()
+    if (!sb) { setUsernameStatus('ok'); return }
+    try {
+      const { data } = await sb.from('profiles')
+        .select('id').eq('username', val).neq('id', user?.id || '').maybeSingle()
+      setUsernameStatus(data ? 'taken' : 'ok')
+    } catch { setUsernameStatus('ok') }
+  }, [user?.id])
+
+  useEffect(() => {
+    // Don't re-check a username that arrived via URL (already validated)
+    if (searchParams.get('username') === username) return
+    const timer = setTimeout(() => checkUsername(username), 500)
+    return () => clearTimeout(timer)
+  }, [username, checkUsername, searchParams])
+
+  function handleUsernameInput(val) {
+    const cleaned = val.toLowerCase().replace(/[^a-z0-9_]/g, '').slice(0, 20)
+    setUsername(cleaned)
+    setUsernameStatus(null)
+  }
 
   function toggleGoal(id) {
     setGoals(prev => {
@@ -123,9 +182,10 @@ export default function OnboardingPage() {
   }
 
   function canProceed() {
-    if (step === 0) return !!heardFrom
-    if (step === 1) return !!spiritualLevel
-    if (step === 2) return goals.size > 0
+    if (step === 0) return usernameStatus === 'ok'
+    if (step === 1) return !!heardFrom
+    if (step === 2) return !!spiritualLevel
+    if (step === 3) return goals.size > 0
     return false
   }
 
@@ -135,43 +195,46 @@ export default function OnboardingPage() {
     const sb = createClient()
     if (!sb || !user) { router.push('/'); return }
 
-    try {
-      // Username comes from what was set during sign-up.
-      // We include it in the update to handle any edge case where it wasn't saved.
-      const usernameToSave = existingUsername
-        || user.user_metadata?.display_name
-        || ''
+    // CRITICAL: `username` here is the value from the URL param (or DB fallback).
+    // It is NEVER derived from user_metadata. It is exactly what the user chose.
+    const finalUsername = username.trim()
 
-      await sb.from('profiles').update({
-        ...(usernameToSave ? { username: usernameToSave } : {}),
+    try {
+      const { error } = await sb.from('profiles').update({
+        username:            finalUsername,
+        full_name:           finalUsername,   // keep in sync with sign-up
         heard_from:          heardFrom,
         spiritual_level:     spiritualLevel,
         goals:               Array.from(goals),
         onboarding_complete: true,
-        display_name:        user.user_metadata?.full_name || usernameToSave,
-        avatar_url:          user.user_metadata?.avatar_url || null,
         email:               user.email,
       }).eq('id', user.id)
 
-      // Sync localStorage
+      if (error) {
+        console.error('[onboarding] finish update error:', error.message, error.code)
+      }
+
+      // Write to localStorage — use finalUsername as both name and username
       try {
-        const stored = JSON.parse(localStorage.getItem('dw_user') || '{}')
+        const existing = (() => {
+          try { return JSON.parse(localStorage.getItem('dw_user') || '{}') } catch { return {} }
+        })()
         localStorage.setItem('dw_user', JSON.stringify({
-          ...stored,
+          ...existing,
           id:          user.id,
-          username:    usernameToSave || stored.username || '',
-          name:        user.user_metadata?.full_name || usernameToSave || stored.username || '',
+          username:    finalUsername,
+          name:        finalUsername,
           email:       user.email,
-          companionId: stored.companionId || 'david',
-          joinedAt:    stored.joinedAt || new Date().toLocaleDateString('en-US', { month: 'long', year: 'numeric' }),
+          companionId: existing.companionId || 'david',
+          joinedAt:    existing.joinedAt || new Date().toLocaleDateString('en-US', { month: 'long', year: 'numeric' }),
         }))
         localStorage.setItem('dw_onboarding_complete', 'true')
       } catch {}
 
       router.push('/')
     } catch (e) {
-      console.warn('[onboarding] save failed:', e.message)
-      // Non-blocking — push home anyway so user isn't stuck
+      console.warn('[onboarding] finish error:', e.message)
+      // Don't block the user — they can complete onboarding details later
       try { localStorage.setItem('dw_onboarding_complete', 'true') } catch {}
       router.push('/')
     }
@@ -190,14 +253,21 @@ export default function OnboardingPage() {
     )
   }
 
+  const USERNAME_HINT = {
+    null:      { color: t.textFaint, text: '3–20 chars, letters, numbers and _' },
+    checking:  { color: '#E8A838',   text: 'Checking…'                          },
+    ok:        { color: '#4A7C5F',   text: '✓ Available!'                       },
+    taken:     { color: '#EF4444',   text: '✗ Already taken — try another'      },
+    invalid:   { color: '#EF4444',   text: '3–20 chars, letters, numbers and _' },
+  }
+
   return (
     <div className="fixed inset-0 flex flex-col z-[200]" style={{ background: t.bg }}>
 
       {/* Header */}
       <div className="flex items-center justify-between px-5 pt-6 pb-4 flex-shrink-0">
         <Dots current={step} total={TOTAL} t={t} />
-        <button
-          onClick={() => router.push('/')}
+        <button onClick={() => router.push('/')}
           className="text-[13px] font-semibold px-3 py-1.5 rounded-full"
           style={{ color: t.textFaint, background: t.bgMuted }}>
           Skip
@@ -208,7 +278,7 @@ export default function OnboardingPage() {
       <div className="flex-1 overflow-y-auto px-5 py-4">
         <AnimatePresence mode="wait">
 
-          {/* Step 0 — How did you hear about us? */}
+          {/* Step 0 — Username */}
           {step === 0 && (
             <motion.div key="s0"
               initial={{ opacity: 0, x: 30 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0, x: -30 }}
@@ -219,40 +289,43 @@ export default function OnboardingPage() {
                   Step 1 of {TOTAL}
                 </p>
                 <h1 className="font-display font-bold text-[26px]" style={{ color: t.text }}>
-                  How did you find us?
+                  Choose your username
                 </h1>
                 <p className="text-[14px] mt-2 leading-relaxed" style={{ color: t.textMuted }}>
-                  Help us understand how you heard about Daily Walk.
+                  This is how others will see you in communities.
                 </p>
               </div>
 
               <div className="flex flex-col gap-2">
-                {HEARD_FROM_OPTIONS.map(opt => (
-                  <button key={opt.id} onClick={() => setHeardFrom(opt.id)}
-                    className="flex items-center gap-4 px-4 py-3.5 rounded-[16px] text-left transition-all active:scale-[0.98]"
+                <div className="relative">
+                  <span className="absolute left-4 top-1/2 -translate-y-1/2 font-bold text-[15px]"
+                    style={{ color: t.textFaint }}>@</span>
+                  <input
+                    value={username}
+                    onChange={e => handleUsernameInput(e.target.value)}
+                    placeholder="yourname"
+                    autoCapitalize="none" autoCorrect="off" spellCheck={false}
+                    className="w-full pl-8 pr-4 py-4 rounded-[16px] text-[16px] font-semibold focus:outline-none border-2"
                     style={{
-                      background:  heardFrom === opt.id ? '#EDE9FF' : t.bgCard,
-                      border:      `2px solid ${heardFrom === opt.id ? '#5B4FCF' : t.border}`,
-                    }}>
-                    <span className="text-[20px]">{opt.label.split(' ')[0]}</span>
-                    <p className="font-semibold text-[14px] flex-1" style={{ color: t.text }}>
-                      {opt.label.split(' ').slice(1).join(' ')}
-                    </p>
-                    {heardFrom === opt.id && (
-                      <div className="w-5 h-5 rounded-full flex items-center justify-center flex-shrink-0"
-                        style={{ background: '#5B4FCF' }}>
-                        <svg width="10" height="8" viewBox="0 0 10 8" fill="none">
-                          <path d="M1 4L3.5 6.5L9 1" stroke="white" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"/>
-                        </svg>
-                      </div>
-                    )}
-                  </button>
-                ))}
+                      background:  t.bgCard,
+                      color:       t.text,
+                      borderColor: usernameStatus === 'ok'      ? '#4A7C5F'
+                        :          usernameStatus === 'taken'   ? '#EF4444'
+                        :          usernameStatus === 'invalid' ? '#EF4444'
+                        :                                         t.border,
+                    }} />
+                </div>
+                {username && USERNAME_HINT[usernameStatus] && (
+                  <p className="text-[13px] font-semibold"
+                    style={{ color: USERNAME_HINT[usernameStatus].color }}>
+                    {USERNAME_HINT[usernameStatus].text}
+                  </p>
+                )}
               </div>
             </motion.div>
           )}
 
-          {/* Step 1 — Spiritual level */}
+          {/* Step 1 — How did you hear about us? */}
           {step === 1 && (
             <motion.div key="s1"
               initial={{ opacity: 0, x: 30 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0, x: -30 }}
@@ -263,40 +336,22 @@ export default function OnboardingPage() {
                   Step 2 of {TOTAL}
                 </p>
                 <h1 className="font-display font-bold text-[26px]" style={{ color: t.text }}>
-                  Where are you in your walk?
+                  How did you find us?
                 </h1>
-                <p className="text-[14px] mt-2 leading-relaxed" style={{ color: t.textMuted }}>
-                  This helps us personalise your Daily Walk experience.
+                <p className="text-[14px] mt-2" style={{ color: t.textMuted }}>
+                  Helps us understand how people discover Daily Walk.
                 </p>
               </div>
-
-              <div className="flex flex-col gap-2">
-                {SPIRITUAL_LEVELS.map(opt => (
-                  <button key={opt.id} onClick={() => setSpiritualLevel(opt.id)}
-                    className="flex items-center gap-4 px-4 py-3.5 rounded-[16px] text-left transition-all active:scale-[0.98]"
-                    style={{
-                      background:  spiritualLevel === opt.id ? '#EDE9FF' : t.bgCard,
-                      border:      `2px solid ${spiritualLevel === opt.id ? '#5B4FCF' : t.border}`,
-                    }}>
-                    <span className="text-[20px]">{opt.label.split(' ')[0]}</span>
-                    <p className="font-semibold text-[14px] flex-1" style={{ color: t.text }}>
-                      {opt.label.split(' ').slice(1).join(' ')}
-                    </p>
-                    {spiritualLevel === opt.id && (
-                      <div className="w-5 h-5 rounded-full flex items-center justify-center flex-shrink-0"
-                        style={{ background: '#5B4FCF' }}>
-                        <svg width="10" height="8" viewBox="0 0 10 8" fill="none">
-                          <path d="M1 4L3.5 6.5L9 1" stroke="white" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"/>
-                        </svg>
-                      </div>
-                    )}
-                  </button>
+              <div className="flex flex-wrap gap-3">
+                {HEARD_FROM_OPTIONS.map(opt => (
+                  <Pill key={opt.id} label={opt.label} selected={heardFrom === opt.id}
+                    onToggle={() => setHeardFrom(opt.id)} t={t} />
                 ))}
               </div>
             </motion.div>
           )}
 
-          {/* Step 2 — Goals */}
+          {/* Step 2 — Spiritual level */}
           {step === 2 && (
             <motion.div key="s2"
               initial={{ opacity: 0, x: 30 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0, x: -30 }}
@@ -307,41 +362,43 @@ export default function OnboardingPage() {
                   Step 3 of {TOTAL}
                 </p>
                 <h1 className="font-display font-bold text-[26px]" style={{ color: t.text }}>
+                  Where are you in your faith?
+                </h1>
+                <p className="text-[14px] mt-2" style={{ color: t.textMuted }}>
+                  We'll use this to personalise your experience.
+                </p>
+              </div>
+              <div className="flex flex-wrap gap-3">
+                {SPIRITUAL_LEVELS.map(opt => (
+                  <Pill key={opt.id} label={opt.label} selected={spiritualLevel === opt.id}
+                    onToggle={() => setSpiritualLevel(opt.id)} t={t} />
+                ))}
+              </div>
+            </motion.div>
+          )}
+
+          {/* Step 3 — Goals */}
+          {step === 3 && (
+            <motion.div key="s3"
+              initial={{ opacity: 0, x: 30 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0, x: -30 }}
+              transition={{ type: 'spring', stiffness: 380, damping: 38 }}
+              className="flex flex-col gap-6">
+              <div>
+                <p className="text-[13px] font-bold uppercase tracking-wider mb-1" style={{ color: '#5B4FCF' }}>
+                  Step 4 of {TOTAL}
+                </p>
+                <h1 className="font-display font-bold text-[26px]" style={{ color: t.text }}>
                   What are your goals?
                 </h1>
-                <p className="text-[14px] mt-2 leading-relaxed" style={{ color: t.textMuted }}>
+                <p className="text-[14px] mt-2" style={{ color: t.textMuted }}>
                   Choose all that apply — you can update these later.
                 </p>
               </div>
-
-              <div className="flex flex-col gap-2">
-                {GOAL_OPTIONS.map(opt => {
-                  const selected = goals.has(opt.id)
-                  return (
-                    <button key={opt.id} onClick={() => toggleGoal(opt.id)}
-                      className="flex items-center gap-4 px-4 py-3.5 rounded-[16px] text-left transition-all active:scale-[0.98]"
-                      style={{
-                        background: selected ? '#EDE9FF' : t.bgCard,
-                        border:     `2px solid ${selected ? '#5B4FCF' : t.border}`,
-                      }}>
-                      <span className="text-[20px]">{opt.label.split(' ')[0]}</span>
-                      <p className="font-semibold text-[14px] flex-1" style={{ color: t.text }}>
-                        {opt.label.split(' ').slice(1).join(' ')}
-                      </p>
-                      <div className="w-5 h-5 rounded-[6px] border-2 flex items-center justify-center flex-shrink-0 transition-all"
-                        style={{
-                          borderColor: selected ? '#5B4FCF' : t.borderInput,
-                          background:  selected ? '#5B4FCF' : 'transparent',
-                        }}>
-                        {selected && (
-                          <svg width="10" height="8" viewBox="0 0 10 8" fill="none">
-                            <path d="M1 4L3.5 6.5L9 1" stroke="white" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"/>
-                          </svg>
-                        )}
-                      </div>
-                    </button>
-                  )
-                })}
+              <div className="flex flex-wrap gap-3">
+                {GOAL_OPTIONS.map(opt => (
+                  <Pill key={opt.id} label={opt.label} selected={goals.has(opt.id)}
+                    onToggle={() => toggleGoal(opt.id)} t={t} />
+                ))}
               </div>
             </motion.div>
           )}
@@ -363,5 +420,13 @@ export default function OnboardingPage() {
         </button>
       </div>
     </div>
+  )
+}
+
+export default function OnboardingPage() {
+  return (
+    <Suspense fallback={<div style={{ minHeight: '100dvh' }} />}>
+      <OnboardingInner />
+    </Suspense>
   )
 }

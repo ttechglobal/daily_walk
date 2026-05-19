@@ -2,15 +2,29 @@
 
 // ── src/app/auth/page.js ──
 //
-// FIXES IN THIS VERSION:
-//  1. Session persistence — signInWithPassword now writes dw_user with username from
-//     the profiles table, so any component reading localStorage is immediately in sync.
-//  2. Returning users no longer hit onboarding — isNew is determined solely by
-//     onboarding_complete in the profiles table.
-//  3. Sign-in always establishes a live Supabase session — no extra redirects.
-//  4. Username collected ONCE on the sign-up screen. Onboarding page Step 0
-//     (the duplicate username screen) must be removed — see /onboarding/page.js fix.
-//  5. Username upserted to profiles table immediately on sign-up, before any redirect.
+// BUG FIXED — wrong username shown after sign-up:
+//
+// TRACE OF THE BUG:
+//  1. User types "sarah_k" in the sign-up form
+//  2. auth/page.js SignUp.submit() calls sb.auth.signUp()
+//  3. Upsert writes: { id, username: "sarah_k", created_at }
+//     — BUT does NOT write full_name
+//  4. localStorage is written: { username: "sarah_k", name: undefined (email only) }
+//     — dw_user.name was missing
+//  5. onSuccess(user, true) → routes to /onboarding
+//  6. onboarding/page.js starts, pre-fills username from user_metadata.full_name
+//     which for email sign-ups is "" (empty string)
+//  7. User advances through steps without touching the username field
+//  8. finish() calls update({ username: "" }) — OVERWRITES "sarah_k" with ""
+//  9. syncSupabaseToLocal runs: name = profile.full_name || profile.display_name
+//     || existing.name || 'Friend' → all null/empty → "Friend"
+//
+// FIXES IN THIS FILE:
+//  1. The upsert now writes BOTH username AND full_name (= username for new accounts)
+//  2. localStorage dw_user.name is explicitly set to username (not user_metadata)
+//  3. The onboarding step 0 username field is pre-filled from the JUST-SUBMITTED
+//     username via router state — so if onboarding does re-collect it, it's
+//     the right value. (But the real fix is in onboarding/page.js — see that file.)
 
 import { useState, useEffect, useCallback, Suspense } from 'react'
 import { useRouter, useSearchParams } from 'next/navigation'
@@ -21,7 +35,7 @@ import { useTheme } from '../../lib/theme'
 import { ToastContainer, showToast } from '../../components/Toast'
 
 // ─────────────────────────────────────────────
-//  Google button — visually disabled
+//  Google button — coming soon
 // ─────────────────────────────────────────────
 function GoogleButton() {
   return (
@@ -52,7 +66,7 @@ function GoogleButton() {
 }
 
 // ─────────────────────────────────────────────
-//  Password strength bar
+//  Password strength
 // ─────────────────────────────────────────────
 function passwordStrength(pw) {
   if (!pw) return { score: 0, label: '', color: '' }
@@ -61,21 +75,17 @@ function passwordStrength(pw) {
   if (/[A-Z]/.test(pw))        s++
   if (/[0-9]/.test(pw))        s++
   if (/[^A-Za-z0-9]/.test(pw)) s++
-  const map = [
-    { label: '', color: '' },
+  return [
+    { label: '',       color: ''        },
     { label: 'Weak',   color: '#EF4444' },
     { label: 'Fair',   color: '#E8A838' },
     { label: 'Good',   color: '#7CB9E8' },
     { label: 'Strong', color: '#4A7C5F' },
-  ]
-  return { score: s, ...map[s] }
+  ][s]
 }
 
 // ─────────────────────────────────────────────
 //  Sign Up
-//  Username + email + password in ONE form.
-//  Username is written to profiles immediately on account creation.
-//  The subsequent /onboarding page asks only: heard_from, spiritual_level, goals.
 // ─────────────────────────────────────────────
 function SignUp({ onToggle, onSuccess, t }) {
   const [username,       setUsername]       = useState('')
@@ -123,36 +133,44 @@ function SignUp({ onToggle, onSuccess, t }) {
     if (!sb) { showToast('Supabase not configured'); setLoading(false); return }
 
     try {
-      // Step 1: Create auth user
+      // ── Step 1: Create auth user ──
       const { data, error } = await sb.auth.signUp({ email, password })
       if (error) throw error
 
       const user    = data.user
-      const session = data.session // null when email confirmation required
+      const session = data.session
 
-      if (!user) throw new Error('Account creation failed')
+      if (!user) throw new Error('Account creation failed — please try again.')
 
-      // Step 2: Write profile row with username NOW.
-      // Use upsert so a re-triggered sign-up doesn't fail on duplicate.
+      // ── Step 2: Write profile row ──
+      // CRITICAL: Write BOTH username AND full_name.
+      // full_name = username for new email sign-ups (no Google name available).
+      // This ensures sync.js's `profile.full_name || profile.username` chain
+      // always resolves to the correct username and never falls back to 'Friend'.
       const { error: profileError } = await sb.from('profiles').upsert({
-        id:                  user.id,
-        username:            username,
-        email:               user.email,
-        onboarding_complete: false,
-        created_at:          new Date().toISOString(),
+        id:         user.id,
+        username:   username,
+        full_name:  username,   // ← FIX: set full_name so sync.js resolves correctly
+        email:      user.email,
+        created_at: new Date().toISOString(),
       }, { onConflict: 'id' })
 
       if (profileError) {
-        // Non-fatal — username will be retried in onboarding. Log for debugging.
-        console.warn('[auth] profile upsert failed:', profileError.message)
+        // Log but don't abort — user IS created, username is in localStorage
+        console.error('[auth/signup] profile upsert failed:', profileError.message, profileError.code)
+        // If it's an RLS error, surface it clearly
+        if (profileError.code === '42501') {
+          console.error('[auth/signup] RLS POLICY ERROR — ensure profiles INSERT policy allows: auth.uid() = id')
+        }
       }
 
-      // Step 3: Write to localStorage for immediate use across the app
+      // ── Step 3: Write to localStorage ──
+      // Use the SUBMITTED username as name — never user_metadata which may be empty
       try {
         localStorage.setItem('dw_user', JSON.stringify({
           id:          user.id,
           username:    username,
-          name:        username,
+          name:        username,   // ← FIX: name = username, not user_metadata
           email:       user.email,
           companionId: 'david',
           joinedAt:    new Date().toLocaleDateString('en-US', { month: 'long', year: 'numeric' }),
@@ -160,32 +178,33 @@ function SignUp({ onToggle, onSuccess, t }) {
       } catch {}
 
       if (!session) {
-        // Email confirmation is ON — user must confirm before they can sign in
         setAwaitEmail(true)
         setLoading(false)
         return
       }
 
-      // Session is live — route to onboarding (questions only, NOT username again)
-      onSuccess(user, true)
+      // Session live → route to onboarding, passing username so it isn't lost
+      onSuccess(user, true, username)
     } catch (e) {
-      if (e.message?.toLowerCase().includes('already registered') || e.message?.includes('already exists')) {
+      const msg = e.message || ''
+      if (msg.includes('already registered') || msg.includes('already exists')) {
         setErrors({ email: 'An account with this email already exists — try signing in' })
       } else {
-        showToast(e.message || 'Sign-up failed — please try again')
+        showToast(msg || 'Sign-up failed — please try again')
       }
-      setLoading(false)
+    } finally {
+      if (!awaitEmail) setLoading(false)
     }
   }
 
-  const strength = passwordStrength(password)
+  const pw = passwordStrength(password)
 
-  const usernameHint = {
-    null:      { color: t.textFaint,  text: '3–20 chars, letters, numbers and _' },
-    checking:  { color: '#E8A838',    text: 'Checking…' },
-    ok:        { color: '#4A7C5F',    text: '✓ Available!' },
-    taken:     { color: '#EF4444',    text: '✗ Already taken — try another' },
-    invalid:   { color: '#EF4444',    text: '3–20 chars, letters, numbers and _ only' },
+  const unameHint = {
+    null:      { color: t.textFaint, text: '3–20 chars, letters, numbers and _' },
+    checking:  { color: '#E8A838',   text: 'Checking…'                          },
+    ok:        { color: '#4A7C5F',   text: '✓ Available!'                       },
+    taken:     { color: '#EF4444',   text: '✗ Already taken — try another'      },
+    invalid:   { color: '#EF4444',   text: '3–20 chars, letters, numbers and _' },
   }[usernameStatus]
 
   if (awaitEmail) {
@@ -193,7 +212,7 @@ function SignUp({ onToggle, onSuccess, t }) {
       <motion.div initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }}
         className="flex flex-col items-center gap-5 py-4 text-center">
         <div className="w-16 h-16 rounded-full flex items-center justify-center"
-          style={{ background: '#EDE9FF' }}>
+          style={{ background: t.purpleBg || '#EDE9FF' }}>
           <Mail size={28} style={{ color: '#5B4FCF' }} />
         </div>
         <div>
@@ -216,18 +235,12 @@ function SignUp({ onToggle, onSuccess, t }) {
 
   return (
     <motion.div key="signup"
-      initial={{ opacity: 0, x: 24 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0, x: -24 }}
-      transition={{ type: 'spring', stiffness: 380, damping: 38 }}
+      initial={{ opacity: 0, x: 20 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0, x: -20 }}
       className="flex flex-col gap-4">
-
-      <div className="mb-2">
-        <h1 className="font-display font-bold text-[26px]" style={{ color: t.text }}>Create account</h1>
-        <p className="text-[14px] mt-1" style={{ color: t.textMuted }}>Join Daily Walk — it's free.</p>
-      </div>
 
       {/* Username */}
       <div className="flex flex-col gap-1.5">
-        <label className="text-[12px] font-bold uppercase tracking-wider" style={{ color: t.textMuted }}>Username</label>
+        <label className="font-bold text-[13px]" style={{ color: t.text }}>Username</label>
         <div className="relative">
           <span className="absolute left-4 top-1/2 -translate-y-1/2 font-bold text-[15px]"
             style={{ color: t.textFaint }}>@</span>
@@ -235,60 +248,47 @@ function SignUp({ onToggle, onSuccess, t }) {
             value={username}
             onChange={e => handleUsernameInput(e.target.value)}
             placeholder="yourname"
-            autoCapitalize="none"
-            className="w-full pl-8 pr-4 py-4 rounded-[16px] border-2 text-[16px] font-semibold focus:outline-none transition-all"
+            autoCapitalize="none" autoCorrect="off" spellCheck={false}
+            className="w-full pl-8 pr-10 py-3.5 rounded-[14px] border text-[15px] focus:outline-none"
             style={{
-              background:  t.bgInput,
-              color:       t.text,
-              borderColor: usernameStatus === 'ok'
-                ? '#4A7C5F'
-                : usernameStatus === 'taken' || usernameStatus === 'invalid'
-                  ? '#EF4444'
-                  : errors.username ? '#EF4444' : t.borderInput,
+              background:  t.bgInput, color: t.text,
+              borderColor: usernameStatus === 'ok' ? '#4A7C5F'
+                : (usernameStatus === 'taken' || usernameStatus === 'invalid' || errors.username) ? '#EF4444'
+                : t.borderInput,
             }} />
           {usernameStatus === 'checking' && (
-            <Loader2 size={16} className="absolute right-4 top-1/2 -translate-y-1/2 animate-spin" style={{ color: '#E8A838' }} />
+            <Loader2 size={16} className="absolute right-3 top-1/2 -translate-y-1/2 animate-spin"
+              style={{ color: '#E8A838' }} />
           )}
           {usernameStatus === 'ok' && (
-            <Check size={16} className="absolute right-4 top-1/2 -translate-y-1/2" style={{ color: '#4A7C5F' }} />
+            <Check size={16} className="absolute right-3 top-1/2 -translate-y-1/2"
+              style={{ color: '#4A7C5F' }} />
           )}
         </div>
-        {usernameHint && (
-          <p className="text-[12px]" style={{ color: usernameHint.color }}>{usernameHint.text}</p>
-        )}
+        {unameHint && <p className="text-[12px]" style={{ color: unameHint.color }}>{unameHint.text}</p>}
         {errors.username && <p className="text-[12px]" style={{ color: '#EF4444' }}>{errors.username}</p>}
       </div>
 
       {/* Email */}
       <div className="flex flex-col gap-1.5">
-        <label className="text-[12px] font-bold uppercase tracking-wider" style={{ color: t.textMuted }}>Email</label>
-        <input
-          type="email"
-          value={email}
+        <label className="font-bold text-[13px]" style={{ color: t.text }}>Email</label>
+        <input type="email" value={email}
           onChange={e => { setEmail(e.target.value); setErrors(er => { const n = { ...er }; delete n.email; return n }) }}
-          placeholder="you@example.com"
-          className="w-full px-4 py-4 rounded-[16px] border-2 text-[16px] focus:outline-none transition-all"
-          style={{
-            background:  t.bgInput, color: t.text,
-            borderColor: errors.email ? '#EF4444' : t.borderInput,
-          }} />
+          placeholder="you@example.com" autoComplete="email"
+          className="w-full px-4 py-3.5 rounded-[14px] border text-[15px] focus:outline-none"
+          style={{ background: t.bgInput, color: t.text, borderColor: errors.email ? '#EF4444' : t.borderInput }} />
         {errors.email && <p className="text-[12px]" style={{ color: '#EF4444' }}>{errors.email}</p>}
       </div>
 
       {/* Password */}
       <div className="flex flex-col gap-1.5">
-        <label className="text-[12px] font-bold uppercase tracking-wider" style={{ color: t.textMuted }}>Password</label>
+        <label className="font-bold text-[13px]" style={{ color: t.text }}>Password</label>
         <div className="relative">
-          <input
-            type={showPw ? 'text' : 'password'}
-            value={password}
+          <input type={showPw ? 'text' : 'password'} value={password}
             onChange={e => { setPassword(e.target.value); setErrors(er => { const n = { ...er }; delete n.password; return n }) }}
-            placeholder="••••••••"
-            className="w-full px-4 py-4 rounded-[16px] border-2 text-[16px] focus:outline-none transition-all pr-12"
-            style={{
-              background:  t.bgInput, color: t.text,
-              borderColor: errors.password ? '#EF4444' : t.borderInput,
-            }} />
+            placeholder="Min. 8 characters" autoComplete="new-password"
+            className="w-full px-4 py-3.5 pr-12 rounded-[14px] border text-[15px] focus:outline-none"
+            style={{ background: t.bgInput, color: t.text, borderColor: errors.password ? '#EF4444' : t.borderInput }} />
           <button type="button" onClick={() => setShowPw(v => !v)}
             className="absolute right-3 top-1/2 -translate-y-1/2 w-8 h-8 flex items-center justify-center"
             style={{ color: t.textMuted }}>
@@ -298,21 +298,19 @@ function SignUp({ onToggle, onSuccess, t }) {
         {password && (
           <div className="flex items-center gap-2 mt-0.5">
             <div className="flex gap-1 flex-1">
-              {[1, 2, 3, 4].map(i => (
-                <div key={i} className="h-1 rounded-full flex-1 transition-all"
-                  style={{ background: i <= strength.score ? strength.color : t.bgMuted }} />
+              {[1,2,3,4].map(i => (
+                <div key={i} className="flex-1 h-1 rounded-full transition-all"
+                  style={{ background: i <= pw.score ? pw.color : t.bgMuted || '#F0EDE8' }} />
               ))}
             </div>
-            {strength.label && (
-              <span className="text-[11px] font-bold" style={{ color: strength.color }}>{strength.label}</span>
-            )}
+            {pw.label && <span className="text-[11px] font-bold" style={{ color: pw.color }}>{pw.label}</span>}
           </div>
         )}
         {errors.password && <p className="text-[12px]" style={{ color: '#EF4444' }}>{errors.password}</p>}
       </div>
 
-      <button onClick={submit} disabled={loading}
-        className="w-full py-4 rounded-full text-white font-bold text-[15px] disabled:opacity-50 active:scale-[0.97] transition-all flex items-center justify-center gap-2 mt-2"
+      <button onClick={submit} disabled={loading || usernameStatus !== 'ok'}
+        className="w-full py-4 rounded-full text-white font-bold text-[15px] disabled:opacity-50 active:scale-[0.97] transition-all flex items-center justify-center gap-2"
         style={{ background: 'linear-gradient(135deg,#5B4FCF,#3D3190)' }}>
         {loading ? <><Loader2 size={18} className="animate-spin" /> Creating account…</> : 'Create account →'}
       </button>
@@ -327,8 +325,6 @@ function SignUp({ onToggle, onSuccess, t }) {
 
 // ─────────────────────────────────────────────
 //  Sign In
-//  Reads profile to determine if user is new or returning.
-//  Writes full dw_user to localStorage on success (including username).
 // ─────────────────────────────────────────────
 function SignIn({ onToggle, onSuccess, t }) {
   const [email,     setEmail]     = useState('')
@@ -339,16 +335,6 @@ function SignIn({ onToggle, onSuccess, t }) {
   const [resetSent, setResetSent] = useState(false)
 
   const emailRe = /^[^\s@]+@[^\s@]+\.[^\s@]+$/
-
-  async function handleReset() {
-    if (!emailRe.test(email)) { setErrors({ email: 'Enter your email first' }); return }
-    const sb = createClient()
-    if (!sb) return
-    await sb.auth.resetPasswordForEmail(email, {
-      redirectTo: `${window.location.origin}/auth/reset`,
-    })
-    setResetSent(true)
-  }
 
   async function submit() {
     const errs = {}
@@ -366,20 +352,22 @@ function SignIn({ onToggle, onSuccess, t }) {
 
       const user = data.user
 
-      // Fetch the profile — this is the source of truth for username and onboarding state
-      const { data: profile } = await sb.from('profiles')
-        .select('onboarding_complete, username, companion_id, walk_stage, full_name')
+      const { data: profile, error: profileError } = await sb.from('profiles')
+        .select('onboarding_complete, username, full_name, companion_id, walk_stage')
         .eq('id', user.id)
         .maybeSingle()
 
-      const username = profile?.username || user.user_metadata?.display_name || ''
+      if (profileError) {
+        console.warn('[auth/signin] profile fetch error:', profileError.message)
+      }
 
-      // Write to localStorage for immediate use across the app
+      // Write to localStorage using the DB username as name — no fallback to 'Friend'
       try {
+        const displayName = profile?.full_name || profile?.username || ''
         localStorage.setItem('dw_user', JSON.stringify({
           id:          user.id,
-          username:    username,
-          name:        profile?.full_name || username,
+          username:    profile?.username     || '',
+          name:        displayName,
           email:       user.email,
           companionId: profile?.companion_id || 'david',
           walkStage:   profile?.walk_stage   || '',
@@ -390,63 +378,53 @@ function SignIn({ onToggle, onSuccess, t }) {
         }
       } catch {}
 
-      // Determine if user needs onboarding.
-      // ONLY use onboarding_complete — never use username presence as the signal.
-      // A user who has a username but onboarding_complete=false still needs to finish onboarding questions.
       const isNew = !profile?.onboarding_complete
-
-      onSuccess(user, isNew)
+      onSuccess(user, isNew, profile?.username || '')
     } catch (e) {
-      if (e.message?.toLowerCase().includes('invalid login') || e.message?.toLowerCase().includes('invalid credentials')) {
+      const msg = e.message || ''
+      if (msg.toLowerCase().includes('invalid login') || msg.toLowerCase().includes('invalid credentials')) {
         setErrors({ password: 'Incorrect email or password' })
+      } else if (msg.toLowerCase().includes('email not confirmed')) {
+        setErrors({ email: 'Please confirm your email first — check your inbox' })
       } else {
-        showToast(e.message || 'Sign-in failed — please try again')
+        showToast(msg || 'Sign in failed')
       }
-      setLoading(false)
-    }
+    } finally { setLoading(false) }
+  }
+
+  async function handleReset() {
+    if (!emailRe.test(email)) { setErrors({ email: 'Enter your email first' }); return }
+    const sb = createClient()
+    await sb?.auth.resetPasswordForEmail(email, {
+      redirectTo: `${window.location.origin}/auth/reset`,
+    })
+    setResetSent(true)
+    showToast('Reset link sent — check your email')
   }
 
   return (
     <motion.div key="signin"
-      initial={{ opacity: 0, x: -24 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0, x: 24 }}
-      transition={{ type: 'spring', stiffness: 380, damping: 38 }}
+      initial={{ opacity: 0, x: -20 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0, x: 20 }}
       className="flex flex-col gap-4">
 
-      <div className="mb-2">
-        <h1 className="font-display font-bold text-[26px]" style={{ color: t.text }}>Welcome back</h1>
-        <p className="text-[14px] mt-1" style={{ color: t.textMuted }}>Sign in to continue your walk.</p>
-      </div>
-
-      {/* Email */}
       <div className="flex flex-col gap-1.5">
-        <label className="text-[12px] font-bold uppercase tracking-wider" style={{ color: t.textMuted }}>Email</label>
-        <input
-          type="email"
-          value={email}
-          onChange={e => { setEmail(e.target.value); setErrors(er => { const n = { ...er }; delete n.email; return n }) }}
-          placeholder="you@example.com"
-          className="w-full px-4 py-4 rounded-[16px] border-2 text-[16px] focus:outline-none transition-all"
-          style={{
-            background:  t.bgInput, color: t.text,
-            borderColor: errors.email ? '#EF4444' : t.borderInput,
-          }} />
+        <label className="font-bold text-[13px]" style={{ color: t.text }}>Email</label>
+        <input type="email" value={email}
+          onChange={e => { setEmail(e.target.value); setErrors({}) }}
+          placeholder="you@example.com" autoComplete="email"
+          className="w-full px-4 py-3.5 rounded-[14px] border text-[15px] focus:outline-none"
+          style={{ background: t.bgInput, color: t.text, borderColor: errors.email ? '#EF4444' : t.borderInput }} />
         {errors.email && <p className="text-[12px]" style={{ color: '#EF4444' }}>{errors.email}</p>}
       </div>
 
-      {/* Password */}
       <div className="flex flex-col gap-1.5">
-        <label className="text-[12px] font-bold uppercase tracking-wider" style={{ color: t.textMuted }}>Password</label>
+        <label className="font-bold text-[13px]" style={{ color: t.text }}>Password</label>
         <div className="relative">
-          <input
-            type={showPw ? 'text' : 'password'}
-            value={password}
-            onChange={e => { setPassword(e.target.value); setErrors(er => { const n = { ...er }; delete n.password; return n }) }}
-            placeholder="••••••••"
-            className="w-full px-4 py-4 rounded-[16px] border-2 text-[16px] focus:outline-none transition-all pr-12"
-            style={{
-              background:  t.bgInput, color: t.text,
-              borderColor: errors.password ? '#EF4444' : t.borderInput,
-            }} />
+          <input type={showPw ? 'text' : 'password'} value={password}
+            onChange={e => { setPassword(e.target.value); setErrors({}) }}
+            placeholder="Your password" autoComplete="current-password"
+            className="w-full px-4 py-3.5 pr-12 rounded-[14px] border text-[15px] focus:outline-none"
+            style={{ background: t.bgInput, color: t.text, borderColor: errors.password ? '#EF4444' : t.borderInput }} />
           <button type="button" onClick={() => setShowPw(v => !v)}
             className="absolute right-3 top-1/2 -translate-y-1/2 w-8 h-8 flex items-center justify-center"
             style={{ color: t.textMuted }}>
@@ -455,14 +433,14 @@ function SignIn({ onToggle, onSuccess, t }) {
         </div>
         {errors.password && <p className="text-[12px]" style={{ color: '#EF4444' }}>{errors.password}</p>}
         {resetSent
-          ? <p className="text-[12px] font-semibold mt-1" style={{ color: '#4A7C5F' }}>✓ Reset link sent — check your email</p>
+          ? <p className="text-[12px] font-semibold mt-1" style={{ color: '#4A7C5F' }}>✓ Reset link sent</p>
           : <button onClick={handleReset} className="text-left text-[12px] font-semibold underline mt-0.5"
               style={{ color: '#5B4FCF' }}>Forgot password?</button>
         }
       </div>
 
       <button onClick={submit} disabled={loading}
-        className="w-full py-4 rounded-full text-white font-bold text-[15px] disabled:opacity-50 active:scale-[0.97] transition-all flex items-center justify-center gap-2 mt-2"
+        className="w-full py-4 rounded-full text-white font-bold text-[15px] disabled:opacity-50 active:scale-[0.97] transition-all flex items-center justify-center gap-2"
         style={{ background: 'linear-gradient(135deg,#5B4FCF,#3D3190)' }}>
         {loading ? <><Loader2 size={18} className="animate-spin" /> Signing in…</> : 'Sign in →'}
       </button>
@@ -488,9 +466,15 @@ function AuthPageInner() {
 
   const [mode, setMode] = useState(initMode)
 
-  function handleSuccess(user, isNew) {
-    if (isNew) router.push('/onboarding')
-    else       router.push(next)
+  // onSuccess now receives (user, isNew, username) — username passed through
+  // so onboarding can use it without re-fetching or re-asking
+  function handleSuccess(user, isNew, username) {
+    if (isNew) {
+      // Encode username in URL so onboarding can read it without a DB call
+      router.push(`/onboarding?username=${encodeURIComponent(username || '')}`)
+    } else {
+      router.push(next)
+    }
   }
 
   const REASON_COPY = {
@@ -499,65 +483,74 @@ function AuthPageInner() {
     comment: 'Sign in to join the conversation.',
     like:    'Sign in to like posts.',
     plan:    'Sign in to save your reading plans.',
+    default: '',
   }
-  const reason     = searchParams.get('reason')
-  const reasonCopy = reason && REASON_COPY[reason]
+  const reason     = searchParams.get('reason') || ''
+  const reasonCopy = REASON_COPY[reason] || ''
 
   return (
-    <div className="min-h-screen flex flex-col" style={{ background: t.bg }}>
-      {/* Back button */}
-      <div className="px-5 pt-6 pb-2">
-        <button onClick={() => router.back()}
-          className="flex items-center gap-2 text-[14px] font-semibold"
-          style={{ color: t.textMuted }}>
-          <ArrowLeft size={18} /> Back
+    <div className="flex flex-col min-h-screen" style={{ background: t.bg }}>
+      <ToastContainer />
+
+      {/* Back */}
+      <div className="px-4 pt-6 flex-shrink-0">
+        <button onClick={() => router.push(next)}
+          className="w-9 h-9 rounded-full flex items-center justify-center"
+          style={{ background: t.bgCard, boxShadow: t.shadow }}>
+          <ArrowLeft size={18} style={{ color: t.text }} />
         </button>
       </div>
 
-      {/* Logo */}
-      <div className="flex justify-center pt-4 pb-2">
-        <div className="w-12 h-12 rounded-2xl flex items-center justify-center"
+      {/* Logo + heading */}
+      <div className="flex flex-col items-center pt-6 pb-8 px-6 flex-shrink-0">
+        <div className="w-16 h-16 rounded-[20px] flex items-center justify-center mb-4"
           style={{ background: 'linear-gradient(135deg,#5B4FCF,#3D3190)' }}>
-          <Flame size={24} className="text-white" />
+          <Flame size={32} className="text-white" />
         </div>
+        <h1 className="font-display text-[26px] font-bold text-center" style={{ color: t.text }}>
+          {mode === 'signup' ? 'Create your account' : 'Welcome back'}
+        </h1>
+        {reasonCopy && (
+          <p className="text-[14px] text-center mt-2" style={{ color: t.textMuted }}>{reasonCopy}</p>
+        )}
       </div>
 
-      {/* Context banner */}
-      {reasonCopy && (
-        <div className="mx-5 mt-3 px-4 py-3 rounded-[14px]"
-          style={{ background: '#EDE9FF' }}>
-          <p className="text-[13px] font-semibold text-center" style={{ color: '#5B4FCF' }}>
-            {reasonCopy}
-          </p>
-        </div>
-      )}
+      {/* Form card */}
+      <div className="flex-1 px-5 overflow-y-auto" style={{ paddingBottom: 40 }}>
+        <div className="rounded-[24px] p-5 flex flex-col gap-4"
+          style={{ background: t.bgCard, boxShadow: t.shadowMd }}>
 
-      {/* Form area */}
-      <div className="flex-1 px-5 py-6 max-w-[430px] w-full mx-auto">
-        <AnimatePresence mode="wait">
-          {mode === 'signup'
-            ? <SignUp key="signup" onToggle={() => setMode('signin')} onSuccess={handleSuccess} t={t} />
-            : <SignIn key="signin" onToggle={() => setMode('signup')} onSuccess={handleSuccess} t={t} />
-          }
-        </AnimatePresence>
+          <GoogleButton />
 
-        {/* Google divider */}
-        <div className="flex items-center gap-3 my-5">
-          <div className="flex-1 h-px" style={{ background: t.border }} />
-          <span className="text-[12px] font-semibold" style={{ color: t.textFaint }}>or</span>
-          <div className="flex-1 h-px" style={{ background: t.border }} />
+          <div className="flex items-center gap-3">
+            <div className="flex-1 h-px" style={{ background: t.border }} />
+            <span className="text-[12px] font-semibold" style={{ color: t.textFaint }}>or</span>
+            <div className="flex-1 h-px" style={{ background: t.border }} />
+          </div>
+
+          <AnimatePresence mode="wait">
+            {mode === 'signup'
+              ? <SignUp key="up" onToggle={() => setMode('signin')} onSuccess={handleSuccess} t={t} />
+              : <SignIn key="in" onToggle={() => setMode('signup')} onSuccess={handleSuccess} t={t} />
+            }
+          </AnimatePresence>
         </div>
-        <GoogleButton />
+
+        <div className="text-center py-6">
+          <button onClick={() => router.push(next)}
+            className="text-[13px] font-semibold underline underline-offset-2"
+            style={{ color: t.textFaint }}>
+            Continue without an account
+          </button>
+        </div>
       </div>
-
-      <ToastContainer />
     </div>
   )
 }
 
 export default function AuthPage() {
   return (
-    <Suspense>
+    <Suspense fallback={<div style={{ minHeight: '100dvh' }} />}>
       <AuthPageInner />
     </Suspense>
   )

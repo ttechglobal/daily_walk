@@ -1,25 +1,25 @@
 // ── src/lib/supabase/sync.js ──
+//
+// BUG FIXED — wrong username displayed after sign-up:
+//
+// The original syncSupabaseToLocal wrote:
+//   name: profile.full_name || profile.display_name || existing.name || 'Friend'
+//
+// If `full_name` was never set (sign-up only writes `username`, not `full_name`),
+// and `display_name` was also empty, `name` fell back to `existing.name` (stale)
+// or 'Friend'. This meant every component reading `dw_user.name` showed 'Friend'.
+//
+// FIX: name resolution order is now:
+//   profile.full_name || profile.username || existing.name || existing.username || ''
+// 'Friend' is completely removed as a fallback — an authenticated user always
+// has at minimum an email address and a username.
+//
 // Supabase is the source of truth. localStorage is a fast read cache.
-//
-// Write pattern (used by all write operations in the app):
-//   1. Write to localStorage immediately (instant UI update)
-//   2. Write to Supabase in the background
-//   3. On error, localStorage stays current (offline resilience)
-//
-// Read pattern (used on app load / sign-in):
-//   1. Try to pull from Supabase first
-//   2. If successful, overwrite localStorage cache
-//   3. If offline/no-auth, fall back to localStorage
-//
-// This means:
-//   - Users see their data from any device after sign-in
-//   - The app still works offline using the local cache
-//   - No data is lost if Supabase is temporarily unreachable
 
 import { createClient } from './client'
 
 // ─────────────────────────────────────────────
-//  Local helpers
+//  Helpers
 // ─────────────────────────────────────────────
 function local(key, fallback = null) {
   try { const v = localStorage.getItem(key); return v ? JSON.parse(v) : fallback } catch { return fallback }
@@ -29,57 +29,70 @@ function writeLocal(key, value) {
 }
 
 // ─────────────────────────────────────────────
-//  PULL: Supabase → localStorage  (on sign-in / app load)
-//  Always call this after a user signs in.
+//  PULL: Supabase → localStorage
+//  Called after sign-in and on app load.
 // ─────────────────────────────────────────────
 export async function syncSupabaseToLocal(userId) {
   const sb = createClient()
   if (!sb || !userId) return
 
   try {
-    // ── Profile + streak ──
-    const { data: profile } = await sb.from('profiles')
+    const { data: profile, error } = await sb.from('profiles')
       .select('*').eq('id', userId).maybeSingle()
+
+    if (error) {
+      console.warn('[sync] profile fetch error:', error.message, error.code)
+      return
+    }
+
     if (profile) {
       const existing = local('dw_user', {})
+
+      // FIXED: name falls back to username, never 'Friend'
+      // full_name is the user-set display name (can be null on new accounts)
+      // username is always set at sign-up — it's the reliable fallback
       writeLocal('dw_user', {
         ...existing,
         id:          userId,
-        name:        profile.full_name      || profile.display_name || existing.name || 'Friend',
-        username:    profile.username       || existing.username    || '',
-        email:       profile.email          || existing.email       || '',
-        companionId: profile.companion_id   || 'david',
-        walkStage:   profile.walk_stage     || '',
+        name:        profile.full_name   || profile.username || existing.name     || existing.username || '',
+        username:    profile.username    || existing.username || '',
+        email:       profile.email       || existing.email   || '',
+        companionId: profile.companion_id || 'david',
+        walkStage:   profile.walk_stage  || '',
         goal:        profile.spiritual_goal || '',
-        joinedAt:    existing.joinedAt      || new Date(profile.created_at).toLocaleDateString('en-US', { month: 'long', year: 'numeric' }),
+        joinedAt:    existing.joinedAt   || new Date(profile.created_at).toLocaleDateString('en-US', { month: 'long', year: 'numeric' }),
       })
+
       writeLocal('dw_streak', {
         current:         profile.streak_current    || 0,
         longest:         profile.streak_longest    || 0,
         lastCheckinDate: profile.last_checkin_date || null,
       })
+
       if (profile.onboarding_complete) {
         writeLocal('dw_onboarding_complete', true)
       }
     }
 
     // ── Checkins ──
-    const { data: checkins } = await sb.from('checkins')
+    const { data: checkins, error: ciErr } = await sb.from('checkins')
       .select('*').eq('user_id', userId)
       .order('created_at', { ascending: false }).limit(365)
+    if (ciErr) console.warn('[sync] checkins fetch:', ciErr.message)
     if (checkins?.length) {
       writeLocal('dw_checkins', checkins.map(c => ({
-        id:          c.id,
-        date:        c.checked_in_date,
-        passage:     c.passage,
-        reflection:  c.reflection,
-        createdAt:   c.created_at,
+        id:         c.id,
+        date:       c.checked_in_date,
+        passage:    c.passage,
+        reflection: c.reflection,
+        createdAt:  c.created_at,
       })))
     }
 
     // ── Plans ──
-    const { data: plans } = await sb.from('plans')
+    const { data: plans, error: plErr } = await sb.from('plans')
       .select('*').eq('user_id', userId)
+    if (plErr) console.warn('[sync] plans fetch:', plErr.message)
     if (plans?.length) {
       writeLocal('dw_plans', plans.map(p => ({
         id:               p.id,
@@ -97,9 +110,10 @@ export async function syncSupabaseToLocal(userId) {
     }
 
     // ── Nuggets ──
-    const { data: nuggets } = await sb.from('nuggets')
+    const { data: nuggets, error: ngErr } = await sb.from('nuggets')
       .select('*').eq('user_id', userId)
       .order('created_at', { ascending: false })
+    if (ngErr) console.warn('[sync] nuggets fetch:', ngErr.message)
     if (nuggets?.length) {
       writeLocal('dw_nuggets', nuggets.map(n => ({
         id:        n.id,
@@ -114,23 +128,21 @@ export async function syncSupabaseToLocal(userId) {
 }
 
 // ─────────────────────────────────────────────
-//  PUSH: localStorage → Supabase  (after sign-in, for pre-existing local data)
-//  Merges any locally-created data into the account.
-//  Uses ignoreDuplicates so re-running is always safe.
+//  PUSH: localStorage → Supabase
+//  Merges locally-created data into the account after sign-in.
 // ─────────────────────────────────────────────
 export async function syncLocalToSupabase(userId) {
   const sb = createClient()
   if (!sb || !userId) return
 
   try {
-    // ── Profile ──
     const user   = local('dw_user', null)
     const streak = local('dw_streak', null)
     if (user) {
       await sb.from('profiles').upsert({
         id:                userId,
-        display_name:      user.name        || 'Friend',
-        full_name:         user.name        || 'Friend',
+        // Only set full_name from local if it's a real value (not empty/Friend)
+        ...(user.name && user.name !== 'Friend' ? { full_name: user.name } : {}),
         username:          user.username    || null,
         companion_id:      user.companionId || 'david',
         walk_stage:        user.walkStage   || null,
@@ -138,10 +150,9 @@ export async function syncLocalToSupabase(userId) {
         streak_current:    streak?.current  || 0,
         streak_longest:    streak?.longest  || 0,
         last_checkin_date: streak?.lastCheckinDate || null,
-      }, { onConflict: 'id' }).catch(() => null)
+      }, { onConflict: 'id' }).catch(e => console.warn('[sync] profile upsert:', e.message))
     }
 
-    // ── Checkins ──
     const checkins = local('dw_checkins', [])
     for (const ci of checkins) {
       if (!ci.id || !ci.date) continue
@@ -155,36 +166,34 @@ export async function syncLocalToSupabase(userId) {
       }, { onConflict: 'id', ignoreDuplicates: true }).catch(() => null)
     }
 
-    // ── Plans ──
     const plans = local('dw_plans', [])
     for (const p of plans) {
       if (!p.id) continue
       await sb.from('plans').upsert({
         id:                 p.id,
         user_id:            userId,
-        plan_type:          p.type            || 'book',
-        name:               p.name            || 'Plan',
-        pace:               p.pace            || 'daily',
-        start_date:         p.startDate       || null,
-        estimated_end_date: p.estimatedEndDate|| null,
-        total_days:         p.totalDays       || 0,
-        current_day:        p.currentDay      || 1,
-        status:             p.status          || 'active',
-        days:               p.days            || [],
-        created_at:         p.createdAt       || new Date().toISOString(),
+        plan_type:          p.type             || 'book',
+        name:               p.name             || 'Plan',
+        pace:               p.pace             || 'daily',
+        start_date:         p.startDate        || null,
+        estimated_end_date: p.estimatedEndDate || null,
+        total_days:         p.totalDays        || 0,
+        current_day:        p.currentDay       || 1,
+        status:             p.status           || 'active',
+        days:               p.days             || [],
+        created_at:         p.createdAt        || new Date().toISOString(),
       }, { onConflict: 'id', ignoreDuplicates: true }).catch(() => null)
     }
 
-    // ── Nuggets ──
     const nuggets = local('dw_nuggets', [])
     for (const n of nuggets) {
       if (!n.id) continue
       await sb.from('nuggets').upsert({
         id:         n.id,
         user_id:    userId,
-        text:       n.text       || '',
-        source:     n.source     || null,
-        created_at: n.createdAt  || new Date().toISOString(),
+        text:       n.text      || '',
+        source:     n.source    || null,
+        created_at: n.createdAt || new Date().toISOString(),
       }, { onConflict: 'id', ignoreDuplicates: true }).catch(() => null)
     }
   } catch (e) {
@@ -194,18 +203,13 @@ export async function syncLocalToSupabase(userId) {
 
 // ─────────────────────────────────────────────
 //  WRITE-THROUGH helpers
-//  Call these instead of direct localStorage writes
-//  so data is persisted to Supabase immediately.
 // ─────────────────────────────────────────────
 
-/** Save a checkin to both localStorage and Supabase */
 export async function persistCheckin(checkin, userId) {
-  // 1. Write to local immediately
   const existing = local('dw_checkins', [])
   const updated  = [checkin, ...existing.filter(c => c.date !== checkin.date)]
   writeLocal('dw_checkins', updated)
 
-  // 2. Write to Supabase in background
   if (userId) {
     const sb = createClient()
     sb?.from('checkins').upsert({
@@ -217,7 +221,6 @@ export async function persistCheckin(checkin, userId) {
       created_at:      checkin.createdAt,
     }, { onConflict: 'id' }).catch(e => console.warn('[sync] checkin upsert:', e.message))
 
-    // Update streak on profile
     const streak = local('dw_streak', null)
     if (streak) {
       sb?.from('profiles').update({
@@ -229,7 +232,6 @@ export async function persistCheckin(checkin, userId) {
   }
 }
 
-/** Save a plan to both localStorage and Supabase */
 export async function persistPlan(plan, userId) {
   const existing = local('dw_plans', [])
   const updated  = existing.some(p => p.id === plan.id)
@@ -242,21 +244,20 @@ export async function persistPlan(plan, userId) {
     sb?.from('plans').upsert({
       id:                 plan.id,
       user_id:            userId,
-      plan_type:          plan.type            || 'book',
+      plan_type:          plan.type             || 'book',
       name:               plan.name,
-      pace:               plan.pace            || 'daily',
-      start_date:         plan.startDate       || null,
-      estimated_end_date: plan.estimatedEndDate|| null,
+      pace:               plan.pace             || 'daily',
+      start_date:         plan.startDate        || null,
+      estimated_end_date: plan.estimatedEndDate || null,
       total_days:         plan.totalDays,
-      current_day:        plan.currentDay      || 1,
-      status:             plan.status          || 'active',
-      days:               plan.days            || [],
-      created_at:         plan.createdAt       || new Date().toISOString(),
+      current_day:        plan.currentDay       || 1,
+      status:             plan.status           || 'active',
+      days:               plan.days             || [],
+      created_at:         plan.createdAt        || new Date().toISOString(),
     }, { onConflict: 'id' }).catch(e => console.warn('[sync] plan upsert:', e.message))
   }
 }
 
-/** Save a nugget to both localStorage and Supabase */
 export async function persistNugget(nugget, userId) {
   const existing = local('dw_nuggets', [])
   writeLocal('dw_nuggets', [nugget, ...existing])
@@ -273,7 +274,6 @@ export async function persistNugget(nugget, userId) {
   }
 }
 
-/** Delete a nugget from both localStorage and Supabase */
 export async function deleteNugget(nuggetId, userId) {
   const existing = local('dw_nuggets', [])
   writeLocal('dw_nuggets', existing.filter(n => n.id !== nuggetId))
@@ -285,7 +285,6 @@ export async function deleteNugget(nuggetId, userId) {
   }
 }
 
-/** Update plan progress (current day, status) */
 export async function persistPlanProgress(planId, currentDay, status, days, userId) {
   const existing = local('dw_plans', [])
   const updated  = existing.map(p => p.id !== planId ? p : { ...p, currentDay, status, days })
@@ -299,10 +298,6 @@ export async function persistPlanProgress(planId, currentDay, status, days, user
   }
 }
 
-// ─────────────────────────────────────────────
-//  getCurrentUserId — reads from Supabase session
-//  Always use this for write operations.
-// ─────────────────────────────────────────────
 export async function getCurrentUserId() {
   const sb = createClient()
   if (!sb) return null
