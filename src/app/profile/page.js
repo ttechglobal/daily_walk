@@ -1,7 +1,6 @@
 'use client'
 
 import { useState, useEffect } from 'react'
-import { useRouter } from 'next/navigation'
 import { motion, AnimatePresence } from 'framer-motion'
 import {
   Flame, Info, Shield, LogOut, ChevronRight,
@@ -305,16 +304,22 @@ function ProfileView({ authUser, lsUser, streak, checkins, onSignOut }) {
   const [profile,     setProfile]     = useState(null)
   const [companionId, setCompanionId] = useState(lsUser?.companionId || 'david')
 
-  // Fetch live profile — authoritative source for username
   useEffect(() => {
     if (!authUser?.id) return
     const sb = createClient()
     if (!sb) return
+
+    // Use ONLY columns that exist in the actual profiles table:
+    // joined_at (not created_at), display_name exists alongside full_name
     sb.from('profiles')
-      .select('username, full_name, avatar_url, companion_id, spiritual_goal, created_at')
+      .select('username, full_name, display_name, avatar_url, companion_id, spiritual_goal, joined_at')
       .eq('id', authUser.id)
       .maybeSingle()
-      .then(({ data }) => {
+      .then(({ data, error }) => {
+        if (error) {
+          console.error('[ProfileView] profile fetch error:', error.message, error.code)
+          return
+        }
         if (data) {
           setProfile(data)
           setCompanionId(data.companion_id || lsUser?.companionId || 'david')
@@ -323,19 +328,36 @@ function ProfileView({ authUser, lsUser, streak, checkins, onSignOut }) {
             localStorage.setItem('dw_user', JSON.stringify({
               ...stored,
               id:       authUser.id,
-              username: data.username  || stored.username || '',
-              name:     data.full_name || data.username   || stored.name || '',
-              email:    authUser.email || stored.email    || '',
+              username: data.username    || stored.username || '',
+              name:     data.full_name   || data.display_name || data.username || stored.name || '',
+              email:    authUser.email   || stored.email    || '',
             }))
           } catch {}
         }
       })
-      .catch(() => null)
+      .catch(e => console.error('[ProfileView] profile fetch exception:', e.message))
   }, [authUser?.id]) // eslint-disable-line
 
   const companion   = getCharacterById(companionId)
-  const displayName = profile?.username || profile?.full_name || lsUser?.username || lsUser?.name || authUser?.email?.split('@')[0] || ''
-  const joinedAt    = lsUser?.joinedAt || (profile?.created_at ? new Date(profile.created_at).toLocaleDateString('en-US', { month: 'long', year: 'numeric' }) : 'today')
+
+  // Display name: full_name → display_name → username → email prefix
+  const displayName = (
+    profile?.full_name    ||
+    profile?.display_name ||
+    profile?.username     ||
+    lsUser?.username      ||
+    lsUser?.name          ||
+    authUser?.email?.split('@')[0] ||
+    ''
+  )
+
+  // joined_at is the correct column name (not created_at)
+  const joinedAt = lsUser?.joinedAt || (
+    profile?.joined_at
+      ? new Date(profile.joined_at).toLocaleDateString('en-US', { month: 'long', year: 'numeric' })
+      : 'today'
+  )
+
   const ini = initials(displayName || 'U')
   const bg  = avatarColor(displayName || 'User')
 
@@ -343,7 +365,9 @@ function ProfileView({ authUser, lsUser, streak, checkins, onSignOut }) {
     setCompanionId(id); setPickerOpen(false)
     showToast(`${getCharacterById(id).name} is your companion now 🙌`)
     const sb = createClient()
-    if (sb && authUser?.id) sb.from('profiles').update({ companion_id: id }).eq('id', authUser.id).catch(() => null)
+    if (sb && authUser?.id) {
+      sb.from('profiles').update({ companion_id: id }).eq('id', authUser.id).catch(() => null)
+    }
     try {
       const s = JSON.parse(localStorage.getItem('dw_user') || '{}')
       localStorage.setItem('dw_user', JSON.stringify({ ...s, companionId: id }))
@@ -367,9 +391,7 @@ function ProfileView({ authUser, lsUser, streak, checkins, onSignOut }) {
           {ini}
         </div>
         <div className="text-center">
-          <h1 className="font-display text-[22px] font-bold text-white">
-            {displayName || '…'}
-          </h1>
+          <h1 className="font-display text-[22px] font-bold text-white">{displayName || '…'}</h1>
           <div className="mt-1"><EditUsername /></div>
           <p className="text-white/60 text-[13px] mt-1">Member since {joinedAt}</p>
         </div>
@@ -406,13 +428,14 @@ function ProfileView({ authUser, lsUser, streak, checkins, onSignOut }) {
         </div>
       </div>
 
-      {/* Tab content */}
+      {/* Content */}
       <div className="flex-1 pb-24">
         <AnimatePresence mode="wait">
 
           {mainTab === 'profile' && (
             <motion.div key="profile" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
               transition={{ duration: 0.15 }} className="px-4 mt-4 flex flex-col gap-4">
+
               {(profile?.spiritual_goal || lsUser?.goal) && (
                 <div className="bg-white rounded-[16px] p-4 shadow-card">
                   <p className="text-[11px] font-bold uppercase tracking-widest text-text-muted mb-1">Spiritual Goal</p>
@@ -421,6 +444,7 @@ function ProfileView({ authUser, lsUser, streak, checkins, onSignOut }) {
                   </p>
                 </div>
               )}
+
               <div>
                 <p className="text-[11px] font-bold uppercase tracking-wider text-text-muted mb-2 px-1">Bible Companion</p>
                 <CompanionRow companion={companion} onTap={() => setPickerOpen(true)} />
@@ -486,18 +510,8 @@ function ProfileView({ authUser, lsUser, streak, checkins, onSignOut }) {
 
 // ─────────────────────────────────────────────
 //  Main export
-//
-//  THE HYDRATION FIX:
-//  `mounted` starts false on both server and client.
-//  Server always renders null (consistent).
-//  Client flips mounted=true after first paint, then renders real content.
-//  This eliminates the server/client mismatch entirely.
-//
-//  THE AUTH FIX:
-//  We check the live Supabase session directly — not localStorage onboarding flag.
-//  Authenticated users always see ProfileView, never Onboarding.
-//  dw_onboarding_complete in localStorage was never written for auth sign-up users,
-//  so checking it always returned false, routing auth'd users to Onboarding.
+//  mounted pattern eliminates hydration mismatch
+//  authUser check bypasses the onboarding localStorage gate
 // ─────────────────────────────────────────────
 export default function ProfileScreen() {
   const [mounted,     setMounted]     = useState(false)
@@ -511,19 +525,11 @@ export default function ProfileScreen() {
 
   useEffect(() => {
     setMounted(true)
-
     const sb = createClient()
     if (!sb) { setAuthChecked(true); return }
-
     sb.auth.getUser()
-      .then(({ data: { user } }) => {
-        setAuthUser(user || null)
-        setAuthChecked(true)
-      })
-      .catch(() => {
-        setAuthUser(null)
-        setAuthChecked(true)
-      })
+      .then(({ data: { user } }) => { setAuthUser(user || null); setAuthChecked(true) })
+      .catch(() => { setAuthUser(null); setAuthChecked(true) })
   }, [])
 
   async function handleSignOut() {
@@ -537,37 +543,20 @@ export default function ProfileScreen() {
     window.location.href = '/'
   }
 
-  // SERVER + first client paint: render nothing (prevents hydration mismatch)
+  // Server + first client paint: null (prevents hydration mismatch)
   if (!mounted) return null
 
-  // Auth still resolving: show skeleton
+  // Auth resolving: show skeleton
   if (!authChecked) return <ProfileSkeleton />
 
-  // Authenticated: always show profile — never the onboarding gate
+  // Authenticated: always show profile
   if (authUser) {
-    return (
-      <ProfileView
-        authUser={authUser}
-        lsUser={lsUser}
-        streak={streak}
-        checkins={checkins}
-        onSignOut={handleSignOut}
-      />
-    )
+    return <ProfileView authUser={authUser} lsUser={lsUser} streak={streak}
+      checkins={checkins} onSignOut={handleSignOut} />
   }
 
-  // Guest: use localStorage onboarding state
-  if (!onboarded) {
-    return <Onboarding onComplete={d => { setLsUser(d); setOnboarded(true) }} />
-  }
-
-  return (
-    <ProfileView
-      authUser={null}
-      lsUser={lsUser}
-      streak={streak}
-      checkins={checkins}
-      onSignOut={() => { window.location.href = '/' }}
-    />
-  )
+  // Guest
+  if (!onboarded) return <Onboarding onComplete={d => { setLsUser(d); setOnboarded(true) }} />
+  return <ProfileView authUser={null} lsUser={lsUser} streak={streak}
+    checkins={checkins} onSignOut={() => { window.location.href = '/' }} />
 }

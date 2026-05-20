@@ -1,10 +1,13 @@
 // ── src/lib/supabase/communities.js ──
 //
-// CHANGE from original:
-//  • getAuthUser() now fetches the profiles row → returns real username, not user_metadata
-//  • getCommunities() drops `memberships!left(user_id)` — that PostgREST hint syntax
-//    silently fails when the FK isn't registered in Supabase's schema cache.
-//    Replaced with two separate queries merged in JS. Always works.
+// COLUMN NAME FIXES — every query now uses the actual profiles table columns:
+//   created_at  → joined_at
+//   heard_from  → how_heard
+//   display_name exists but full_name is preferred (also exists)
+//   spiritual_goal ✅ exists as-is
+//   companion_id   ✅ exists as-is
+//   avatar_url     ✅ exists as-is
+//   username       ✅ exists as-is
 
 import { createClient } from './client'
 
@@ -15,14 +18,15 @@ export async function getAuthUser() {
     const { data: { user }, error } = await sb.auth.getUser()
     if (error || !user) return null
 
-    const { data: profile } = await sb.from('profiles')
-      .select('username, full_name, avatar_url')
+    const { data: profile } = await sb
+      .from('profiles')
+      .select('username, full_name, display_name, avatar_url')
       .eq('id', user.id)
       .maybeSingle()
 
     return {
       id:         user.id,
-      name:       profile?.full_name || profile?.username || user.email?.split('@')[0] || '',
+      name:       profile?.full_name || profile?.display_name || profile?.username || user.email?.split('@')[0] || '',
       username:   profile?.username  || '',
       email:      user.email,
       avatar_url: profile?.avatar_url || null,
@@ -65,7 +69,9 @@ export async function getCommunities() {
   let joinedSet = new Set()
   if (authUser?.id) {
     const { data: memberships, error: memErr } = await sb
-      .from('memberships').select('community_id').eq('user_id', authUser.id)
+      .from('memberships')
+      .select('community_id')
+      .eq('user_id', authUser.id)
     if (memErr) console.warn('[getCommunities] memberships:', memErr.message)
     else joinedSet = new Set((memberships || []).map(m => m.community_id))
   }
@@ -99,7 +105,8 @@ export async function getJoinedCommunities() {
   const sb = createClient()
   if (!sb) return []
   const { data, error } = await sb.from('memberships')
-    .select('community_id, communities(*)').eq('user_id', authUser.id)
+    .select('community_id, communities(*)')
+    .eq('user_id', authUser.id)
   if (error) { console.error('[getJoinedCommunities]', error.message); return [] }
   return (data || []).filter(r => r.communities).map(r => ({ ...r.communities, joined: true }))
 }
@@ -136,18 +143,21 @@ export async function createCommunity(fields) {
   if (!authUser) throw new Error('not_authenticated')
   const sb = createClient()
   const { data, error } = await sb.from('communities').insert({
-    slug: makeSlug(fields.name), name: fields.name,
-    description: fields.description || '', category: fields.category || 'General',
-    visibility: fields.visibility || 'public',
+    slug:        makeSlug(fields.name),
+    name:        fields.name,
+    description: fields.description || '',
+    category:    fields.category    || 'General',
+    visibility:  fields.visibility  || 'public',
     invite_code: Math.random().toString(36).slice(2, 8).toUpperCase(),
-    created_by: authUser.id, owner_name: authUser.name,
+    created_by:  authUser.id,
+    owner_name:  authUser.name,
   }).select().single()
   if (error) throw error
   return { ...data, joined: true }
 }
 
 // ─────────────────────────────────────────────
-//  POSTS
+//  POSTS — READ
 // ─────────────────────────────────────────────
 
 export async function getPosts(communityId) {
@@ -155,8 +165,10 @@ export async function getPosts(communityId) {
   if (!sb || !communityId) return []
   const authUser = await getAuthUser()
   const { data, error } = await sb.from('posts')
-    .select('*, profiles(username,full_name,avatar_url), likes(count), comments(count)')
-    .eq('community_id', communityId).order('created_at', { ascending: false }).limit(60)
+    .select('*, profiles(username,full_name,display_name,avatar_url), likes(count), comments(count)')
+    .eq('community_id', communityId)
+    .order('created_at', { ascending: false })
+    .limit(60)
   if (error) { console.error('[getPosts]', error.message); return [] }
   let likedSet = new Set()
   if (authUser?.id && data?.length) {
@@ -174,12 +186,14 @@ export async function getForYouFeed(limit = 50) {
   if (!sb) return []
   const { data: mem, error: memErr } = await sb.from('memberships')
     .select('community_id').eq('user_id', authUser.id)
-  if (memErr) { console.warn('[getForYouFeed]', memErr.message); return [] }
+  if (memErr) { console.warn('[getForYouFeed] memberships:', memErr.message); return [] }
   const ids = (mem || []).map(m => m.community_id)
   if (!ids.length) return []
   const { data, error } = await sb.from('posts')
-    .select('*, profiles(username,full_name,avatar_url), communities(id,name,slug), likes(count), comments(count)')
-    .in('community_id', ids).order('created_at', { ascending: false }).limit(limit)
+    .select('*, profiles(username,full_name,display_name,avatar_url), communities(id,name,slug), likes(count), comments(count)')
+    .in('community_id', ids)
+    .order('created_at', { ascending: false })
+    .limit(limit)
   if (error) { console.error('[getForYouFeed]', error.message); return [] }
   let likedSet = new Set()
   if (data?.length) {
@@ -190,14 +204,24 @@ export async function getForYouFeed(limit = 50) {
   return (data || []).map(p => normalisePost(p, authUser.id, likedSet))
 }
 
+// ─────────────────────────────────────────────
+//  POSTS — WRITE
+// ─────────────────────────────────────────────
+
 export async function createPost(communityId, fields) {
   const authUser = await getAuthUser()
   if (!authUser) throw new Error('not_authenticated')
   const sb = createClient()
   const { data, error } = await sb.from('posts')
-    .insert({ community_id: communityId, user_id: authUser.id,
-      content: fields.content, passage: fields.passage || null, post_type: fields.type || 'general' })
-    .select('*, profiles(username,full_name,avatar_url)').single()
+    .insert({
+      community_id: communityId,
+      user_id:      authUser.id,
+      content:      fields.content,
+      passage:      fields.passage   || null,
+      post_type:    fields.type      || 'general',
+    })
+    .select('*, profiles(username,full_name,display_name,avatar_url)')
+    .single()
   if (error) throw error
   return normalisePost(data, authUser.id, new Set())
 }
@@ -208,11 +232,14 @@ export async function createPostToMultiple(communityIds, fields) {
   if (!communityIds?.length) throw new Error('Select at least one community')
   const sb = createClient()
   const rows = communityIds.map(cid => ({
-    community_id: cid, user_id: authUser.id,
-    content: fields.content, passage: fields.passage || null, post_type: fields.type || 'general',
+    community_id: cid,
+    user_id:      authUser.id,
+    content:      fields.content,
+    passage:      fields.passage  || null,
+    post_type:    fields.type     || 'general',
   }))
   const { data, error } = await sb.from('posts').insert(rows)
-    .select('*, profiles(username,full_name,avatar_url), communities(id,name,slug)')
+    .select('*, profiles(username,full_name,display_name,avatar_url), communities(id,name,slug)')
   if (error) throw error
   return (data || []).map(p => normalisePost(p, authUser.id, new Set()))
 }
@@ -234,8 +261,13 @@ export async function toggleLike(postId) {
   const sb = createClient()
   const { data: ex } = await sb.from('likes').select('id')
     .eq('user_id', authUser.id).eq('post_id', postId).maybeSingle()
-  if (ex) { await sb.from('likes').delete().eq('user_id', authUser.id).eq('post_id', postId); return false }
-  else    { await sb.from('likes').insert({ user_id: authUser.id, post_id: postId }); return true }
+  if (ex) {
+    await sb.from('likes').delete().eq('user_id', authUser.id).eq('post_id', postId)
+    return false
+  } else {
+    await sb.from('likes').insert({ user_id: authUser.id, post_id: postId })
+    return true
+  }
 }
 
 // ─────────────────────────────────────────────
@@ -246,7 +278,7 @@ export async function getComments(postId) {
   const sb = createClient()
   if (!sb) return []
   const { data, error } = await sb.from('comments')
-    .select('*, profiles(username,full_name,avatar_url)')
+    .select('*, profiles(username,full_name,display_name,avatar_url)')
     .eq('post_id', postId).order('created_at', { ascending: true })
   if (error) { console.error('[getComments]', error.message); return [] }
   return (data || []).map(normaliseComment)
@@ -258,7 +290,8 @@ export async function addComment(postId, text) {
   const sb = createClient()
   const { data, error } = await sb.from('comments')
     .insert({ post_id: postId, user_id: authUser.id, content: text })
-    .select('*, profiles(username,full_name,avatar_url)').single()
+    .select('*, profiles(username,full_name,display_name,avatar_url)')
+    .single()
   if (error) throw error
   return normaliseComment(data)
 }
@@ -271,7 +304,8 @@ export async function savePost(postId) {
   const authUser = await getAuthUser()
   if (!authUser) throw new Error('not_authenticated')
   const sb = createClient()
-  await sb.from('saved_posts').insert({ user_id: authUser.id, post_id: postId })
+  await sb.from('saved_posts')
+    .insert({ user_id: authUser.id, post_id: postId })
     .then(() => null, () => null)
 }
 
@@ -279,7 +313,8 @@ export async function unsavePost(postId) {
   const authUser = await getAuthUser()
   if (!authUser) return
   const sb = createClient()
-  await sb.from('saved_posts').delete().eq('user_id', authUser.id).eq('post_id', postId)
+  await sb.from('saved_posts').delete()
+    .eq('user_id', authUser.id).eq('post_id', postId)
 }
 
 export async function getSavedPosts() {
@@ -287,10 +322,12 @@ export async function getSavedPosts() {
   if (!authUser) return []
   const sb = createClient()
   const { data, error } = await sb.from('saved_posts')
-    .select('*, posts(*, profiles(username,full_name,avatar_url), communities(id,name,slug), likes(count), comments(count))')
-    .eq('user_id', authUser.id).order('created_at', { ascending: false })
+    .select('*, posts(*, profiles(username,full_name,display_name,avatar_url), communities(id,name,slug), likes(count), comments(count))')
+    .eq('user_id', authUser.id)
+    .order('created_at', { ascending: false })
   if (error) { console.error('[getSavedPosts]', error.message); return [] }
-  return (data || []).filter(r => r.posts)
+  return (data || [])
+    .filter(r => r.posts)
     .map(r => ({ ...normalisePost(r.posts, authUser.id, new Set()), savedAt: r.created_at }))
 }
 
@@ -308,8 +345,9 @@ export async function getUserPosts() {
   if (!authUser) return []
   const sb = createClient()
   const { data, error } = await sb.from('posts')
-    .select('*, profiles(username,full_name,avatar_url), communities(id,name,slug), likes(count), comments(count)')
-    .eq('user_id', authUser.id).order('created_at', { ascending: false })
+    .select('*, profiles(username,full_name,display_name,avatar_url), communities(id,name,slug), likes(count), comments(count)')
+    .eq('user_id', authUser.id)
+    .order('created_at', { ascending: false })
   if (error) { console.error('[getUserPosts]', error.message); return [] }
   return (data || []).map(p => normalisePost(p, authUser.id, new Set()))
 }
@@ -321,11 +359,14 @@ export async function getUserPosts() {
 export function subscribeToNewPosts(communityId, onInsert) {
   const sb = createClient(); if (!sb) return () => null
   const ch = sb.channel(`posts:${communityId}`)
-    .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'posts',
-      filter: `community_id=eq.${communityId}` }, async payload => {
+    .on('postgres_changes', {
+      event: 'INSERT', schema: 'public', table: 'posts',
+      filter: `community_id=eq.${communityId}`,
+    }, async payload => {
       if (!payload.new) return
       const { data: profile } = await sb.from('profiles')
-        .select('username,full_name,avatar_url').eq('id', payload.new.user_id).single()
+        .select('username,full_name,display_name,avatar_url')
+        .eq('id', payload.new.user_id).single()
       onInsert(normalisePost({ ...payload.new, profiles: profile }, null, new Set()))
     }).subscribe()
   return () => { try { sb.removeChannel(ch) } catch {} }
@@ -335,11 +376,14 @@ export const subscribeToCommunityPosts = subscribeToNewPosts
 export function subscribeToNewComments(postId, onInsert) {
   const sb = createClient(); if (!sb) return () => null
   const ch = sb.channel(`comments:${postId}`)
-    .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'comments',
-      filter: `post_id=eq.${postId}` }, async payload => {
+    .on('postgres_changes', {
+      event: 'INSERT', schema: 'public', table: 'comments',
+      filter: `post_id=eq.${postId}`,
+    }, async payload => {
       if (!payload.new) return
       const { data: profile } = await sb.from('profiles')
-        .select('username,full_name,avatar_url').eq('id', payload.new.user_id).single()
+        .select('username,full_name,display_name,avatar_url')
+        .eq('id', payload.new.user_id).single()
       onInsert(normaliseComment({ ...payload.new, profiles: profile }))
     }).subscribe()
   return () => { try { sb.removeChannel(ch) } catch {} }
@@ -353,25 +397,34 @@ export const subscribeToComments = subscribeToNewComments
 function normalisePost(row, currentUserId, likedSet) {
   const p = row.profiles || {}
   return {
-    id: row.id, communityId: row.community_id,
-    communityName: row.communities?.name || null, communitySlug: row.communities?.slug || null,
-    authorId: row.user_id,
-    authorName: p.full_name || p.username || 'Anonymous',
-    authorUsername: p.username || null, authorAvatar: p.avatar_url || null,
-    content: row.content, passage: row.passage || null, type: row.post_type || 'general',
-    liked: currentUserId ? (likedSet?.has?.(row.id) ?? false) : false,
+    id:            row.id,
+    communityId:   row.community_id,
+    communityName: row.communities?.name || null,
+    communitySlug: row.communities?.slug || null,
+    authorId:      row.user_id,
+    authorName:    p.full_name || p.display_name || p.username || 'Anonymous',
+    authorUsername:p.username  || null,
+    authorAvatar:  p.avatar_url || null,
+    content:       row.content,
+    passage:       row.passage   || null,
+    type:          row.post_type || 'general',
+    liked:         currentUserId ? (likedSet?.has?.(row.id) ?? false) : false,
     like_count:    row.likes?.[0]?.count    ?? row.like_count    ?? 0,
     comment_count: row.comments?.[0]?.count ?? row.comment_count ?? 0,
-    createdAt: row.created_at,
+    createdAt:     row.created_at,
   }
 }
 
 function normaliseComment(row) {
   const p = row.profiles || {}
   return {
-    id: row.id, postId: row.post_id, authorId: row.user_id,
-    authorName: p.full_name || p.username || 'Anonymous',
-    authorUsername: p.username || null, authorAvatar: p.avatar_url || null,
-    content: row.content, createdAt: row.created_at,
+    id:             row.id,
+    postId:         row.post_id,
+    authorId:       row.user_id,
+    authorName:     p.full_name || p.display_name || p.username || 'Anonymous',
+    authorUsername: p.username  || null,
+    authorAvatar:   p.avatar_url || null,
+    content:        row.content,
+    createdAt:      row.created_at,
   }
 }
