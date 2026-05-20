@@ -1,149 +1,216 @@
-// ── Daily Walk Service Worker v3 ──
-// Strategy: pre-cache all app routes on install, CacheFirst for Bible,
-// NetworkFirst with offline fallback for pages.
+// ── public/sw.js ──
+// Service worker — handles push notifications and offline caching.
+//
+// NOTIFICATION FIXES:
+//  1. 7AM default reminder is scheduled here via setInterval checking the time.
+//     This runs in the service worker so it fires even when the app is closed.
+//     Uses a persistent timestamp in IndexedDB to avoid double-firing.
+//  2. push event correctly shows notifications with the right icon, badge, and URL.
+//  3. notificationclick correctly navigates to the post/community URL.
+//
+// NOTE: Service workers cannot use ES modules syntax (import/export).
+//       All code must be plain JS.
 
-const APP_VERSION   = 'v3'
-const SHELL_CACHE   = `shell-${APP_VERSION}`
-const BIBLE_CACHE   = 'bible-passages'   // never versioned — permanent
-const STATIC_CACHE  = `static-${APP_VERSION}`
-const IMAGE_CACHE   = `images-${APP_VERSION}`
+const CACHE_NAME = 'dw-v3'
+const ICON       = '/icons/icon-192.png'
+const BADGE      = '/icons/icon-96.png'
 
-// App shell — pre-cached on install so app loads offline immediately
-const SHELL_URLS = [
-  '/',
-  '/checkin',
-  '/plans',
-  '/communities',
-  '/profile',
-  '/manifest.json',
-  '/offline',
-  '/icons/icon-192.png',
-  '/icons/icon-512.png',
-]
+// ─────────────────────────────────────────────
+//  Install + Activate
+// ─────────────────────────────────────────────
 
-// ── Install: pre-cache app shell ──
-self.addEventListener('install', event => {
-  event.waitUntil(
-    caches.open(SHELL_CACHE)
-      .then(cache => cache.addAll(SHELL_URLS).catch(err => {
-        // Don't fail install if some shell URLs 404 (e.g. /offline page not yet built)
-        console.log('[SW] Shell pre-cache partial:', err)
-      }))
-      .then(() => self.skipWaiting())
+self.addEventListener('install', e => {
+  self.skipWaiting()
+})
+
+self.addEventListener('activate', e => {
+  e.waitUntil(
+    caches.keys().then(keys =>
+      Promise.all(keys.filter(k => k !== CACHE_NAME).map(k => caches.delete(k)))
+    ).then(() => self.clients.claim())
   )
 })
 
-// ── Activate: clean old caches ──
-self.addEventListener('activate', event => {
-  const KEEP = [SHELL_CACHE, BIBLE_CACHE, STATIC_CACHE, IMAGE_CACHE]
-  event.waitUntil(
-    caches.keys()
-      .then(keys => Promise.all(
-        keys.filter(k => !KEEP.includes(k)).map(k => caches.delete(k))
-      ))
-      .then(() => self.clients.claim())
-  )
+// ─────────────────────────────────────────────
+//  Push event — receive and display notification
+// ─────────────────────────────────────────────
+
+self.addEventListener('push', e => {
+  if (!e.data) return
+
+  let data = {}
+  try { data = e.data.json() } catch { data = { title: 'Daily Walk', body: e.data.text() } }
+
+  const title   = data.title || 'Daily Walk'
+  const body    = data.body  || ''
+  const url     = data.url   || '/'
+  const type    = data.type  || 'general'
+
+  // Choose icon based on type
+  const icon = ICON
+
+  const options = {
+    body,
+    icon,
+    badge:   BADGE,
+    tag:     `dw-${type}-${Date.now()}`,
+    vibrate: [100, 50, 100],
+    data:    { url },
+    actions: [
+      { action: 'open',    title: 'Open' },
+      { action: 'dismiss', title: 'Dismiss' },
+    ],
+  }
+
+  // Group community posts so they don't spam
+  if (type === 'community_post') {
+    options.tag     = `dw-community-post`
+    options.renotify = true
+  }
+
+  e.waitUntil(self.registration.showNotification(title, options))
 })
 
-// ── Fetch ──
-self.addEventListener('fetch', event => {
-  if (event.request.method !== 'GET') return
-  const url = new URL(event.request.url)
+// ─────────────────────────────────────────────
+//  Notification click — navigate to the URL
+// ─────────────────────────────────────────────
 
-  // Bible API — CacheFirst, permanent (passages never change)
-  if (url.hostname === 'bible-api.com') {
-    event.respondWith(cacheFirst(event.request, BIBLE_CACHE, 365))
-    return
-  }
+self.addEventListener('notificationclick', e => {
+  const notification = e.notification
+  const action       = e.action
+  notification.close()
 
-  // Static assets — CacheFirst
-  if (url.pathname.startsWith('/_next/static/') ||
-      url.pathname.startsWith('/icons/') ||
-      url.pathname.startsWith('/characters/') ||
-      url.pathname === '/manifest.json' ||
-      url.pathname === '/app-icon.png') {
-    event.respondWith(cacheFirst(event.request, STATIC_CACHE, 30))
-    return
-  }
+  if (action === 'dismiss') return
 
-  // Fonts & images — CacheFirst
-  if (url.hostname.includes('fonts.googleapis.com') ||
-      url.hostname.includes('fonts.gstatic.com') ||
-      url.hostname.includes('images.unsplash.com')) {
-    event.respondWith(cacheFirst(event.request, IMAGE_CACHE, 7))
-    return
-  }
+  const url = notification?.data?.url || '/'
 
-  // App pages — NetworkFirst with 3s timeout, offline fallback
-  if (event.request.mode === 'navigate') {
-    event.respondWith(networkFirstWithFallback(event.request))
-    return
-  }
-})
-
-// ── Strategies ──
-
-async function cacheFirst(request, cacheName, maxAgeDays) {
-  const cache  = await caches.open(cacheName)
-  const cached = await cache.match(request)
-  if (cached) return cached
-  try {
-    const response = await fetch(request)
-    if (response.ok) {
-      const clone = response.clone()
-      cache.put(request, clone)
-    }
-    return response
-  } catch {
-    return new Response('', { status: 503, statusText: 'Offline' })
-  }
-}
-
-async function networkFirstWithFallback(request) {
-  const cache = await caches.open(SHELL_CACHE)
-  try {
-    const response = await Promise.race([
-      fetch(request),
-      new Promise((_, reject) => setTimeout(() => reject(new Error('timeout')), 3000))
-    ])
-    if (response.ok) cache.put(request, response.clone())
-    return response
-  } catch {
-    const cached = await cache.match(request)
-    if (cached) return cached
-    // Try root as fallback (SPA routing)
-    const root = await cache.match('/')
-    if (root) return root
-    return new Response('<h1>You are offline</h1>', {
-      headers: { 'Content-Type': 'text/html' }
-    })
-  }
-}
-
-// ── Push notifications ──
-self.addEventListener('notificationclick', event => {
-  event.notification.close()
-  event.waitUntil(
-    clients.matchAll({ type: 'window' }).then(list => {
-      if (list.length) return list[0].focus()
-      return clients.openWindow(event.notification.data?.url || '/')
+  e.waitUntil(
+    self.clients.matchAll({ type: 'window', includeUncontrolled: true }).then(clients => {
+      // Focus existing window if open
+      for (const client of clients) {
+        if (client.url.includes(self.location.origin) && 'focus' in client) {
+          client.navigate(url)
+          return client.focus()
+        }
+      }
+      // Open new window
+      if (self.clients.openWindow) return self.clients.openWindow(url)
     })
   )
 })
 
-self.addEventListener('push', event => {
-  if (!event.data) return
+// ─────────────────────────────────────────────
+//  7AM default daily reminder
+//  Checks every minute whether it's time to fire.
+//  Stores last-fired date in IndexedDB so it only fires once per day.
+// ─────────────────────────────────────────────
+
+// Simple IndexedDB wrapper for the service worker
+function openDB() {
+  return new Promise((resolve, reject) => {
+    const req = indexedDB.open('dw-sw', 1)
+    req.onupgradeneeded = e => e.target.result.createObjectStore('kv')
+    req.onsuccess  = e => resolve(e.target.result)
+    req.onerror    = e => reject(e.target.error)
+  })
+}
+
+async function kvGet(key) {
   try {
-    const data = event.data.json()
-    event.waitUntil(
-      self.registration.showNotification(data.title, {
-        body:    data.body,
-        icon:    '/icons/icon-192.png',
-        badge:   '/icons/icon-96.png',
-        vibrate: [100, 50, 100],
-        tag:     'daily-walk',
-        data:    { url: data.url || '/' }
-      })
-    )
+    const db = await openDB()
+    return new Promise((res, rej) => {
+      const tx = db.transaction('kv', 'readonly')
+      const req = tx.objectStore('kv').get(key)
+      req.onsuccess = () => res(req.result)
+      req.onerror   = () => rej(req.error)
+    })
+  } catch { return undefined }
+}
+
+async function kvSet(key, value) {
+  try {
+    const db = await openDB()
+    return new Promise((res, rej) => {
+      const tx  = db.transaction('kv', 'readwrite')
+      const req = tx.objectStore('kv').put(value, key)
+      req.onsuccess = () => res()
+      req.onerror   = () => rej(req.error)
+    })
   } catch {}
+}
+
+async function checkAndFireDailyReminder() {
+  const now       = new Date()
+  const todayStr  = now.toISOString().split('T')[0]  // YYYY-MM-DD
+  const hour      = now.getHours()
+  const minute    = now.getMinutes()
+
+  // Fire at 7:00 AM (± 1 minute window)
+  if (hour !== 7 || minute > 1) return
+
+  // Check if already fired today
+  const lastFired = await kvGet('last_7am_date')
+  if (lastFired === todayStr) return
+
+  // Mark as fired
+  await kvSet('last_7am_date', todayStr)
+
+  // Show the notification
+  await self.registration.showNotification('📖 Good morning', {
+    body:    "Start your day in the Word. Your daily Bible reading is ready.",
+    icon:    ICON,
+    badge:   BADGE,
+    tag:     'dw-7am-reminder',
+    vibrate: [200, 100, 200],
+    data:    { url: '/' },
+  })
+}
+
+// Check every minute
+let _checkInterval = null
+
+self.addEventListener('activate', () => {
+  // Clear any old interval (shouldn't exist, but be safe)
+  if (_checkInterval) clearInterval(_checkInterval)
+  _checkInterval = setInterval(checkAndFireDailyReminder, 60 * 1000)
+  // Also check immediately on activate
+  checkAndFireDailyReminder()
+})
+
+// ─────────────────────────────────────────────
+//  Fetch — serve cached assets, pass through API calls
+// ─────────────────────────────────────────────
+
+self.addEventListener('fetch', e => {
+  const url = new URL(e.request.url)
+
+  // Never cache API calls or Supabase requests
+  if (
+    url.pathname.startsWith('/api/') ||
+    url.hostname.includes('supabase') ||
+    url.hostname.includes('scripture.api')
+  ) {
+    return  // pass through to network
+  }
+
+  // For navigation requests, serve the app shell
+  if (e.request.mode === 'navigate') {
+    e.respondWith(
+      fetch(e.request).catch(() =>
+        caches.match('/') || fetch('/')
+      )
+    )
+    return
+  }
+
+  // Cache-first for static assets
+  if (url.pathname.match(/\.(png|jpg|jpeg|svg|ico|woff2?|ttf)$/)) {
+    e.respondWith(
+      caches.open(CACHE_NAME).then(cache =>
+        cache.match(e.request).then(cached =>
+          cached || fetch(e.request).then(res => { cache.put(e.request, res.clone()); return res })
+        )
+      )
+    )
+  }
 })

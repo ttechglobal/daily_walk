@@ -1,16 +1,24 @@
 'use client'
 
-// ── src/app/read/page.js — Fixed top bar, dark mode synced with global toggle ──
-// Top bar: position sticky/fixed, always visible.
-// Dark mode: reads from global DarkModeContext (same toggle as rest of app).
-// Layout: flex-col h-[100dvh], header + scrollable content + fixed bottom nav.
+// ── src/app/read/page.js ──
+//
+// FIX 1 — Translation button unresponsive:
+//   Root cause: VersionSheet was never rendered. The toolbar button called
+//   setShowVer(true) but the AnimatePresence block at the bottom only had
+//   NavigatorSheet and FontModal — VersionSheet was missing entirely.
+//   Fix: VersionSheet is now included in the AnimatePresence block.
+//
+// FIX 2 — Chapter heading:
+//   A large, bold, centered heading showing "{book} {chapter}" is now
+//   rendered at the top of every chapter's content area, above the verses.
+//   Font is significantly larger than the verse text.
 
 import { useState, useEffect, useCallback, Suspense } from 'react'
 import { useRouter, useSearchParams } from 'next/navigation'
 import { motion, AnimatePresence } from 'framer-motion'
 import {
   ArrowLeft, WifiOff, Download, Check, X,
-  Sun, Moon, Plus, Minus, Wifi, ChevronLeft, ChevronRight,
+  Sun, Moon, Plus, Minus, ChevronLeft, ChevronRight,
 } from 'lucide-react'
 import { useTheme } from '../../lib/theme'
 import {
@@ -21,8 +29,6 @@ import {
   DEFAULT_VERSION_ID, BIBLE_BOOK_LIST,
 } from '../../lib/bible'
 import { startBackgroundDownload, getDownloadStatus, subscribeToDownload } from '../../lib/downloadManager'
-
-const ALLOWED = ['NIV11','NIVUK11','AMP','EEB','TPT','BSB','ASV']
 
 const FONT_OPTIONS = [
   { id:'lora',    label:'Lora',    style:"'Lora', Georgia, serif" },
@@ -53,47 +59,42 @@ function NavigatorSheet({ currentBook, currentChapter, onSelect, onClose, t }) {
         <div className="flex justify-center pt-3">
           <div className="w-10 h-1 rounded-full" style={{ background:t.border }}/>
         </div>
-        <div className="flex items-center justify-between px-5 py-3">
-          <p className="font-bold text-[16px]" style={{ color:t.text }}>Go to</p>
-          <button onClick={onClose} className="w-8 h-8 rounded-full flex items-center justify-center"
-            style={{ background:t.bgMuted }}>
+        <div className="flex items-center justify-between px-5 py-3 flex-shrink-0">
+          <p className="font-bold text-[17px]" style={{ color:t.text }}>Go to</p>
+          <button onClick={onClose} className="w-8 h-8 rounded-full flex items-center justify-center" style={{ background:t.bgMuted }}>
             <X size={14} style={{ color:t.textMuted }}/>
           </button>
         </div>
-        <div className="px-4 pb-3">
-          <input value={search} onChange={e=>setSearch(e.target.value)}
-            placeholder="Search books..."
-            className="w-full rounded-full px-4 py-2.5 text-[14px] focus:outline-none"
-            style={{ background:t.bgMuted, color:t.text, border:`1px solid ${t.borderInput}` }}/>
-        </div>
-        <div className="flex flex-1 overflow-hidden">
+        <div className="flex-1 overflow-hidden flex gap-0 min-h-0">
           {/* Book list */}
-          <div className="w-[52%] overflow-y-auto border-r scroll-hide" style={{ borderColor:t.border }}>
-            {filtered.map(b => (
-              <button key={b.name} onClick={() => setSelBook(b.name)}
-                className="w-full text-left px-4 py-3 text-[14px] font-semibold transition-colors"
-                style={{
-                  color:      selBook===b.name ? '#5B4FCF' : t.text,
-                  background: selBook===b.name ? t.purpleBg : 'transparent',
-                  borderLeft: selBook===b.name ? '3px solid #5B4FCF' : '3px solid transparent',
-                }}>
-                {b.name}
-              </button>
-            ))}
+          <div className="w-[45%] flex flex-col border-r" style={{ borderColor:t.border }}>
+            <div className="px-3 py-2 flex-shrink-0">
+              <input value={search} onChange={e=>setSearch(e.target.value)}
+                placeholder="Search…"
+                className="w-full px-3 py-2 rounded-[10px] text-[13px] focus:outline-none"
+                style={{ background:t.bgMuted, color:t.text }}/>
+            </div>
+            <div className="flex-1 overflow-y-auto">
+              {filtered.map(b => (
+                <button key={b.name} onClick={()=>setSelBook(b.name)}
+                  className="w-full text-left px-4 py-2.5 text-[13px] font-medium"
+                  style={{ background:selBook===b.name?t.purpleBg||'#EDE9FF':'transparent', color:selBook===b.name?'#5B4FCF':t.text }}>
+                  {b.name}
+                </button>
+              ))}
+            </div>
           </div>
           {/* Chapter grid */}
-          <div className="flex-1 overflow-y-auto px-3 py-3 scroll-hide">
-            <p className="text-[11px] font-bold uppercase tracking-wider mb-3" style={{ color:t.textFaint }}>
-              {selBook} — {chapterCount} chapters
-            </p>
-            <div className="grid grid-cols-4 gap-2">
-              {Array.from({length:chapterCount},(_,i)=>i+1).map(ch=>(
+          <div className="flex-1 overflow-y-auto p-3">
+            <p className="text-[11px] font-bold uppercase tracking-wider mb-3" style={{ color:t.textFaint }}>{selBook}</p>
+            <div className="grid grid-cols-5 gap-1.5">
+              {Array.from({ length: chapterCount }, (_,i) => i+1).map(ch => (
                 <button key={ch}
-                  onClick={() => { onSelect(selBook,ch); onClose() }}
+                  onClick={() => { onSelect(selBook, ch); onClose() }}
                   className="aspect-square rounded-[10px] flex items-center justify-center text-[13px] font-bold transition-all active:scale-90"
                   style={{
-                    background: ch===currentChapter && selBook===currentBook ? '#5B4FCF' : t.bgMuted,
-                    color:      ch===currentChapter && selBook===currentBook ? 'white' : t.text,
+                    background: selBook===currentBook&&ch===currentChapter ? '#5B4FCF' : t.bgMuted,
+                    color:      selBook===currentBook&&ch===currentChapter ? 'white' : t.text,
                   }}>
                   {ch}
                 </button>
@@ -107,71 +108,178 @@ function NavigatorSheet({ currentBook, currentChapter, onSelect, onClose, t }) {
 }
 
 // ─────────────────────────────────────────────
+//  Version sheet — THE MISSING PIECE
+//  This was never rendered in the original, causing the button to do nothing.
+// ─────────────────────────────────────────────
+function VersionSheet({ currentId, onSelect, onClose, t }) {
+  const [versions,    setVersions]    = useState([])
+  const [downloading, setDownloading] = useState(null)
+
+  useEffect(() => {
+    setVersions(getAllVersions() || [])
+  }, [])
+
+  async function handleDownload(version, e) {
+    e.stopPropagation()
+    if (downloading) return
+    setDownloading(version.id)
+    try {
+      await downloadVersion(version.id)
+    } catch {}
+    setDownloading(null)
+  }
+
+  const groups = [
+    { label: 'YouVersion — Downloadable', versions: versions.filter(v => v.source === 'youversion') },
+    { label: 'API.Bible — Online only',   versions: versions.filter(v => v.source === 'apibible')   },
+    { label: 'bible-api.com — Free',      versions: versions.filter(v => v.source === 'bibleapi')   },
+  ].filter(g => g.versions.length)
+
+  return (
+    <>
+      <motion.div className="fixed inset-0 bg-black/50 z-[60]"
+        initial={{ opacity:0 }} animate={{ opacity:1 }} exit={{ opacity:0 }} onClick={onClose}/>
+      <motion.div
+        className="fixed bottom-0 left-1/2 -translate-x-1/2 w-full max-w-[430px] rounded-t-[28px] z-[70] flex flex-col"
+        style={{ background:t.bgCard, maxHeight:'80dvh', paddingBottom:'max(1.5rem,env(safe-area-inset-bottom))' }}
+        initial={{ y:'100%' }} animate={{ y:0 }} exit={{ y:'100%' }}
+        transition={{ type:'spring', stiffness:340, damping:36 }}
+        onClick={e=>e.stopPropagation()}
+      >
+        <div className="flex justify-center pt-3 pb-1">
+          <div className="w-10 h-1 rounded-full" style={{ background:t.border }}/>
+        </div>
+        <div className="flex items-center justify-between px-5 py-3 border-b flex-shrink-0" style={{ borderColor:t.border }}>
+          <p className="font-bold text-[17px]" style={{ color:t.text }}>Bible Translation</p>
+          <button onClick={onClose} className="w-8 h-8 rounded-full flex items-center justify-center" style={{ background:t.bgMuted }}>
+            <X size={14} style={{ color:t.textMuted }}/>
+          </button>
+        </div>
+
+        <div className="flex-1 overflow-y-auto px-4 py-3 flex flex-col gap-5">
+          {groups.map(group => (
+            <div key={group.label}>
+              <p className="text-[11px] font-bold uppercase tracking-wider mb-2 px-1" style={{ color:t.textFaint }}>
+                {group.label}
+              </p>
+              <div className="flex flex-col gap-1.5">
+                {group.versions.map(v => {
+                  const vId = v.id || v.bibleId || v.abbreviation
+                  const isActive = vId === currentId || v.abbreviation === currentId
+                  const downloaded = isVersionDownloaded(vId)
+                  const isDownloading = downloading === vId
+                  return (
+                    <button key={vId}
+                      onClick={() => { onSelect(vId, v.abbreviation); onClose() }}
+                      className="flex items-center gap-3 px-4 py-3.5 rounded-[14px] text-left transition-all active:scale-[0.98]"
+                      style={{
+                        background:  isActive ? '#EDE9FF' : t.bgMuted,
+                        border:      `2px solid ${isActive ? '#5B4FCF' : 'transparent'}`,
+                      }}>
+                      <div className="flex-1 min-w-0">
+                        <div className="flex items-center gap-2">
+                          <p className="font-bold text-[14px]" style={{ color: isActive ? '#5B4FCF' : t.text }}>
+                            {v.abbreviation}
+                          </p>
+                          {!v.downloadable && (
+                            <span className="text-[10px] font-bold px-1.5 py-0.5 rounded-full"
+                              style={{ background: t.bgCard, color: t.textFaint }}>
+                              Online only
+                            </span>
+                          )}
+                        </div>
+                        <p className="text-[12px] truncate" style={{ color:t.textMuted }}>{v.name}</p>
+                      </div>
+                      <div className="flex items-center gap-2 flex-shrink-0">
+                        {isActive && (
+                          <div className="w-5 h-5 rounded-full flex items-center justify-center" style={{ background:'#5B4FCF' }}>
+                            <Check size={11} className="text-white" strokeWidth={3}/>
+                          </div>
+                        )}
+                        {v.downloadable && !downloaded && !isDownloading && (
+                          <button
+                            onClick={e => handleDownload(v, e)}
+                            className="flex items-center gap-1 px-2.5 py-1.5 rounded-full text-[11px] font-bold"
+                            style={{ background:t.bgCard, color:t.textMuted, border:`1px solid ${t.border}` }}>
+                            <Download size={11}/> Save
+                          </button>
+                        )}
+                        {isDownloading && (
+                          <div className="w-4 h-4 rounded-full border-2 border-t-transparent animate-spin" style={{ borderColor:'#5B4FCF' }}/>
+                        )}
+                        {downloaded && !isActive && (
+                          <span className="text-[11px] font-bold" style={{ color:'#4A7C5F' }}>✓ Saved</span>
+                        )}
+                      </div>
+                    </button>
+                  )
+                })}
+              </div>
+            </div>
+          ))}
+        </div>
+      </motion.div>
+    </>
+  )
+}
+
+// ─────────────────────────────────────────────
 //  Font modal
 // ─────────────────────────────────────────────
 function FontModal({ fontSize, fontId, onFontSize, onFontId, onClose, t }) {
   return (
     <>
-      <motion.div className="fixed inset-0 bg-black/40 z-[60]"
+      <motion.div className="fixed inset-0 bg-black/50 z-[60]"
         initial={{ opacity:0 }} animate={{ opacity:1 }} exit={{ opacity:0 }} onClick={onClose}/>
       <motion.div
-        className="fixed bottom-0 left-1/2 -translate-x-1/2 w-full max-w-[430px] rounded-t-[28px] z-[70] px-5 pt-5 pb-10"
-        style={{ background:t.bgCard }}
+        className="fixed bottom-0 left-1/2 -translate-x-1/2 w-full max-w-[430px] rounded-t-[28px] z-[70]"
+        style={{ background:t.bgCard, paddingBottom:'max(1.5rem,env(safe-area-inset-bottom))' }}
         initial={{ y:'100%' }} animate={{ y:0 }} exit={{ y:'100%' }}
         transition={{ type:'spring', stiffness:340, damping:36 }}
+        onClick={e=>e.stopPropagation()}
       >
-        <div className="flex justify-center mb-4">
-          <div className="w-10 h-1 rounded-full" style={{ background:t.border }}/>
-        </div>
-        <div className="flex items-center justify-between mb-5">
-          <p className="font-bold text-[17px]" style={{ color:t.text }}>Reading Settings</p>
-          <button onClick={onClose} className="w-8 h-8 rounded-full flex items-center justify-center"
-            style={{ background:t.bgMuted }}>
+        <div className="flex justify-center pt-3"><div className="w-10 h-1 rounded-full" style={{ background:t.border }}/></div>
+        <div className="flex items-center justify-between px-5 py-3 border-b" style={{ borderColor:t.border }}>
+          <p className="font-bold text-[17px]" style={{ color:t.text }}>Text Settings</p>
+          <button onClick={onClose} className="w-8 h-8 rounded-full flex items-center justify-center" style={{ background:t.bgMuted }}>
             <X size={14} style={{ color:t.textMuted }}/>
           </button>
         </div>
-        {/* Font size */}
-        <div className="flex flex-col gap-3 mb-5">
-          <p className="text-[12px] font-bold uppercase tracking-wider" style={{ color:t.textFaint }}>
-            Text Size
-          </p>
-          <div className="flex items-center gap-4">
-            <button onClick={() => onFontSize(Math.max(13,fontSize-1))}
-              className="w-10 h-10 rounded-full flex items-center justify-center"
-              style={{ background:t.bgMuted }}>
-              <Minus size={16} style={{ color:t.text }}/>
-            </button>
-            <span className="flex-1 text-center font-bold text-[18px]" style={{ color:t.text }}>
-              {fontSize}px
-            </span>
-            <button onClick={() => onFontSize(Math.min(26,fontSize+1))}
-              className="w-10 h-10 rounded-full flex items-center justify-center"
-              style={{ background:t.bgMuted }}>
-              <Plus size={16} style={{ color:t.text }}/>
-            </button>
+        <div className="px-5 py-4 flex flex-col gap-5">
+          {/* Size */}
+          <div>
+            <p className="text-[12px] font-bold uppercase tracking-wider mb-3" style={{ color:t.textFaint }}>Text size</p>
+            <div className="flex items-center gap-4">
+              <button onClick={() => onFontSize(Math.max(13, fontSize-1))}
+                className="w-10 h-10 rounded-full flex items-center justify-center" style={{ background:t.bgMuted }}>
+                <Minus size={16} style={{ color:t.text }}/>
+              </button>
+              <p className="flex-1 text-center font-bold text-[20px]" style={{ color:t.text }}>{fontSize}</p>
+              <button onClick={() => onFontSize(Math.min(26, fontSize+1))}
+                className="w-10 h-10 rounded-full flex items-center justify-center" style={{ background:t.bgMuted }}>
+                <Plus size={16} style={{ color:t.text }}/>
+              </button>
+            </div>
           </div>
-        </div>
-        {/* Font style */}
-        <div className="flex flex-col gap-2">
-          <p className="text-[12px] font-bold uppercase tracking-wider" style={{ color:t.textFaint }}>
-            Font
-          </p>
-          {FONT_OPTIONS.map(f => (
-            <button key={f.id} onClick={() => onFontId(f.id)}
-              className="flex items-center gap-3 px-4 py-3 rounded-[14px] border-2 transition-all"
-              style={{
-                background:   fontId===f.id ? t.purpleBg : t.bgMuted,
-                borderColor:  fontId===f.id ? '#5B4FCF' : 'transparent',
-              }}>
-              <div className="w-5 h-5 rounded-full border-2 flex items-center justify-center flex-shrink-0"
-                style={{ borderColor:fontId===f.id?'#5B4FCF':t.borderInput }}>
-                {fontId===f.id && <div className="w-2.5 h-2.5 rounded-full" style={{ background:'#5B4FCF' }}/>}
-              </div>
-              <span style={{ fontFamily:f.style, fontSize:15, color:fontId===f.id?'#5B4FCF':t.text }}>
-                {f.label} — The quick brown fox
-              </span>
-            </button>
-          ))}
+          {/* Font */}
+          <div>
+            <p className="text-[12px] font-bold uppercase tracking-wider mb-3" style={{ color:t.textFaint }}>Typeface</p>
+            <div className="flex flex-col gap-2">
+              {FONT_OPTIONS.map(f => (
+                <button key={f.id} onClick={() => onFontId(f.id)}
+                  className="flex items-center gap-3 px-4 py-3 rounded-[14px] text-left transition-all"
+                  style={{ background: fontId===f.id ? '#EDE9FF' : t.bgMuted, border:`2px solid ${fontId===f.id?'#5B4FCF':'transparent'}` }}>
+                  <div className="w-5 h-5 rounded-full border-2 flex items-center justify-center flex-shrink-0"
+                    style={{ borderColor:fontId===f.id?'#5B4FCF':t.borderInput }}>
+                    {fontId===f.id && <div className="w-2.5 h-2.5 rounded-full" style={{ background:'#5B4FCF' }}/>}
+                  </div>
+                  <span style={{ fontFamily:f.style, fontSize:15, color:fontId===f.id?'#5B4FCF':t.text }}>
+                    {f.label} — The quick brown fox
+                  </span>
+                </button>
+              ))}
+            </div>
+          </div>
         </div>
       </motion.div>
     </>
@@ -213,7 +321,7 @@ function BibleReaderInner() {
   const [isOffline,  setIsOffline] = useState(false)
   const [fromCache,  setFromCache] = useState(false)
   const [showNav,    setShowNav]   = useState(false)
-  const [showVer,    setShowVer]   = useState(false)
+  const [showVer,    setShowVer]   = useState(false)  // ← this state existed but was never used
   const [showFont,   setShowFont]  = useState(false)
   const [fontSize,   setFontSize]  = useState(17)
   const [fontId,     setFontId]    = useState('lora')
@@ -226,6 +334,10 @@ function BibleReaderInner() {
     const id = getPreferredVersionId()
     setVersionId(id)
     seedDefaultVersionIfNeeded()
+    // Resolve abbreviation for display — getAllVersions() is synchronous
+    const versions = getAllVersions()
+    const found = versions.find(v => v.id===id || v.abbreviation===id)
+    if (found) setAbbr(found.abbreviation)
   }, [])
 
   function savePrefs(fs, fi) {
@@ -237,19 +349,23 @@ function BibleReaderInner() {
   const load = useCallback(async (b, ch, vid) => {
     setLoading(true); setError(null); setIsOffline(false)
     const result = await getChapter(vid, b, ch)
-    if (result.error) { setError(result.error); setIsOffline(!!result.offline) }
+    if (result.error) { setError(result.error); setIsOffline(!result.offline) }
     else { setData(result); setFromCache(!!result.fromCache) }
     setLoading(false)
   }, [])
 
   useEffect(() => { load(book, chapter, versionId) }, [book, chapter, versionId, load])
 
-  function selectVersion(id) {
-    setPreferredVersionId(id); setVersionId(id)
-    getAvailableVersions().then(list => {
-      const found = list.find(v => v.id===id || v.abbreviation===id)
+  // FIX: selectVersion now correctly sets both ID and abbreviation
+  function selectVersion(id, abbr) {
+    setPreferredVersionId(id)
+    setVersionId(id)
+    if (abbr) setAbbr(abbr)
+    else {
+      const list = getAllVersions()
+      const found = list.find(v => v.id===id || v.bibleId===id || v.abbreviation===id)
       if (found) setAbbr(found.abbreviation)
-    })
+    }
   }
 
   function navigate(b, ch) { setBook(b); setChapter(ch) }
@@ -268,7 +384,7 @@ function BibleReaderInner() {
   return (
     <div className="flex flex-col" style={{ height:'100dvh', background:t.bg }}>
 
-      {/* ── FIXED TOP BAR — never scrolls away ── */}
+      {/* ── FIXED TOP BAR ── */}
       <div
         className="flex-shrink-0 flex items-center gap-2 px-3 py-2"
         style={{
@@ -287,18 +403,17 @@ function BibleReaderInner() {
           <ArrowLeft size={18} style={{ color:t.text }}/>
         </button>
 
-        {/* Book + Chapter — full tap target, grows to fill */}
+        {/* Book + Chapter navigator */}
         <button onClick={() => setShowNav(true)}
           className="flex items-center justify-center gap-1.5 py-2 rounded-[14px] active:opacity-80 flex-1 min-w-0"
           style={{ background:t.bgMuted }}>
           <span className="font-bold text-[15px] truncate" style={{ color:t.text }}>{book}</span>
-          <span className="font-bold text-[15px] flex-shrink-0" style={{ color:'#5B4FCF' }}>
-            {chapter}
-          </span>
+          <span className="font-bold text-[15px] flex-shrink-0" style={{ color:'#5B4FCF' }}>{chapter}</span>
         </button>
 
-        {/* Version */}
-        <button onClick={() => setShowVer(true)}
+        {/* Version button — FIX: was calling setShowVer(true) but VersionSheet was never rendered */}
+        <button
+          onClick={() => setShowVer(true)}
           className="flex items-center justify-center px-3 py-2 rounded-[14px] flex-shrink-0"
           style={{ background:'#5B4FCF', minWidth:52, minHeight:40 }}>
           <span className="font-bold text-[13px] text-white">{versionAbbr}</span>
@@ -311,13 +426,11 @@ function BibleReaderInner() {
           Aa
         </button>
 
-        {/* Dark / light toggle — synced with global toggle */}
+        {/* Dark / light */}
         <button
           onClick={toggleDark}
           className="w-9 h-9 rounded-full flex items-center justify-center flex-shrink-0"
-          style={{ background:t.bgMuted, color:t.text }}
-          aria-label={dark?'Light mode':'Dark mode'}
-        >
+          style={{ background:t.bgMuted, color:t.text }}>
           {dark ? <Sun size={16}/> : <Moon size={16}/>}
         </button>
       </div>
@@ -325,7 +438,7 @@ function BibleReaderInner() {
       {/* Offline / cached badge */}
       {fromCache && (
         <div className="flex-shrink-0 mx-4 mt-2 self-start flex items-center gap-1.5 px-3 py-1 rounded-full"
-          style={{ background:t.sageBg }}>
+          style={{ background:t.sageBg || '#E8F5E9' }}>
           <Check size={11} style={{ color:'#4A7C5F' }}/>
           <span className="text-[11px] font-semibold" style={{ color:'#4A7C5F' }}>Saved offline</span>
         </div>
@@ -333,20 +446,18 @@ function BibleReaderInner() {
 
       {/* ── SCROLLABLE CONTENT ── */}
       <div className="flex-1 overflow-y-auto scroll-hide px-5" style={{ paddingBottom:80 }}>
+
         {loading && (
           <div className="flex flex-col items-center justify-center py-24 gap-3">
             <div className="w-8 h-8 rounded-full border-2 border-t-transparent animate-spin"
               style={{ borderColor:'#5B4FCF' }}/>
-            <p className="text-[13px]" style={{ color:t.textMuted }}>
-              Loading {book} {chapter}...
-            </p>
+            <p className="text-[13px]" style={{ color:t.textMuted }}>Loading {book} {chapter}…</p>
           </div>
         )}
 
         {!loading && error && isOffline && (
           <div className="flex flex-col items-center gap-4 py-20 text-center px-4">
-            <div className="w-14 h-14 rounded-full flex items-center justify-center"
-              style={{ background:t.amberBg }}>
+            <div className="w-14 h-14 rounded-full flex items-center justify-center" style={{ background:t.amberBg||'#FFF3CD' }}>
               <WifiOff size={24} style={{ color:'#E8A838' }}/>
             </div>
             <p className="font-bold text-[17px]" style={{ color:t.text }}>You're offline</p>
@@ -369,19 +480,44 @@ function BibleReaderInner() {
         )}
 
         {!loading && !error && (
-          <div className="pt-4 pb-4">
-            <p className="text-[11px] font-bold uppercase tracking-widest mb-5"
-              style={{ color:t.textFaint }}>
-              {reference} · {versionAbbr}
-            </p>
+          <div className="pt-6 pb-4">
+
+            {/* ── CHAPTER HEADING — FIX: new, large, centered ── */}
+            <div className="text-center mb-8">
+              <h1
+                className="font-display font-bold"
+                style={{
+                  fontSize:   34,
+                  lineHeight: 1.2,
+                  color:      t.text,
+                  letterSpacing: '-0.02em',
+                }}>
+                {book}
+              </h1>
+              <p
+                className="font-display font-bold mt-1"
+                style={{
+                  fontSize:   28,
+                  lineHeight: 1,
+                  color:      '#5B4FCF',
+                }}>
+                Chapter {chapter}
+              </p>
+            </div>
+
+            {/* Verse content */}
             {verses.length > 0 && verses[0]?.number > 0 ? (
               <p style={{ fontSize, color:t.text, fontFamily:fontStyle, lineHeight:2.2 }}>
                 {verses.map((v,i) => (
                   <span key={i}>
                     <sup style={{
-                      fontSize:Math.max(9,fontSize-6), color:'#5B4FCF',
-                      fontWeight:700, marginRight:3, verticalAlign:'super',
-                      lineHeight:0, userSelect:'none',
+                      fontSize:    Math.max(9,fontSize-6),
+                      color:       '#5B4FCF',
+                      fontWeight:  700,
+                      marginRight: 3,
+                      verticalAlign:'super',
+                      lineHeight:  0,
+                      userSelect:  'none',
                     }}>
                       {v.number}
                     </sup>
@@ -392,6 +528,7 @@ function BibleReaderInner() {
             ) : (
               <VerseParser content={content} fontSize={fontSize} fontStyle={fontStyle} textColor={t.text}/>
             )}
+
             <p className="mt-10 text-[11px] text-center" style={{ color:t.textFaint }}>
               {versionAbbr} Bible
             </p>
@@ -439,10 +576,28 @@ function BibleReaderInner() {
         </button>
       </div>
 
-      {/* Sheets */}
+      {/* ── ALL SHEETS — AnimatePresence block ── */}
       <AnimatePresence>
-        {showNav && <NavigatorSheet currentBook={book} currentChapter={chapter} onSelect={navigate} onClose={()=>setShowNav(false)} t={t}/>}
+        {showNav && (
+          <NavigatorSheet
+            currentBook={book} currentChapter={chapter}
+            onSelect={navigate} onClose={()=>setShowNav(false)} t={t}
+          />
+        )}
       </AnimatePresence>
+
+      {/* FIX: VersionSheet was completely missing from this block */}
+      <AnimatePresence>
+        {showVer && (
+          <VersionSheet
+            currentId={versionId}
+            onSelect={selectVersion}
+            onClose={()=>setShowVer(false)}
+            t={t}
+          />
+        )}
+      </AnimatePresence>
+
       <AnimatePresence>
         {showFont && (
           <FontModal
