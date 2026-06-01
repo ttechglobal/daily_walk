@@ -981,14 +981,26 @@ export const PLAN_TEMPLATES = [
 //  Day generation helpers
 // ─────────────────────────────────────────────
 
-export function booksTodays(selectedBooks, totalDays) {
+export function booksTodays(selectedBooks, paceOrDays) {
+  // paceOrDays can be a pace object { passagesPerDay } or a number (legacy)
   const allChapters = []
   for (const book of selectedBooks) {
     for (let ch = 1; ch <= book.chapters; ch++) {
       allChapters.push({ book: book.name, chapter: ch })
     }
   }
-  if (!allChapters.length || !totalDays) return []
+  if (!allChapters.length) return []
+
+  // Calculate total days from pace
+  const passagesPerDay = typeof paceOrDays === 'object'
+    ? (paceOrDays?.passagesPerDay || 7)  // default: 1 chapter ≈ 7 passages
+    : null
+  const totalDays = passagesPerDay
+    ? Math.ceil(allChapters.length / passagesPerDay)
+    : (typeof paceOrDays === 'number' ? paceOrDays : allChapters.length)
+
+  if (!totalDays) return []
+
   const days = []
   const perDay = allChapters.length / totalDays
   for (let d = 0; d < totalDays; d++) {

@@ -115,19 +115,23 @@ function StepMode({ mode, setMode, templateMeta, onSelectTemplate, t }) {
 // ─────────────────────────────────────────────
 //  Step 2A — Book picker
 // ─────────────────────────────────────────────
-function StepBook({ selectedBooks, setSelectedBooks, t }) {
+function StepBook({ selectedBooks, setSelectedBooks, pace, setPace, t }) {
   const [testament, setTestament] = useState('NT')
   const [search,    setSearch]    = useState('')
   const visible = BIBLE_BOOKS_FULL
     .filter(b => b.testament === testament)
     .filter(b => b.name.toLowerCase().includes(search.toLowerCase()))
-  const total = selectedBooks.reduce((a, b) => a + b.chapters, 0)
+  const totalChapters = selectedBooks.reduce((a, b) => a + b.chapters, 0)
+  const totalDays     = pace && totalChapters ? calcDurationFromPace(totalChapters, pace) : totalChapters
+
   return (
     <div className="flex flex-col gap-4">
       <div>
         <h2 className="font-display font-bold text-[22px]" style={{ color:t.text }}>Choose books</h2>
-        <p className="text-[13px] mt-1" style={{ color:t.textMuted }}>Chapters distributed evenly across your plan.</p>
+        <p className="text-[13px] mt-1" style={{ color:t.textMuted }}>Select one or more books, then set your pace.</p>
       </div>
+
+      {/* Selected chips */}
       {selectedBooks.length > 0 && (
         <div className="flex flex-wrap gap-1.5">
           {selectedBooks.map(b => (
@@ -138,9 +142,11 @@ function StepBook({ selectedBooks, setSelectedBooks, t }) {
               {b.name} <span className="opacity-70">×</span>
             </button>
           ))}
-          {total > 0 && <span className="text-[12px] self-center font-semibold" style={{ color:'#5B4FCF' }}>{total} chapters</span>}
+          {totalChapters > 0 && <span className="text-[12px] self-center font-semibold" style={{ color:'#5B4FCF' }}>{totalChapters} chapters</span>}
         </div>
       )}
+
+      {/* OT / NT toggle */}
       <div className="flex gap-1 p-1 rounded-[11px]" style={{ background:t.bgMuted }}>
         {['OT','NT'].map(tab => (
           <button key={tab} onClick={() => { setTestament(tab); setSearch('') }}
@@ -150,13 +156,17 @@ function StepBook({ selectedBooks, setSelectedBooks, t }) {
           </button>
         ))}
       </div>
+
+      {/* Search */}
       <div className="relative">
         <Search size={13} className="absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none" style={{ color:t.textMuted }}/>
         <input value={search} onChange={e => setSearch(e.target.value)} placeholder="Search…"
           className="w-full pl-8 pr-3 py-2.5 rounded-[11px] text-[14px] focus:outline-none"
           style={{ background:t.bgCard, color:t.text, border:`1.5px solid ${t.border}` }}/>
       </div>
-      <div className="grid grid-cols-2 gap-1.5 max-h-[240px] overflow-y-auto">
+
+      {/* Grid */}
+      <div className="grid grid-cols-2 gap-1.5 max-h-[200px] overflow-y-auto">
         {visible.map(b => {
           const sel = selectedBooks.some(x => x.name === b.name)
           return (
@@ -164,12 +174,43 @@ function StepBook({ selectedBooks, setSelectedBooks, t }) {
               onClick={() => setSelectedBooks(p => sel ? p.filter(x => x.name!==b.name) : [...p, b])}
               className="flex items-center justify-between px-3 py-3 rounded-[11px] text-left transition-all"
               style={{ background:sel?'#EDE9FF':t.bgCard, border:`1.5px solid ${sel?'#5B4FCF':t.border}` }}>
-              <span className="text-[13px] font-semibold truncate flex-1" style={{ color:sel?'#5B4FCF':t.text }}>{b.name}</span>
+              <span className="text-[13px] font-semibold truncate flex-1"
+                style={{ color:sel?'#5B4FCF':t.text }}>{b.name}</span>
               <span className="text-[10px] ml-1 flex-shrink-0" style={{ color:t.textFaint }}>{b.chapters}ch</span>
             </button>
           )
         })}
       </div>
+
+      {/* Pace selector — shown when books are selected */}
+      {selectedBooks.length > 0 && (
+        <motion.div initial={{ opacity:0, y:6 }} animate={{ opacity:1, y:0 }}
+          className="flex flex-col gap-3 p-4 rounded-[16px]"
+          style={{ background:t.bgCard, border:'1.5px solid #5B4FCF20' }}>
+          <p className="font-bold text-[14px]" style={{ color:t.text }}>How much per day?</p>
+          <div className="flex flex-wrap gap-2">
+            {PACE_OPTIONS.map(p => (
+              <button key={p.id} onClick={() => setPace(p)}
+                className="px-3.5 py-2 rounded-full text-[12px] font-bold border-2 transition-all"
+                style={pace?.id===p.id
+                  ? { background:'#5B4FCF', borderColor:'#5B4FCF', color:'white' }
+                  : { background:t.bgMuted, borderColor:t.border, color:t.textMuted }}>
+                {p.label}
+              </button>
+            ))}
+          </div>
+          {pace && totalChapters > 0 && (
+            <div className="px-4 py-3 rounded-[12px]" style={{ background:'#EDE9FF' }}>
+              <p className="font-bold text-[14px]" style={{ color:'#5B4FCF' }}>
+                {totalChapters} chapters · {pace.label} = <span className="font-display text-[18px]">{totalDays} days</span>
+              </p>
+              <p className="text-[11px] mt-0.5" style={{ color:'#7C6FCD' }}>
+                Adjust above to change the duration before you create the plan.
+              </p>
+            </div>
+          )}
+        </motion.div>
+      )}
     </div>
   )
 }
@@ -470,6 +511,7 @@ function CreatePlanContent() {
   const [sectionId,      setSectionId]      = useState(null)
   const [topicPace,      setTopicPace]      = useState(PACE_OPTIONS[0])
   const [charPace,       setCharPace]       = useState(PACE_OPTIONS[0])
+  const [bookPace,       setBookPace]       = useState(PACE_OPTIONS[2]) // default: 1 chapter/day
   const [name,           setName]           = useState('')
   const [startDate,      setStartDate]      = useState(todayStr())
   const [planType,       setPlanType]       = useState('group')
@@ -499,8 +541,7 @@ function CreatePlanContent() {
 
   function buildDays() {
     if (mode === 'book' && selectedBooks.length) {
-      const totalChapters = selectedBooks.reduce((a,b) => a+b.chapters, 0)
-      return booksTodays(selectedBooks, totalChapters)
+      return booksTodays(selectedBooks, bookPace)
     }
     if (mode === 'topic' && selectedTopicId) {
       const topic = TOPICS.find(t => t.id === selectedTopicId)
@@ -586,7 +627,8 @@ function CreatePlanContent() {
           )}
           {step === 2 && mode === 'book' && (
             <motion.div key="s2b" initial={{ opacity:0, x:20 }} animate={{ opacity:1, x:0 }} exit={{ opacity:0, x:-20 }}>
-              <StepBook selectedBooks={selectedBooks} setSelectedBooks={setSelectedBooks} t={t}/>
+              <StepBook selectedBooks={selectedBooks} setSelectedBooks={setSelectedBooks}
+                pace={bookPace} setPace={setBookPace} t={t}/>
             </motion.div>
           )}
           {step === 2 && mode === 'topic' && (
