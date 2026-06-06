@@ -1,14 +1,13 @@
 // ── src/app/layout.js ──
-// Server Component — no 'use client' needed or allowed here.
+// v3 — Offline cache integration.
+// Changes from v2:
+//   • AuthProvider imported and wraps everything (needed by useAuthContext in child components)
+//   • AppInit now handles the offline queue drain (see AppInit.js changes below)
 //
-// FIX: Removed `next/script` from inside <head>.
-// `<Script strategy="beforeInteractive">` inside a Server Component layout
-// causes "Encountered a script tag while rendering React component" in Next 16.
-// The correct approach for a no-flash dark mode init script is a plain
-// <script dangerouslySetInnerHTML> tag directly in <head> — this is the
-// officially recommended pattern in Next.js App Router docs.
-// `next/script` with `afterInteractive` is still used for sw-register.js
-// in <body> where it belongs.
+// NOTE: The offline drain is NOT added here directly because layout.js is a
+// Server Component and cannot use hooks. Instead, AppInit.js (already a client
+// component that runs on mount) is updated to call useOfflineDrain().
+// This file only changes to ensure AuthProvider is present.
 
 import './globals.css'
 import Script        from 'next/script'
@@ -19,6 +18,7 @@ import AppInit       from '../components/AppInit'
 import OfflineBanner from '../components/OfflineBanner'
 import { DarkModeProvider } from '../contexts/DarkModeContext'
 import { AuthGateProvider } from '../components/AuthGate'
+import { AuthProvider }     from '../contexts/AuthContext'   // ← ensure this is present
 
 export const metadata = {
   title:       'Daily Walk — Your daily devotion, together.',
@@ -38,20 +38,12 @@ export const viewport = {
   themeColor:   '#5B4FCF',
 }
 
-// Dark mode init script — inlined as a string constant so it's clear
-// this runs synchronously before first paint, preventing any flash.
 const DARK_MODE_SCRIPT = `try{if(localStorage.getItem('dw_dark_mode')==='true'){document.documentElement.setAttribute('data-theme','dark');document.documentElement.classList.add('dark');}}catch(e){}`
 
 export default function RootLayout({ children }) {
   return (
     <html lang="en" suppressHydrationWarning>
       <head>
-        {/*
-          Plain <script> tag — not next/script.
-          This is the correct way to inject a blocking inline script in
-          Next.js App Router. It runs before React hydrates, preventing
-          the dark mode flash. next/script is for external scripts only.
-        */}
         <script dangerouslySetInnerHTML={{ __html: DARK_MODE_SCRIPT }} />
 
         <link rel="preconnect" href="https://fonts.googleapis.com" />
@@ -71,37 +63,39 @@ export default function RootLayout({ children }) {
 
       <body style={{ margin: 0 }}>
         <DarkModeProvider>
-          <AuthGateProvider>
-            <OfflineBanner />
+          <AuthProvider>                    {/* ← ensures useAuthContext works everywhere */}
+            <AuthGateProvider>
+              <OfflineBanner />
 
-            <div
-              className="flex min-h-screen"
-              style={{ background: 'var(--bg, #FAF8F5)' }}
-            >
-              <Sidebar />
+              <div
+                className="flex min-h-screen"
+                style={{ background: 'var(--bg, #FAF8F5)' }}
+              >
+                <Sidebar />
 
-              <div className="flex-1 min-w-0 flex justify-center md:justify-start">
-                <div
-                  className="w-full min-w-0 max-w-[430px] md:max-w-none md:w-full relative flex flex-col min-h-screen"
-                  style={{ background: 'var(--bg, #FAF8F5)' }}
-                >
-                  <main className="flex-1" style={{ background: 'var(--bg, #FAF8F5)' }}>
-                    {children}
-                  </main>
+                <div className="flex-1 min-w-0 flex justify-center md:justify-start">
+                  <div
+                    className="w-full min-w-0 max-w-[430px] md:max-w-none md:w-full relative flex flex-col min-h-screen"
+                    style={{ background: 'var(--bg, #FAF8F5)' }}
+                  >
+                    <main className="flex-1" style={{ background: 'var(--bg, #FAF8F5)' }}>
+                      {children}
+                    </main>
 
-                  <div className="md:hidden">
-                    <BottomNav />
+                    <div className="md:hidden">
+                      <BottomNav />
+                    </div>
                   </div>
                 </div>
               </div>
-            </div>
 
-            <AppInit />
-            <InstallPrompt />
-          </AuthGateProvider>
+              {/* AppInit runs useOfflineDrain — see AppInit.js */}
+              <AppInit />
+              <InstallPrompt />
+            </AuthGateProvider>
+          </AuthProvider>
         </DarkModeProvider>
 
-        {/* next/script is correct here — external file, non-blocking, in body */}
         <Script src="/sw-register.js" strategy="afterInteractive" />
       </body>
     </html>
