@@ -1,19 +1,15 @@
 'use client'
 
 // ── src/components/OfflineBadge.js ──
-// Shows offline cache status on plan cards and the reader.
-// Two variants:
-//   'plan'   — "✓ Available offline" / "Downloading…" / "Partial" on plan cards
-//   'reader' — small pill in the reader header showing cache status
-//
-// Also exports useOfflineDrain — call this once on app startup to drain the queue.
+// Offline indicators — v4 (bib-first).
 
 import { useState, useEffect } from 'react'
-import { WifiOff, CheckCircle2, Download, CloudOff } from 'lucide-react'
+import { WifiOff, CheckCircle2, Download } from 'lucide-react'
 import { useTheme } from '../lib/theme'
+import { getActiveTranslation, isTranslationDownloaded } from '../lib/bib-translations'
 
 // ─────────────────────────────────────────────
-//  useOnlineStatus — reactive network status
+//  useOnlineStatus
 // ─────────────────────────────────────────────
 export function useOnlineStatus() {
   const [online, setOnline] = useState(
@@ -33,130 +29,120 @@ export function useOnlineStatus() {
 }
 
 // ─────────────────────────────────────────────
-//  useOfflineDrain
-//  Call once in a top-level layout/provider.
-//  Drains the queue when the user comes online.
+//  useOfflineDrain — drains plan queue when back online
 // ─────────────────────────────────────────────
 export function useOfflineDrain() {
   const online = useOnlineStatus()
-
   useEffect(() => {
     if (!online) return
-    // Dynamic import so this never runs on SSR
-    import('../lib/plan-cache')
-      .then(({ drainCacheQueue }) => {
-        import('../lib/bible').then(({ getPreferredVersionId }) => {
-          drainCacheQueue(getPreferredVersionId()).catch(() => null)
-        })
+    import('../lib/plan-cache').then(({ drainCacheQueue }) => {
+      import('../lib/bib-translations').then(({ getActiveTranslation }) => {
+        drainCacheQueue(getActiveTranslation()).catch(() => null)
       })
-      .catch(() => null)
+    }).catch(() => null)
   }, [online])
 }
 
 // ─────────────────────────────────────────────
-//  PlanOfflineBadge
-//  Shows on plan cards. Checks if today's reading is cached.
-//  Props:
-//    planContent   : ContentItem[]
-//    frequency     : { unit, count }
-//    currentDay    : number
-//    versionId     : string | number
+//  PlanOfflineBadge — shown on plan cards
 // ─────────────────────────────────────────────
-export function PlanOfflineBadge({ planContent, frequency, currentDay, versionId }) {
-  const [status, setStatus] = useState('checking') // 'checking' | 'cached' | 'uncached'
+export function PlanOfflineBadge({ planContent, frequency, currentDay, translationId }) {
+  const [status, setStatus] = useState('checking')
   const online = useOnlineStatus()
 
   useEffect(() => {
     if (!planContent?.length || !frequency) { setStatus('uncached'); return }
     let cancelled = false
+    const tid = translationId || getActiveTranslation()
     import('../lib/plan-cache').then(({ isDayCached }) => {
-      isDayCached(planContent, frequency, currentDay, versionId)
+      isDayCached(planContent, frequency, currentDay, tid)
         .then(cached => { if (!cancelled) setStatus(cached ? 'cached' : 'uncached') })
         .catch(() => { if (!cancelled) setStatus('uncached') })
-    })
+    }).catch(() => setStatus('uncached'))
     return () => { cancelled = true }
-  }, [planContent, frequency, currentDay, versionId])
+  }, [planContent, frequency, currentDay, translationId])
 
   if (status === 'checking') return null
 
-  if (status === 'cached') {
-    return (
-      <div className="flex items-center gap-1">
-        <CheckCircle2 size={11} style={{ color: '#4A7C5F' }} />
-        <span className="text-[10px] font-semibold" style={{ color: '#4A7C5F' }}>
-          Available offline
-        </span>
-      </div>
-    )
-  }
-
-  // Not cached — show only if offline (online users don't need to see this)
-  if (!online) {
-    return (
-      <div className="flex items-center gap-1">
-        <CloudOff size={11} style={{ color: '#E8A838' }} />
-        <span className="text-[10px] font-semibold" style={{ color: '#E8A838' }}>
-          Not downloaded
-        </span>
-      </div>
-    )
-  }
-
-  return null
-}
-
-// ─────────────────────────────────────────────
-//  ReaderCacheBadge
-//  Tiny pill in the Bible reader header.
-//  Shows "Offline" when reading cached content without network.
-// ─────────────────────────────────────────────
-export function ReaderCacheBadge({ fromCache, cacheType, isOffline }) {
-  const { t } = useTheme()
-
-  if (isOffline && fromCache) {
-    return (
-      <div className="flex items-center gap-1 px-2 py-0.5 rounded-full"
-        style={{ background: '#E8F4ED' }}>
-        <WifiOff size={10} style={{ color: '#4A7C5F' }} />
-        <span className="text-[10px] font-bold" style={{ color: '#4A7C5F' }}>Offline</span>
-      </div>
-    )
-  }
-
-  if (isOffline && !fromCache) {
-    return (
-      <div className="flex items-center gap-1 px-2 py-0.5 rounded-full"
-        style={{ background: '#FDECEA' }}>
-        <WifiOff size={10} style={{ color: '#E84060' }} />
-        <span className="text-[10px] font-bold" style={{ color: '#E84060' }}>No connection</span>
-      </div>
-    )
-  }
-
-  return null
-}
-
-// ─────────────────────────────────────────────
-//  OfflineBanner
-//  Full-width banner shown when offline and content not cached.
-//  Drop into any page that fetches Bible content.
-// ─────────────────────────────────────────────
-export function OfflineBanner({ t: theme }) {
-  const { t: defaultTheme } = useTheme()
-  const t = theme || defaultTheme
-
-  return (
-    <div className="mx-4 rounded-[16px] px-4 py-3.5 flex items-start gap-3"
-      style={{ background: '#FFF8E6', border: '1px solid #E8A83840' }}>
-      <WifiOff size={18} style={{ color: '#E8A838', flexShrink: 0, marginTop: 1 }} />
-      <div>
-        <p className="font-bold text-[13px]" style={{ color: '#92681A' }}>
-          You're offline
-        </p>
-        <p className="text-[12px] mt-0.5" style={{ color: '#B8841F' }}>
-          This passage hasn't been downloaded yet. Connect to the internet to read it.
-        </p>
-      </div>
+  if (status === 'cached') return (
+    <div className="flex items-center gap-1">
+      <CheckCircle2 size={11} style={{color:'#4A7C5F'}}/>
+      <span className="text-[11px] font-semibold" style={{color:'#4A7C5F'}}>
+        Available offline
+      </span>
     </div>
+  )
+
+  if (!online) return (
+    <div className="flex items-center gap-1">
+      <WifiOff size={11} style={{color:'#E84038'}}/>
+      <span className="text-[11px] font-semibold" style={{color:'#E84038'}}>
+        Not downloaded
+      </span>
+    </div>
+  )
+
+  return null
+}
+
+// ─────────────────────────────────────────────
+//  ReaderCacheBadge — small pill in reader header
+// ─────────────────────────────────────────────
+export function ReaderCacheBadge({ fromCache, translationId }) {
+  const downloaded = translationId ? isTranslationDownloaded(translationId) : false
+  if (downloaded) return (
+    <span className="flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold"
+      style={{background:'#4A7C5F20', color:'#4A7C5F'}}>
+      <CheckCircle2 size={9}/>
+      Offline ready
+    </span>
+  )
+  if (fromCache) return (
+    <span className="flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold"
+      style={{background:'#5B4FCF20', color:'#5B4FCF'}}>
+      Cached
+    </span>
+  )
+  return null
+}
+
+// ─────────────────────────────────────────────
+//  OfflineBanner — full-width, shown when offline
+// ─────────────────────────────────────────────
+export function OfflineBanner({ t }) {
+  const online = useOnlineStatus()
+  if (online) return null
+  return (
+    <div className="px-4 py-2.5 flex items-center gap-2"
+      style={{background:'#E8A83820', borderBottom:'1px solid #E8A83830'}}>
+      <WifiOff size={13} style={{color:'#B07000', flexShrink:0}}/>
+      <p className="text-[12px] font-semibold" style={{color:'#B07000'}}>
+        You're offline — showing downloaded content only
+      </p>
+    </div>
+  )
+}
+
+// ─────────────────────────────────────────────
+//  TranslationPrompt — shown when no translation downloaded
+// ─────────────────────────────────────────────
+export function TranslationPrompt({ onPress }) {
+  const { t } = useTheme()
+  const activeId = getActiveTranslation()
+  if (isTranslationDownloaded(activeId)) return null
+  return (
+    <button onClick={onPress}
+      className="flex items-center gap-2 px-3 py-2.5 rounded-[12px] w-full active:scale-98 transition-all"
+      style={{background:'#E8A83815', border:'1.5px solid #E8A83840'}}>
+      <Download size={14} style={{color:'#B07000', flexShrink:0}}/>
+      <div className="flex-1 text-left">
+        <p className="text-[12px] font-bold" style={{color:'#B07000'}}>
+          Download a Bible translation
+        </p>
+        <p className="text-[11px]" style={{color:'#B07000', opacity:0.75}}>
+          Read offline — free, one-time ~4 MB download
+        </p>
+      </div>
+    </button>
   )
 }
