@@ -1,456 +1,458 @@
 'use client'
 
-// ── src/components/TodaysReadingCard.js ──
-// Dynamic home card — v2.
-// Shows today's reading slice from the user's active plan.
-// Tabs: Reading | Notes
-// Mark as Read: prominent CTA, logs completion, notifies group members.
-// Multi-plan toggle if user has more than one active plan.
-//
-// Data flow:
-//   1. getActivePlanForHome() → returns up to 5 active plans with content
-//   2. getSliceForDay() → O(1) slice for currentDay
-//   3. Notes: local-first via plan-notes.js
-//   4. Mark as Read: markDayComplete() → notifyReadComplete()
+// ── src/components/TodaysReadingCard.js ── v4
+// OFFLINE-FIRST, GUEST-FRIENDLY:
+//   • No account needed — reads from localStorage (dw_plans) first
+//   • If user is signed in AND has Supabase plans, merges them in
+//   • Multiple active plans → horizontally swipable cards with dot indicators
+//   • Mark-as-read works for both local plans and Supabase plans
+//   • Notes tab is local-first (no auth required)
 
 import { useState, useEffect, useCallback, useRef } from 'react'
 import { useRouter } from 'next/navigation'
 import { motion, AnimatePresence } from 'framer-motion'
 import {
-  BookOpen, CheckCircle2, ChevronRight, ChevronLeft,
-  Loader2, PenLine, RotateCcw,
+  BookOpen, CheckCircle2, ChevronRight,
+  Loader2, PenLine, Users,
 } from 'lucide-react'
-import { useTheme } from '../lib/theme'
+import { useTheme }       from '../lib/theme'
 import { useAuthContext } from '../contexts/AuthContext'
+import { showToast }      from './Toast'
+
+// Local plan helpers (offline, no auth)
 import {
-  getActivePlanForHome, markDayComplete, notifyReadComplete,
-} from '../lib/supabase/plans'
-import {
-  getSliceForDay, formatSliceReference, getCompletionPct,
-} from '../lib/plan-schedule'
-import { getNote, saveNote } from '../lib/plan-notes'
-import { showToast } from './Toast'
+  readPlans, getTodaysPlan, isPlanCompletedToday,
+  markDayComplete as localMarkDone, getPlanProgress,
+} from '../lib/plans'
+
+// Supabase plan helpers (auth only — lazy imported)
+// getActivePlanForHome, markDayComplete as supabaseMarkDone
 
 // ─────────────────────────────────────────────
-//  Debounce helper (for note autosave)
+//  Note storage — local-first, no auth required
+// ─────────────────────────────────────────────
+const NOTE_PREFIX = 'dw_plannote_'
+function readNote(planId, day) {
+  try { return localStorage.getItem(`${NOTE_PREFIX}${planId}_${day}`) || '' } catch { return '' }
+}
+function writeNote(planId, day, text) {
+  try { localStorage.setItem(`${NOTE_PREFIX}${planId}_${day}`, text) } catch {}
+}
+
+// ─────────────────────────────────────────────
+//  Debounce
 // ─────────────────────────────────────────────
 function useDebounce(fn, delay) {
   const timer = useRef(null)
   return useCallback((...args) => {
     clearTimeout(timer.current)
     timer.current = setTimeout(() => fn(...args), delay)
-  }, [fn, delay])
+  }, [fn, delay]) // eslint-disable-line
 }
 
 // ─────────────────────────────────────────────
-//  TodaysReadingCard
+//  Normalise a local plan into the card shape
 // ─────────────────────────────────────────────
-export default function TodaysReadingCard() {
-  const { t }              = useTheme()
-  const { user }           = useAuthContext()
-  const router             = useRouter()
+function normaliseLocalPlan(p) {
+  return {
+    planId:      p.id,
+    planName:    p.name,
+    source:      'local',
+    currentDay:  p.currentDay || 1,
+    totalDays:   p.totalDays  || p.days?.length || 0,
+    passage:     p.days?.[p.currentDay - 1]?.passage || null,
+    memberCount: 1,
+    isLocalPlan: true,
+    rawPlan:     p,
+  }
+}
 
-  // Plan state
-  const [plans,       setPlans]       = useState([])
-  const [planIdx,     setPlanIdx]     = useState(0) // which plan is shown
-  const [loading,     setLoading]     = useState(true)
+// ─────────────────────────────────────────────
+//  Normalise a Supabase plan row into the card shape
+// ─────────────────────────────────────────────
+function normaliseSupabasePlan(r) {
+  // getActivePlanForHome already shaped these
+  return {
+    planId:        r.planId,
+    planName:      r.planName,
+    source:        'supabase',
+    currentDay:    r.currentDay || 1,
+    totalDays:     r.personalDays || r.totalItems || 0,
+    content:       r.content,
+    frequencyUnit: r.frequencyUnit,
+    frequencyCount:r.frequencyCount,
+    memberCount:   r.memberCount || 1,
+    isLocalPlan:   false,
+  }
+}
 
-  // Reading state
-  const [todayDone,   setTodayDone]   = useState(false)
-  const [marking,     setMarking]     = useState(false)
+// ─────────────────────────────────────────────
+//  Empty state — no plans
+// ─────────────────────────────────────────────
+function NoPlanCard({ t, router }) {
+  return (
+    <motion.div
+      initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }}
+      className="mx-4 rounded-[22px] p-5 flex flex-col gap-3"
+      style={{ background: t.bgCard, border: `1px solid ${t.border}` }}>
+      <div className="flex items-center gap-2">
+        <BookOpen size={16} style={{ color: '#5B4FCF' }} />
+        <span className="font-bold text-[14px]" style={{ color: t.text }}>Today's Reading</span>
+      </div>
+      <p className="text-[13px] leading-relaxed" style={{ color: t.textMuted }}>
+        Pick a reading plan to guide your daily time in the Word. No account needed to get started.
+      </p>
+      <button onClick={() => router.push('/plans')}
+        className="self-start px-5 py-2.5 rounded-full font-bold text-[13px] text-white active:scale-95 transition-all"
+        style={{ background: 'linear-gradient(135deg, #5B4FCF, #3D3190)' }}>
+        Browse Plans →
+      </button>
+    </motion.div>
+  )
+}
 
-  // Notes state
-  const [activeTab,   setActiveTab]   = useState('reading') // 'reading' | 'notes'
-  const [noteText,    setNoteText]    = useState('')
-  const [noteSaved,   setNoteSaved]   = useState(true)
+// ─────────────────────────────────────────────
+//  Single plan card
+// ─────────────────────────────────────────────
+function PlanCard({ plan, t, router }) {
+  const [todayDone, setTodayDone] = useState(false)
+  const [marking,   setMarking]   = useState(false)
+  const [activeTab, setActiveTab] = useState('reading')
+  const [noteText,  setNoteText]  = useState('')
+  const [noteSaved, setNoteSaved] = useState(true)
 
-  // ── Load plans ──
-  useEffect(() => {
-    if (!user?.id) { setLoading(false); return }
-    getActivePlanForHome(user.id)
-      .then(rows => {
-        setPlans(rows || [])
-        setLoading(false)
-      })
-      .catch(() => setLoading(false))
-  }, [user?.id])
-
-  const activePlan = plans[planIdx] || null
-
-  // ── Derive today's slice ──
-  const frequency = activePlan
-    ? { unit: activePlan.frequencyUnit || 'chapter', count: activePlan.frequencyCount || 1 }
-    : null
-  const todaySlice = activePlan && frequency
-    ? getSliceForDay(activePlan.content, frequency, activePlan.currentDay)
-    : null
-  const reference = formatSliceReference(todaySlice)
-  const pct       = activePlan
-    ? getCompletionPct(activePlan.currentDay, activePlan.personalDays)
+  // Derive passage / progress
+  const pct = plan.totalDays > 0
+    ? Math.min(100, Math.round(((plan.currentDay - 1) / plan.totalDays) * 100))
     : 0
 
-  // ── Check if today is already done ──
-  useEffect(() => {
-    if (!user?.id || !activePlan) return
-    const { createClient } = require('../lib/supabase/client')
-    const sb = createClient()
-    if (!sb) return
-    sb.from('daily_completions')
-      .select('id', { count: 'exact', head: true })
-      .eq('plan_id', activePlan.planId)
-      .eq('user_id', user.id)
-      .eq('day_number', activePlan.currentDay)
-      .then(({ count }) => setTodayDone((count || 0) > 0))
-  }, [user?.id, activePlan?.planId, activePlan?.currentDay])
+  // For local plans: get passage from rawPlan
+  // For Supabase plans: compute from content + frequency
+  const [sliceRef, setSliceRef] = useState(null)
 
-  // ── Load note for this day ──
   useEffect(() => {
-    if (!user?.id || !activePlan) return
-    getNote(user.id, activePlan.planId, activePlan.currentDay)
-      .then(text => { setNoteText(text); setNoteSaved(true) })
-  }, [user?.id, activePlan?.planId, activePlan?.currentDay])
+    if (plan.isLocalPlan) {
+      setSliceRef(plan.passage || null)
+      // Check if today is already done
+      if (plan.rawPlan) setTodayDone(isPlanCompletedToday(plan.rawPlan))
+    } else {
+      // Supabase plan — compute slice
+      if (plan.content && plan.currentDay) {
+        import('../lib/plan-schedule').then(({ getSliceForDay, formatSliceReference }) => {
+          const freq = {
+            unit:  plan.frequencyUnit  || 'chapter',
+            count: plan.frequencyCount || 1,
+          }
+          const slice = getSliceForDay(plan.content, plan.currentDay, freq)
+          if (slice) setSliceRef(formatSliceReference(slice))
+        })
+      }
+      // Check Supabase done state
+      import('../lib/supabase/client').then(({ createClient }) => {
+        const sb = createClient()
+        if (!sb) return
+        sb.auth.getUser().then(({ data: { user } }) => {
+          if (!user) return
+          sb.from('daily_completions')
+            .select('id', { count: 'exact', head: true })
+            .eq('plan_id', plan.planId)
+            .eq('user_id', user.id)
+            .eq('day_number', plan.currentDay)
+            .then(({ count }) => setTodayDone((count || 0) > 0))
+        })
+      })
+    }
+    // Load note
+    setNoteText(readNote(plan.planId, plan.currentDay))
+  }, [plan.planId, plan.currentDay]) // eslint-disable-line
 
-  // ── Autosave note ──
-  const persistNote = useCallback((text) => {
-    if (!user?.id || !activePlan) return
-    saveNote(user.id, activePlan.planId, activePlan.currentDay, text)
+  const saveNoteDebounced = useDebounce((text) => {
+    writeNote(plan.planId, plan.currentDay, text)
     setNoteSaved(true)
-  }, [user?.id, activePlan?.planId, activePlan?.currentDay])
-
-  const debouncedSave = useDebounce(persistNote, 800)
+  }, 800)
 
   function handleNoteChange(e) {
     setNoteText(e.target.value)
     setNoteSaved(false)
-    debouncedSave(e.target.value)
+    saveNoteDebounced(e.target.value)
   }
 
-  // ── Mark as read ──
-  async function handleMarkRead() {
-    if (!activePlan || todayDone || marking) return
+  async function handleMarkDone() {
+    if (todayDone || marking) return
     setMarking(true)
     try {
-      await markDayComplete(activePlan.planId, activePlan.currentDay)
-      setTodayDone(true)
-      // Notify group members (fire and forget)
-      if (activePlan.memberCount > 1 && user) {
-        notifyReadComplete(
-          activePlan.planId, activePlan.planName,
-          user.user_metadata?.name || user.email?.split('@')[0] || 'Someone',
-          activePlan.currentDay
-        ).catch(() => null)
+      if (plan.isLocalPlan) {
+        // Local plan — no auth needed
+        localMarkDone(plan.planId, plan.currentDay, noteText)
+        setTodayDone(true)
+        showToast('Day complete! 🙌')
+      } else {
+        // Supabase plan — requires auth
+        const { markDayComplete } = await import('../lib/supabase/plans')
+        await markDayComplete(plan.planId, plan.currentDay)
+        setTodayDone(true)
+        showToast('Day complete! 🙌')
+        // Notify group silently
+        try {
+          const { notifyReadComplete } = await import('../lib/supabase/plans')
+          await notifyReadComplete(plan.planId, plan.currentDay)
+        } catch {}
       }
-      showToast('Day complete! 🙌')
-      // Optimistically advance currentDay in UI
-      setPlans(prev => prev.map((p, i) =>
-        i === planIdx
-          ? { ...p, currentDay: Math.min(p.currentDay + 1, p.personalDays || 9999) }
-          : p
-      ))
     } catch (e) {
-      showToast(e.message === 'not_authenticated' ? 'Sign in to track progress' : 'Something went wrong')
-    } finally {
-      setMarking(false)
-    }
+      showToast(e.message === 'not_authenticated'
+        ? 'Sign in to sync your progress'
+        : 'Something went wrong')
+    } finally { setMarking(false) }
   }
 
-  // ─────────────────────────────────────────────
-  //  Render: no user
-  // ─────────────────────────────────────────────
-  if (!user) {
-    return (
-      <GuestCard t={t} router={router} />
-    )
+  function handleOpenReader() {
+    const ref = sliceRef || plan.passage
+    if (!ref) { router.push('/read'); return }
+    const m = ref.match(/^(.+?)\s+(\d+)/)
+    if (m) router.push(`/read?book=${encodeURIComponent(m[1].trim())}&chapter=${m[2]}`)
+    else   router.push('/read')
   }
 
-  // ─────────────────────────────────────────────
-  //  Render: loading
-  // ─────────────────────────────────────────────
-  if (loading) {
-    return (
-      <div className="mx-4 rounded-[22px] overflow-hidden"
-        style={{ background: t.bgCard, border: `1px solid ${t.border}`, minHeight: 200 }}>
-        <div className="flex items-center justify-center h-[200px]">
-          <Loader2 size={22} className="animate-spin" style={{ color: '#5B4FCF' }} />
-        </div>
-      </div>
-    )
-  }
+  const TABS = [
+    { key: 'reading', label: 'Reading', Icon: BookOpen },
+    { key: 'notes',   label: 'Notes',   Icon: PenLine  },
+  ]
 
-  // ─────────────────────────────────────────────
-  //  Render: no active plan
-  // ─────────────────────────────────────────────
-  if (!activePlan || !todaySlice) {
-    return <NoPlanCard t={t} router={router} />
-  }
-
-  // ─────────────────────────────────────────────
-  //  Render: active plan card
-  // ─────────────────────────────────────────────
   return (
-    <div className="mx-4">
-      {/* Multi-plan toggle */}
-      {plans.length > 1 && (
-        <div className="flex items-center justify-between mb-2 px-1">
-          <p className="text-[12px] font-semibold" style={{ color: t.textMuted }}>
-            {planIdx + 1} of {plans.length} plans
-          </p>
-          <div className="flex gap-1">
-            <button
-              onClick={() => { setPlanIdx(i => Math.max(0, i - 1)); setActiveTab('reading') }}
-              disabled={planIdx === 0}
-              className="w-7 h-7 rounded-full flex items-center justify-center disabled:opacity-30"
-              style={{ background: t.bgMuted }}>
-              <ChevronLeft size={14} style={{ color: t.text }} />
-            </button>
-            <button
-              onClick={() => { setPlanIdx(i => Math.min(plans.length - 1, i + 1)); setActiveTab('reading') }}
-              disabled={planIdx === plans.length - 1}
-              className="w-7 h-7 rounded-full flex items-center justify-center disabled:opacity-30"
-              style={{ background: t.bgMuted }}>
-              <ChevronRight size={14} style={{ color: t.text }} />
-            </button>
+    <div className="rounded-[22px] overflow-hidden flex flex-col"
+      style={{ background: t.bgCard, border: `1px solid ${t.border}` }}>
+
+      {/* Header gradient band */}
+      <div className="px-5 pt-4 pb-3"
+        style={{ background: 'linear-gradient(135deg, #5B4FCF, #3D3190)' }}>
+        <div className="flex items-start justify-between gap-2">
+          <div className="flex-1 min-w-0">
+            <p className="text-white/60 text-[11px] font-bold uppercase tracking-wider">
+              Day {plan.currentDay} {plan.totalDays > 0 ? `of ${plan.totalDays}` : ''}
+            </p>
+            <p className="font-bold text-[17px] text-white mt-0.5 leading-snug truncate">
+              {plan.planName}
+            </p>
+            {sliceRef && (
+              <p className="text-white/70 text-[13px] mt-0.5">{sliceRef}</p>
+            )}
+          </div>
+          <div className="flex flex-col items-end gap-1.5 flex-shrink-0">
+            {plan.memberCount > 1 && (
+              <div className="flex items-center gap-1 bg-white/15 rounded-full px-2 py-1">
+                <Users size={11} color="rgba(255,255,255,0.85)" />
+                <span className="text-[11px] font-bold text-white/85">{plan.memberCount}</span>
+              </div>
+            )}
+            {plan.isLocalPlan && (
+              <span className="text-[9px] font-bold text-white/40 uppercase tracking-wider">Local</span>
+            )}
           </div>
         </div>
-      )}
 
-      <motion.div
-        initial={{ opacity: 0, y: 8 }}
-        animate={{ opacity: 1, y: 0 }}
-        className="rounded-[22px] overflow-hidden"
-        style={{ background: t.bgCard, border: `1px solid ${t.border}` }}
-      >
-        {/* Header */}
-        <div
-          className="px-4 pt-4 pb-3"
-          style={{ background: 'linear-gradient(135deg,#5B4FCF18,#3D319008)' }}
-        >
-          {/* Plan name + day */}
-          <div className="flex items-start justify-between gap-2 mb-2">
-            <div className="flex-1 min-w-0">
-              <p className="text-[11px] font-bold uppercase tracking-wider mb-0.5"
-                style={{ color: '#5B4FCF' }}>
-                Day {activePlan.currentDay}
-                {activePlan.personalDays ? ` of ${activePlan.personalDays}` : ''}
-              </p>
-              <p className="font-bold text-[16px] leading-snug truncate"
-                style={{ color: t.text }}>
-                {activePlan.planName}
-              </p>
+        {/* Progress bar */}
+        {plan.totalDays > 0 && (
+          <>
+            <div className="mt-3 h-1.5 rounded-full overflow-hidden"
+              style={{ background: 'rgba(255,255,255,0.2)' }}>
+              <div className="h-full rounded-full transition-all duration-500"
+                style={{ width: `${pct}%`, background: 'rgba(255,255,255,0.9)' }} />
             </div>
-            {/* Progress ring (simple) */}
-            <div className="flex-shrink-0 flex items-center gap-1.5">
-              <div className="w-8 h-8 relative flex items-center justify-center">
-                <svg viewBox="0 0 32 32" className="absolute inset-0 -rotate-90">
-                  <circle cx="16" cy="16" r="13" fill="none" stroke={t.bgMuted} strokeWidth="3"/>
-                  <circle cx="16" cy="16" r="13" fill="none" stroke="#5B4FCF" strokeWidth="3"
-                    strokeDasharray={`${(pct / 100) * 81.7} 81.7`}
-                    strokeLinecap="round"/>
-                </svg>
-                <span className="text-[8px] font-bold relative z-10" style={{ color: '#5B4FCF' }}>
-                  {pct}%
+            <p className="mt-1 text-white/50 text-[10px]">{pct}% complete</p>
+          </>
+        )}
+      </div>
+
+      {/* Tab bar */}
+      <div className="flex border-b" style={{ borderColor: t.border }}>
+        {TABS.map(({ key, label, Icon }) => (
+          <button key={key}
+            onClick={() => setActiveTab(key)}
+            className="flex-1 flex items-center justify-center gap-1.5 py-2.5 text-[12px] font-bold border-b-2 transition-all"
+            style={{
+              color:       activeTab === key ? '#5B4FCF' : t.textMuted,
+              borderColor: activeTab === key ? '#5B4FCF' : 'transparent',
+            }}>
+            <Icon size={13} />
+            {label}
+          </button>
+        ))}
+      </div>
+
+      {/* Tab content */}
+      <AnimatePresence mode="wait" initial={false}>
+        {activeTab === 'reading' ? (
+          <motion.div key="reading"
+            initial={{ opacity: 0, x: -6 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0, x: -6 }}
+            transition={{ duration: 0.13 }}
+            className="px-5 py-4 flex flex-col gap-3">
+
+            {/* Open reader */}
+            <button onClick={handleOpenReader}
+              className="w-full flex items-center justify-center gap-2 py-2.5 rounded-[12px] text-[13px] font-semibold active:opacity-70 transition-opacity"
+              style={{ background: t.bgMuted, color: t.textMuted }}>
+              <BookOpen size={14} />
+              Open in Bible reader
+            </button>
+
+            {/* Mark done */}
+            {todayDone ? (
+              <div className="flex items-center justify-center gap-2 py-2.5 rounded-[12px]"
+                style={{ background: '#E8F5EE' }}>
+                <CheckCircle2 size={16} style={{ color: '#4A7C5F' }} />
+                <span className="font-bold text-[13px]" style={{ color: '#4A7C5F' }}>
+                  Read today ✓
                 </span>
               </div>
+            ) : (
+              <button onClick={handleMarkDone} disabled={marking}
+                className="w-full flex items-center justify-center gap-2 py-3 rounded-[14px] font-bold text-[14px] text-white active:scale-[0.97] disabled:opacity-60 transition-all"
+                style={{ background: 'linear-gradient(135deg, #4A7C5F, #2D6043)' }}>
+                {marking
+                  ? <Loader2 size={15} className="animate-spin" />
+                  : <><CheckCircle2 size={15} /> Mark as read</>}
+              </button>
+            )}
+          </motion.div>
+        ) : (
+          <motion.div key="notes"
+            initial={{ opacity: 0, x: 6 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0, x: 6 }}
+            transition={{ duration: 0.13 }}
+            className="px-5 py-4 flex flex-col gap-2">
+            <textarea
+              value={noteText}
+              onChange={handleNoteChange}
+              placeholder="Your thoughts, questions, or reflections for today's passage…"
+              rows={5}
+              className="w-full resize-none text-[14px] leading-relaxed focus:outline-none rounded-[12px] p-3 border"
+              style={{ background: t.bgMuted, color: t.text, borderColor: t.border }} />
+            <p className="text-[11px] text-right" style={{ color: t.textFaint }}>
+              {noteSaved ? 'Saved locally' : 'Saving…'}
+            </p>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      {/* Go to plan link */}
+      <button onClick={() => router.push(`/plans/${plan.planId}`)}
+        className="flex items-center justify-center gap-1 py-3 text-[12px] font-semibold border-t"
+        style={{ color: t.textMuted, borderColor: t.border }}>
+        View full plan <ChevronRight size={13} />
+      </button>
+    </div>
+  )
+}
+
+// ─────────────────────────────────────────────
+//  Swipable cards wrapper
+// ─────────────────────────────────────────────
+function SwipableCards({ plans, t, router }) {
+  const [idx,    setIdx]    = useState(0)
+  const startX             = useRef(null)
+  const total              = plans.length
+
+  function onTouchStart(e) { startX.current = e.touches[0].clientX }
+  function onTouchEnd(e) {
+    if (startX.current === null) return
+    const diff = startX.current - e.changedTouches[0].clientX
+    if (Math.abs(diff) < 44) return
+    if (diff > 0) setIdx(i => Math.min(total - 1, i + 1))
+    else          setIdx(i => Math.max(0, i - 1))
+    startX.current = null
+  }
+
+  return (
+    <div>
+      <div className="overflow-hidden mx-4"
+        onTouchStart={onTouchStart} onTouchEnd={onTouchEnd}>
+        <motion.div
+          className="flex"
+          animate={{ x: `-${idx * 100}%` }}
+          transition={{ type: 'spring', stiffness: 300, damping: 35 }}>
+          {plans.map((plan, i) => (
+            <div key={plan.planId || i} className="w-full flex-shrink-0">
+              <PlanCard plan={plan} t={t} router={router} />
             </div>
-          </div>
+          ))}
+        </motion.div>
+      </div>
 
-          {/* Progress bar */}
-          <div className="h-1.5 rounded-full overflow-hidden" style={{ background: t.bgMuted }}>
-            <div
-              className="h-full rounded-full transition-all duration-500"
-              style={{ width: `${pct}%`, background: 'linear-gradient(90deg,#5B4FCF,#7C6FCD)' }}
-            />
-          </div>
-        </div>
-
-        {/* Tabs */}
-        <div className="flex border-b" style={{ borderColor: t.border }}>
-          {[
-            { key: 'reading', label: 'Reading', icon: BookOpen },
-            { key: 'notes',   label: 'Notes',   icon: PenLine  },
-          ].map(({ key, label, icon: Icon }) => (
-            <button
-              key={key}
-              onClick={() => setActiveTab(key)}
-              className="flex-1 flex items-center justify-center gap-1.5 py-2.5 text-[13px] font-bold transition-all"
+      {/* Dot indicators */}
+      {total > 1 && (
+        <div className="flex items-center justify-center gap-1.5 mt-3">
+          {plans.map((_, i) => (
+            <button key={i} onClick={() => setIdx(i)}
+              className="rounded-full transition-all"
               style={{
-                color:       activeTab === key ? '#5B4FCF' : t.textMuted,
-                borderBottom: activeTab === key ? '2px solid #5B4FCF' : '2px solid transparent',
-              }}
-            >
-              <Icon size={14} />
-              {label}
-            </button>
+                width:      i === idx ? 20 : 6,
+                height:     6,
+                background: i === idx ? '#5B4FCF' : '#C4B5FD',
+              }} />
           ))}
         </div>
-
-        {/* Tab content */}
-        <AnimatePresence mode="wait" initial={false}>
-          {activeTab === 'reading' ? (
-            <motion.div
-              key="reading"
-              initial={{ opacity: 0, x: -8 }}
-              animate={{ opacity: 1, x: 0 }}
-              exit={{ opacity: 0, x: -8 }}
-              transition={{ duration: 0.15 }}
-              className="px-4 py-4"
-            >
-              {/* Reference */}
-              <p className="text-[12px] font-bold uppercase tracking-wider mb-2"
-                style={{ color: t.textMuted }}>
-                {reference}
-              </p>
-
-              {/* Verses / chapters */}
-              <div className="flex flex-col gap-2 mb-4">
-                {todaySlice.map((item, i) => (
-                  <div key={i}>
-                    {item.verse != null && (
-                      <span className="text-[11px] font-bold mr-1.5" style={{ color: '#5B4FCF' }}>
-                        {item.verse}
-                      </span>
-                    )}
-                    <span className="text-[15px] leading-relaxed" style={{ color: t.text }}>
-                      {item.text || item.reference}
-                    </span>
-                  </div>
-                ))}
-              </div>
-
-              {/* Go to Bible reader */}
-              <button
-                onClick={() => {
-                  const first = todaySlice[0]
-                  router.push(`/read?book=${encodeURIComponent(first.book)}&chapter=${first.chapter}`)
-                }}
-                className="w-full flex items-center justify-center gap-2 py-2.5 rounded-[12px] text-[13px] font-semibold mb-4"
-                style={{ background: t.bgMuted, color: t.textMuted }}
-              >
-                <BookOpen size={14} />
-                Open in Bible reader
-              </button>
-
-              {/* MARK AS READ — prominent */}
-              {todayDone ? (
-                <div
-                  className="w-full flex items-center justify-center gap-2 py-4 rounded-[16px]"
-                  style={{ background: '#E8F4ED' }}
-                >
-                  <CheckCircle2 size={20} style={{ color: '#4A7C5F' }} />
-                  <span className="font-bold text-[15px]" style={{ color: '#4A7C5F' }}>
-                    Done for today
-                  </span>
-                </div>
-              ) : (
-                <motion.button
-                  whileTap={{ scale: 0.97 }}
-                  onClick={handleMarkRead}
-                  disabled={marking}
-                  className="w-full flex items-center justify-center gap-2 py-4 rounded-[16px] text-white font-bold text-[16px] disabled:opacity-60 transition-all"
-                  style={{ background: 'linear-gradient(135deg,#4A7C5F,#3A6B4F)' }}
-                >
-                  {marking
-                    ? <><Loader2 size={18} className="animate-spin" /> Saving…</>
-                    : <><CheckCircle2 size={20} /> Mark as Read</>
-                  }
-                </motion.button>
-              )}
-
-              {/* View full plan */}
-              <button
-                onClick={() => router.push(`/plans/${activePlan.planId}`)}
-                className="w-full flex items-center justify-center gap-1 mt-3 py-1.5 text-[12px] font-semibold"
-                style={{ color: t.textFaint }}
-              >
-                View full plan <ChevronRight size={12} />
-              </button>
-            </motion.div>
-
-          ) : (
-            <motion.div
-              key="notes"
-              initial={{ opacity: 0, x: 8 }}
-              animate={{ opacity: 1, x: 0 }}
-              exit={{ opacity: 0, x: 8 }}
-              transition={{ duration: 0.15 }}
-              className="px-4 py-4 flex flex-col gap-3"
-            >
-              <div className="flex items-center justify-between">
-                <p className="text-[13px] font-bold" style={{ color: t.text }}>
-                  Day {activePlan.currentDay} — {reference}
-                </p>
-                <span className="text-[11px]" style={{ color: t.textFaint }}>
-                  {noteSaved ? '✓ Saved' : 'Saving…'}
-                </span>
-              </div>
-
-              <textarea
-                value={noteText}
-                onChange={handleNoteChange}
-                placeholder="Write your reflections, insights, or prayers for today's reading…"
-                rows={6}
-                className="w-full resize-none rounded-[14px] px-4 py-3 text-[14px] leading-relaxed focus:outline-none transition-all"
-                style={{
-                  background:   t.bgInput,
-                  border:       `1.5px solid ${t.borderInput}`,
-                  color:        t.text,
-                }}
-              />
-
-              <p className="text-[11px]" style={{ color: t.textFaint }}>
-                Notes are saved privately on this device and synced to your account.
-              </p>
-            </motion.div>
-          )}
-        </AnimatePresence>
-      </motion.div>
+      )}
     </div>
   )
 }
 
 // ─────────────────────────────────────────────
-//  Sub-components
+//  Main export
 // ─────────────────────────────────────────────
-function GuestCard({ t, router }) {
-  return (
-    <div className="mx-4 rounded-[22px] overflow-hidden px-5 py-6"
-      style={{ background: 'linear-gradient(135deg,#5B4FCF,#3D3190)' }}>
-      <p className="font-bold text-[18px] text-white mb-1">Start your daily walk</p>
-      <p className="text-white/70 text-[14px] mb-4">
-        Sign in to track your Bible reading and build a daily habit.
-      </p>
-      <button
-        onClick={() => router.push('/auth')}
-        className="px-5 py-2.5 rounded-full bg-white font-bold text-[14px]"
-        style={{ color: '#5B4FCF' }}>
-        Get started
-      </button>
-    </div>
-  )
-}
+export default function TodaysReadingCard() {
+  const { t }    = useTheme()
+  const { user } = useAuthContext()
+  const router   = useRouter()
 
-function NoPlanCard({ t, router }) {
-  return (
-    <div className="mx-4 rounded-[22px] px-5 py-6 flex flex-col gap-3"
-      style={{ background: t.bgCard, border: `1.5px dashed ${t.border}` }}>
-      <div className="w-10 h-10 rounded-[12px] flex items-center justify-center"
-        style={{ background: '#EDE9FF' }}>
-        <BookOpen size={20} style={{ color: '#5B4FCF' }} />
+  const [plans,   setPlans]   = useState([])
+  const [loading, setLoading] = useState(true)
+
+  useEffect(() => {
+    let cancelled = false
+
+    async function loadPlans() {
+      // 1. Always start with local plans (instant, offline-safe)
+      const localRaw    = readPlans()
+      const localActive = localRaw
+        .filter(p => p.status === 'active')
+        .map(normaliseLocalPlan)
+
+      if (!cancelled) {
+        setPlans(localActive)
+        setLoading(false)
+      }
+
+      // 2. If signed in, also pull Supabase plans and merge
+      if (user?.id) {
+        try {
+          const { getActivePlanForHome } = await import('../lib/supabase/plans')
+          const rows = await getActivePlanForHome(user.id)
+          if (cancelled) return
+          const sbPlans = (rows || []).map(normaliseSupabasePlan)
+
+          // Merge: deduplicate by planId (Supabase wins over local if same id)
+          const localIds   = new Set(sbPlans.map(p => p.planId))
+          const localOnly  = localActive.filter(p => !localIds.has(p.planId))
+          setPlans([...sbPlans, ...localOnly])
+        } catch {
+          // Supabase unavailable — local plans still shown, that's fine
+        }
+      }
+    }
+
+    loadPlans()
+    return () => { cancelled = true }
+  }, [user?.id]) // eslint-disable-line
+
+  if (loading) return (
+    <div className="mx-4 rounded-[22px] overflow-hidden"
+      style={{ background: t.bgCard, border: `1px solid ${t.border}`, minHeight: 200 }}>
+      <div className="flex items-center justify-center h-[200px]">
+        <Loader2 size={22} className="animate-spin" style={{ color: '#5B4FCF' }} />
       </div>
-      <div>
-        <p className="font-bold text-[16px] mb-0.5" style={{ color: t.text }}>
-          No active reading plan
-        </p>
-        <p className="text-[13px]" style={{ color: t.textMuted }}>
-          Pick a plan and start building your daily reading habit.
-        </p>
-      </div>
-      <button
-        onClick={() => router.push('/plans')}
-        className="self-start px-4 py-2.5 rounded-full text-white font-bold text-[13px]"
-        style={{ background: '#5B4FCF' }}>
-        Browse plans →
-      </button>
     </div>
   )
+
+  if (!plans.length) return <NoPlanCard t={t} router={router} />
+
+  return <SwipableCards plans={plans} t={t} router={router} />
 }

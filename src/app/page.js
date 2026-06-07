@@ -1,504 +1,494 @@
 'use client'
-import React from 'react'
 
-// ── src/app/page.js ──
-// Fix 1: Header is OUTSIDE the scroll container — never scrolls away.
-// Fix 2: TodaysReadingCard mark-done button works correctly.
+// ── src/app/page.js ── v6 — HOMEPAGE REDESIGN
+//
+// DESIGN DIRECTION: Devotional clarity
+//   • Reading plan IS the hero — takes the place of the verse card
+//   • Daily verse becomes a soft accent below the plan, never competing
+//   • First-time / no-plan users see a clean "Start reading" onboarding state
+//   • Guest users see KJV immediately — no sign-in wall
+//   • Warm, unhurried — like picking up a Bible you've been reading for years
 
-import { useMemo, useState, useRef } from 'react'
+import { useMemo, useState, useRef, useEffect } from 'react'
 import Link from 'next/link'
 import { useRouter } from 'next/navigation'
-import { motion, AnimatePresence, useScroll, useTransform } from 'framer-motion'
-import {
-  UserCircle, BookMarked, X, CheckCircle2, Check,
-  PenLine, Lightbulb, Sun, Moon, Plus,
-} from 'lucide-react'
-import { BibleIcon }            from '../components/icons/BibleIcon'
-import { useLocalStorage }      from '../hooks/useLocalStorage'
-import { useCheckin }           from '../hooks/useCheckin'
+import { motion, AnimatePresence } from 'framer-motion'
+import { UserCircle, Sun, Moon, ChevronRight, BookOpen, CheckCircle2, Loader2 } from 'lucide-react'
+import { BibleIcon }         from '../components/icons/BibleIcon'
+import { useLocalStorage }   from '../hooks/useLocalStorage'
+import { useCheckin }        from '../hooks/useCheckin'
 import { ToastContainer, showToast } from '../components/Toast'
-import CharacterCompanion       from '../components/CharacterCompanion'
 import { NotificationBell, NotificationPanel } from '../components/NotificationPanel'
-import PostComposer             from '../components/PostComposer'
-import { useTheme }             from '../lib/theme'
-import {
-  getTodayVerseImage, getTodayVerse, initials, todayStr,
-} from '../lib/constants'
-import {
-  getTodaysPlan, getPlanProgress, isPlanCompletedToday,
-  markDayComplete, readPlans, advanceAllPlans,
-} from '../lib/plans'
+import { useTheme }          from '../lib/theme'
+import { getTodayVerse, initials, todayStr } from '../lib/constants'
+import { readPlans, advanceAllPlans, getTodaysPlan, isPlanCompletedToday, markDayComplete, getPlanProgress } from '../lib/plans'
+import { createClient } from '../lib/supabase/client'
 
-// ─────────────────────────────────────────────
-//  Helpers
-// ─────────────────────────────────────────────
 function calcDaysMissed(last) {
   if (!last) return 7
-  return Math.max(0, Math.floor(
-    (new Date(todayStr()).getTime() - new Date(last).getTime()) / 86_400_000
-  ))
-}
-
-function buildReaderUrl(passage) {
-  if (!passage) return '/read'
-  const m = passage.match(/^(.+?)\s+(\d+)(?::(\d+))?$/)
-  if (!m) return `/read?book=${encodeURIComponent(passage)}`
-  return `/read?book=${encodeURIComponent(m[1].trim())}&chapter=${m[2]}`
+  return Math.max(0, Math.floor((new Date(todayStr()).getTime() - new Date(last).getTime()) / 86_400_000))
 }
 
 // ─────────────────────────────────────────────
-//  Hero verse card
+//  Greeting based on time of day
 // ─────────────────────────────────────────────
-function HeroCard({ heroImg, verse }) {
-  const [imgFailed, setImgFailed] = useState(false)
+function getGreeting(name) {
+  const h = new Date().getHours()
+  const base = h < 12 ? 'Good morning' : h < 17 ? 'Good afternoon' : 'Good evening'
+  return name ? `${base}, ${name.split(' ')[0]}` : base
+}
+
+// ─────────────────────────────────────────────
+//  Streak flame pill
+// ─────────────────────────────────────────────
+function StreakPill({ streak, t }) {
+  if (!streak?.current) return null
   return (
-    <div
-      className="relative rounded-[22px] overflow-hidden"
-      style={{ height: 210, background: imgFailed ? 'linear-gradient(135deg,#5B4FCF,#3D3190)' : undefined }}
-    >
-      {!imgFailed && heroImg && (
-        <img
-          src={heroImg} alt="Daily verse"
-          onError={() => setImgFailed(true)}
-          className="absolute inset-0 w-full h-full object-cover"
-        />
-      )}
-      <div className="hero-overlay absolute inset-0" />
-      <div className="absolute bottom-0 left-0 right-0 px-5 pb-5 z-10">
-        <p
-          className="font-display text-white leading-snug mb-1.5"
-          style={{ fontSize: 16, fontWeight: 600, textShadow: '0 1px 8px rgba(0,0,0,0.7)' }}
-        >
-          "{verse.text}"
-        </p>
-        <p
-          className="font-bold text-[13px] tracking-wider"
-          style={{ color: 'rgba(255,255,255,0.85)', textShadow: '0 1px 6px rgba(0,0,0,0.8)' }}
-        >
-          — {verse.ref}
-        </p>
-      </div>
+    <div className="flex items-center gap-1.5 px-3 py-1.5 rounded-full"
+      style={{ background: streak.current >= 7 ? '#FFF3DC' : t.bgMuted }}>
+      <span style={{ fontSize: 14 }}>🔥</span>
+      <span className="font-bold text-[12px]" style={{ color: streak.current >= 7 ? '#E8A838' : t.textMuted }}>
+        {streak.current} day{streak.current !== 1 ? 's' : ''}
+      </span>
     </div>
   )
 }
 
 // ─────────────────────────────────────────────
-//  Today's Reading card
+//  Today's verse accent — quiet, below the plan
 // ─────────────────────────────────────────────
-function TodaysReadingCard({ plans, setPlans, onCheckin, t }) {
-  const router  = useRouter()
-  const active  = (plans || []).filter(p => p.status === 'active')
-  const uncompleted    = getTodaysPlan(active)
-  const completedToday = active.find(p => isPlanCompletedToday(p))
-  const todayPlan      = uncompleted || completedToday
+function VerseAccent({ t }) {
+  const verse = getTodayVerse()
+  return (
+    <div className="px-5 py-4 rounded-[18px]"
+      style={{ background: t.bgCard, border: `1px solid ${t.border}` }}>
+      <p className="text-[11px] font-bold uppercase tracking-wider mb-2" style={{ color: t.textFaint }}>
+        Verse of the day
+      </p>
+      <p className="text-[14px] leading-relaxed font-medium italic" style={{ color: t.text }}>
+        "{verse.text}"
+      </p>
+      <p className="text-[12px] mt-2 font-bold" style={{ color: '#5B4FCF' }}>— {verse.ref}</p>
+    </div>
+  )
+}
 
-  if (!todayPlan) {
-    return (
-      <motion.div
-        initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.35 }}
-        className="rounded-[20px] p-5"
-        style={{ background: t.bgCard, boxShadow: t.shadow }}
-      >
-        <div className="flex items-center justify-between mb-4">
-          <div className="flex items-center gap-2">
-            <BookMarked size={16} style={{ color: '#5B4FCF' }} />
-            <span className="font-bold text-[14px]" style={{ color: t.text }}>Today's Reading</span>
-          </div>
-          <Link href="/plans" className="text-[12px] font-semibold" style={{ color: t.textMuted }}>
-            All Plans →
-          </Link>
-        </div>
-        <div className="flex flex-col items-center gap-2 py-3 text-center">
-          <BibleIcon size={32} />
-          <p className="font-semibold text-[14px]" style={{ color: t.text }}>No active plans yet</p>
-          <p className="text-[13px]" style={{ color: t.textMuted }}>
-            Start a reading plan to guide your daily study
-          </p>
-          <Link
-            href="/plans"
-            className="text-white px-5 py-2.5 rounded-[100px] text-[13px] font-bold mt-1"
-            style={{ background: '#5B4FCF' }}
-          >
-            Browse Plans →
-          </Link>
-        </div>
-      </motion.div>
-    )
+// ─────────────────────────────────────────────
+//  No plan state — clean onboarding CTA
+// ─────────────────────────────────────────────
+function NoPlanHero({ t, dark }) {
+  const router = useRouter()
+  return (
+    <motion.div initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }}
+      className="rounded-[24px] overflow-hidden"
+      style={{ background: dark ? '#1E1A3C' : 'linear-gradient(150deg,#5B4FCF 0%,#3D3190 100%)' }}>
+
+      {/* Decorative cross / Scripture motif */}
+      <div className="relative px-6 pt-8 pb-2 overflow-hidden">
+        <div className="absolute -right-8 -top-8 w-40 h-40 rounded-full opacity-10"
+          style={{ background: 'white' }} />
+        <div className="absolute -right-2 top-4 w-20 h-20 rounded-full opacity-5"
+          style={{ background: 'white' }} />
+
+        <p className="text-white/70 text-[12px] font-bold uppercase tracking-widest mb-2">
+          Where are you reading?
+        </p>
+        <h2 className="font-display text-white font-bold leading-tight"
+          style={{ fontSize: 24 }}>
+          Start a reading plan
+        </h2>
+        <p className="text-white/65 text-[13px] mt-2 leading-relaxed">
+          One verse a day. One chapter a day. Whatever pace fits your life — we'll keep you on track.
+        </p>
+      </div>
+
+      <div className="px-6 py-5 flex flex-col gap-2.5">
+        <button onClick={() => router.push('/plans/create')}
+          className="w-full flex items-center justify-center gap-2 py-3.5 rounded-full font-bold text-[14px] active:scale-[0.97] transition-all"
+          style={{ background: 'white', color: '#5B4FCF' }}>
+          <BookOpen size={15} />
+          Start a plan — it's free
+        </button>
+        <button onClick={() => router.push('/read')}
+          className="w-full flex items-center justify-center gap-2 py-3 rounded-full text-[13px] font-semibold"
+          style={{ background: 'rgba(255,255,255,0.12)', color: 'rgba(255,255,255,0.9)' }}>
+          Just open the Bible →
+        </button>
+      </div>
+    </motion.div>
+  )
+}
+
+// ─────────────────────────────────────────────
+//  Active plan hero card — the centrepiece
+// ─────────────────────────────────────────────
+function PlanHeroCard({ plan, onMarkDone, t, dark }) {
+  const router   = useRouter()
+  const pct      = getPlanProgress(plan)
+  const isDone   = isPlanCompletedToday(plan)
+  const [marking, setMarking] = useState(false)
+
+  const todayDay = plan.days?.[plan.currentDay - 1]
+  const passage  = todayDay?.passage || null
+
+  function buildReaderUrl(p) {
+    if (!p) return '/read'
+    const m = p.match(/^(.+?)\s+(\d+)/)
+    return m ? `/read?book=${encodeURIComponent(m[1].trim())}&chapter=${m[2]}` : '/read'
   }
 
-  const todayDay   = todayPlan.days?.find(d => d.day === todayPlan.currentDay)
-  const pct        = getPlanProgress(todayPlan)
-  const isComplete = isPlanCompletedToday(todayPlan)
-  const dayUrl     = `/plans/${todayPlan.id}/day/${todayPlan.currentDay}`
-
-  function handleDone(e) {
-    e.stopPropagation()
-    markDayComplete(todayPlan.id, todayPlan.currentDay, '')
-    setPlans(readPlans())
-    onCheckin(todayDay?.passage || '')
+  async function handleMark() {
+    if (isDone || marking) return
+    setMarking(true)
+    markDayComplete(plan.id, plan.currentDay, '')
     showToast('Day complete! 🙌')
+    onMarkDone?.()
+    setMarking(false)
   }
 
   return (
-    <motion.div
-      initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.35 }}
-    >
-      <button
-        onClick={() => router.push(dayUrl)}
-        className="w-full rounded-[20px] p-5 text-left cursor-pointer active:scale-[0.98] transition-all block"
-        style={{ background: t.bgCard, boxShadow: t.shadow, WebkitTapHighlightColor: 'transparent' }}
-      >
-        <div className="flex items-center justify-between mb-3">
-          <div className="flex items-center gap-2">
-            <BookMarked size={16} style={{ color: '#5B4FCF' }} />
-            <span className="font-bold text-[14px]" style={{ color: t.text }}>Today's Reading</span>
-          </div>
-          <span className="text-[12px] font-semibold" style={{ color: t.textMuted }}>Open →</span>
-        </div>
+    <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }}
+      className="rounded-[24px] overflow-hidden"
+      style={{ background: dark ? '#1E1A3C' : 'linear-gradient(150deg,#5B4FCF 0%,#3D3190 100%)' }}>
 
-        <p className="font-display font-semibold text-[16px]" style={{ color: t.text }}>
-          {todayPlan.name}
-        </p>
-
-        {todayDay && (
-          <div className="flex items-center justify-between mt-1">
-            <p className="text-[13px]" style={{ color: t.textMuted }}>
-              Day {todayPlan.currentDay} · {todayDay.passage}
+      {/* Header */}
+      <div className="px-6 pt-6 pb-0">
+        <div className="flex items-start justify-between gap-3">
+          <div className="flex-1 min-w-0">
+            <p className="text-white/60 text-[11px] font-bold uppercase tracking-widest">
+              Day {plan.currentDay} of {plan.totalDays || '?'}
             </p>
-            <span
-              onClick={e => { e.stopPropagation(); router.push(buildReaderUrl(todayDay.passage)) }}
-              className="text-[12px] font-bold cursor-pointer"
-              style={{ color: '#5B4FCF' }}
-            >
-              Read →
-            </span>
+            <h2 className="font-display font-bold text-white mt-0.5 leading-tight truncate"
+              style={{ fontSize: 20 }}>
+              {plan.name}
+            </h2>
+            {passage && (
+              <p className="text-white/70 text-[13px] mt-1">{passage}</p>
+            )}
           </div>
-        )}
+          {/* Progress ring */}
+          <div className="flex-shrink-0 flex flex-col items-center">
+            <svg width="48" height="48" viewBox="0 0 48 48">
+              <circle cx="24" cy="24" r="20" fill="none" stroke="rgba(255,255,255,0.15)" strokeWidth="4" />
+              <circle cx="24" cy="24" r="20" fill="none" stroke="rgba(255,255,255,0.85)" strokeWidth="4"
+                strokeDasharray={`${2 * Math.PI * 20}`}
+                strokeDashoffset={`${2 * Math.PI * 20 * (1 - pct / 100)}`}
+                strokeLinecap="round"
+                transform="rotate(-90 24 24)" />
+            </svg>
+            <span className="text-white/70 text-[10px] font-bold -mt-1">{pct}%</span>
+          </div>
+        </div>
 
         {/* Progress bar */}
-        <div className="mt-3 mb-4">
-          <div className="w-full h-1.5 rounded-full overflow-hidden" style={{ background: t.bgMuted }}>
-            <motion.div
-              className="h-full rounded-full" style={{ background: '#5B4FCF' }}
-              initial={{ width: 0 }} animate={{ width: `${pct}%` }} transition={{ duration: 0.7 }}
-            />
-          </div>
+        <div className="mt-4 h-1 rounded-full overflow-hidden" style={{ background: 'rgba(255,255,255,0.15)' }}>
+          <div className="h-full rounded-full transition-all duration-700"
+            style={{ width: `${pct}%`, background: 'rgba(255,255,255,0.85)' }} />
         </div>
+      </div>
 
-        {/* Mark done / done state */}
-        {isComplete ? (
-          <div
-            className="flex items-center gap-2 py-3 rounded-[14px] justify-center"
-            style={{ background: '#E0FBEC' }}
-          >
-            <CheckCircle2 size={16} style={{ color: '#4A7C5F' }} />
-            <span className="font-bold text-[13px]" style={{ color: '#4A7C5F' }}>
-              Done today — great work! 🙌
-            </span>
+      {/* Actions */}
+      <div className="px-6 py-5 flex flex-col gap-2.5">
+        <button onClick={() => router.push(buildReaderUrl(passage))}
+          className="w-full flex items-center justify-center gap-2 py-3 rounded-full text-[13px] font-semibold active:scale-95 transition-all"
+          style={{ background: 'rgba(255,255,255,0.12)', color: 'rgba(255,255,255,0.9)' }}>
+          <BookOpen size={14} />
+          {passage ? `Read ${passage}` : 'Open Bible reader'}
+        </button>
+
+        {isDone ? (
+          <div className="flex items-center justify-center gap-2 py-3 rounded-full"
+            style={{ background: 'rgba(255,255,255,0.95)' }}>
+            <CheckCircle2 size={15} style={{ color: '#4A7C5F' }} />
+            <span className="font-bold text-[14px]" style={{ color: '#4A7C5F' }}>Read today ✓</span>
           </div>
         ) : (
-          <div
-            onClick={handleDone}
-            className="flex items-center justify-center gap-2 py-3 rounded-[14px] cursor-pointer active:scale-[0.97] transition-all"
-            style={{ background: '#5B4FCF' }}
-          >
-            <Check size={16} className="text-white" />
-            <span className="font-bold text-[13px] text-white">Mark today complete</span>
-          </div>
+          <button onClick={handleMark} disabled={marking}
+            className="w-full flex items-center justify-center gap-2 py-3.5 rounded-full font-bold text-[14px] active:scale-[0.97] disabled:opacity-60 transition-all"
+            style={{ background: 'rgba(255,255,255,0.95)', color: '#5B4FCF' }}>
+            {marking
+              ? <Loader2 size={15} className="animate-spin" />
+              : <><CheckCircle2 size={15} /> Mark as read</>}
+          </button>
         )}
+      </div>
+
+      {/* Footer link */}
+      <button onClick={() => router.push(`/plans/${plan.id}`)}
+        className="w-full flex items-center justify-center gap-1 py-3 text-[12px] font-semibold"
+        style={{ background: 'rgba(0,0,0,0.15)', color: 'rgba(255,255,255,0.55)' }}>
+        View full plan <ChevronRight size={12} />
       </button>
     </motion.div>
   )
 }
 
 // ─────────────────────────────────────────────
-//  FAB
+//  Multiple plans — swipable
 // ─────────────────────────────────────────────
-function HomeFAB({ onPost, t }) {
-  const [open,    setOpen]    = useState(false)
-  const [nugOpen, setNug]     = useState(false)
-  const [input,   setInput]   = useState('')
-  const [nuggets, setNuggets] = useLocalStorage('dw_nuggets', [])
+function SwipablePlans({ plans, onMarkDone, t, dark }) {
+  const [idx, setIdx] = useState(0)
+  const startX = useRef(null)
 
-  function saveNugget() {
-    const text = input.trim()
-    if (!text) return
-    setNuggets(prev => [{
-      id: `nug_${Date.now()}`, text, source: null,
-      createdAt: new Date().toISOString(),
-    }, ...(prev || [])])
-    showToast('Nugget saved!')
-    setNug(false); setInput(''); setOpen(false)
+  function onTouchStart(e) { startX.current = e.touches[0].clientX }
+  function onTouchEnd(e) {
+    if (startX.current === null) return
+    const diff = startX.current - e.changedTouches[0].clientX
+    if (Math.abs(diff) < 44) return
+    if (diff > 0) setIdx(i => Math.min(plans.length - 1, i + 1))
+    else          setIdx(i => Math.max(0, i - 1))
+    startX.current = null
   }
 
-  const actions = [
-    {
-      icon: PenLine, bg: t.purpleBg, color: '#5B4FCF',
-      label: 'Write a post', sub: 'Share with the world',
-      action: () => { setOpen(false); setTimeout(onPost, 120) },
-    },
-    {
-      icon: Lightbulb, bg: t.amberBg, color: '#E8A838',
-      label: 'Add a nugget', sub: 'Save a personal insight',
-      action: () => { setOpen(false); setTimeout(() => setNug(true), 120) },
-    },
-  ]
+  if (plans.length === 1) return <PlanHeroCard plan={plans[0]} onMarkDone={onMarkDone} t={t} dark={dark} />
 
   return (
-    <>
-      {/* FAB button */}
-      <button
-        onClick={() => setOpen(v => !v)}
-        className="fixed bottom-20 right-4 w-[52px] h-[52px] rounded-full text-white flex items-center justify-center z-40 active:scale-95 transition-all"
-        style={{ background: '#5B4FCF', boxShadow: '0 4px 16px rgba(91,79,207,0.4)' }}
-      >
-        <motion.div animate={{ rotate: open ? 45 : 0 }} transition={{ duration: 0.2 }}>
-          <Plus size={24} />
+    <div>
+      <div className="overflow-hidden" onTouchStart={onTouchStart} onTouchEnd={onTouchEnd}>
+        <motion.div className="flex"
+          animate={{ x: `-${idx * 100}%` }}
+          transition={{ type: 'spring', stiffness: 300, damping: 34 }}>
+          {plans.map((plan, i) => (
+            <div key={plan.id} className="w-full flex-shrink-0">
+              <PlanHeroCard plan={plan} onMarkDone={onMarkDone} t={t} dark={dark} />
+            </div>
+          ))}
         </motion.div>
-      </button>
-
-      <AnimatePresence>
-        {open && (
-          <>
-            <motion.div
-              className="fixed inset-0 z-30"
-              initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
-              onClick={() => setOpen(false)}
-            />
-            {/* Popup — positioned above the FAB */}
-            <motion.div
-              className="fixed bottom-[148px] right-4 flex flex-col gap-2 z-40 items-end"
-              initial={{ opacity: 0, y: 12, scale: 0.95 }}
-              animate={{ opacity: 1, y: 0, scale: 1 }}
-              exit={{ opacity: 0, y: 12, scale: 0.95 }}
-              transition={{ type: 'spring', stiffness: 400, damping: 30 }}
-            >
-              {actions.map((a, i) => (
-                <motion.button
-                  key={i} onClick={a.action}
-                  initial={{ opacity: 0, x: 16 }} animate={{ opacity: 1, x: 0 }}
-                  transition={{ delay: i * 0.05 }}
-                  className="flex items-center gap-3 px-4 py-3 rounded-[18px] active:scale-95 transition-all"
-                  style={{ background: t.bgCard, boxShadow: t.shadowMd }}
-                >
-                  <div className="flex flex-col text-right">
-                    <span className="font-bold text-[13px]" style={{ color: t.text }}>{a.label}</span>
-                    <span className="text-[11px]" style={{ color: t.textMuted }}>{a.sub}</span>
-                  </div>
-                  <div className="w-9 h-9 rounded-full flex items-center justify-center flex-shrink-0"
-                    style={{ background: a.bg }}>
-                    <a.icon size={17} style={{ color: a.color }} />
-                  </div>
-                </motion.button>
-              ))}
-            </motion.div>
-          </>
-        )}
-      </AnimatePresence>
-
-      {/* Nugget sheet */}
-      <AnimatePresence>
-        {nugOpen && (
-          <>
-            <motion.div
-              className="fixed inset-0 bg-black/40 z-[60]"
-              initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
-              onClick={() => setNug(false)}
-            />
-            <motion.div
-              className="fixed bottom-0 left-1/2 -translate-x-1/2 w-full max-w-[430px] rounded-t-[28px] z-[70] px-5 pt-5 pb-10"
-              style={{ background: t.bgCard }}
-              initial={{ y: '100%' }} animate={{ y: 0 }} exit={{ y: '100%' }}
-              transition={{ type: 'spring', stiffness: 340, damping: 36 }}
-              onClick={e => e.stopPropagation()}
-            >
-              <div className="flex justify-center mb-4">
-                <div className="w-10 h-1 rounded-full" style={{ background: t.border }} />
-              </div>
-              <p className="font-bold text-[17px] mb-4" style={{ color: t.text }}>New Nugget</p>
-              <textarea
-                autoFocus value={input} onChange={e => setInput(e.target.value)}
-                placeholder="Write your insight, reflection, or verse..."
-                rows={4}
-                className="w-full rounded-[14px] px-4 py-3.5 text-[15px] resize-none focus:outline-none mb-4"
-                style={{
-                  background: t.bgMuted,
-                  color:      t.text,
-                  border:     `1px solid ${t.borderInput}`,
-                  lineHeight: 1.7,
-                }}
-              />
-              <button
-                onClick={saveNugget} disabled={!input.trim()}
-                className="w-full py-4 rounded-full font-bold text-[15px] text-white disabled:opacity-40 active:scale-[0.97] transition-all"
-                style={{ background: '#5B4FCF' }}
-              >
-                Save nugget
-              </button>
-            </motion.div>
-          </>
-        )}
-      </AnimatePresence>
-    </>
+      </div>
+      {/* Dots */}
+      <div className="flex items-center justify-center gap-1.5 mt-3">
+        {plans.map((_, i) => (
+          <button key={i} onClick={() => setIdx(i)} className="rounded-full transition-all"
+            style={{ width: i === idx ? 20 : 6, height: 6, background: i === idx ? '#5B4FCF' : '#C4B5FD' }} />
+        ))}
+      </div>
+    </div>
   )
 }
 
 // ─────────────────────────────────────────────
-//  Main screen
+//  Sign-in nudge (guests only, dismissable)
+// ─────────────────────────────────────────────
+function SignInNudge({ t }) {
+  const [dismissed, setDismissed] = useState(() => {
+    try { return localStorage.getItem('dw_nudge_dismissed') === '1' } catch { return false }
+  })
+  if (dismissed) return null
+  function dismiss() {
+    try { localStorage.setItem('dw_nudge_dismissed', '1') } catch {}
+    setDismissed(true)
+  }
+  return (
+    <motion.div initial={{ opacity: 0, y: 6 }} animate={{ opacity: 1, y: 0 }}
+      className="rounded-[18px] p-4 flex items-center gap-3"
+      style={{ background: t.bgCard, border: `1px solid ${t.border}` }}>
+      <span style={{ fontSize: 22, flexShrink: 0 }}>☁️</span>
+      <div className="flex-1 min-w-0">
+        <p className="font-bold text-[13px]" style={{ color: t.text }}>Save your progress</p>
+        <p className="text-[12px] mt-0.5" style={{ color: t.textMuted }}>Sync across devices — free account.</p>
+      </div>
+      <div className="flex flex-col items-end gap-1 flex-shrink-0">
+        <Link href="/auth" className="px-3 py-1.5 rounded-full font-bold text-[11px] text-white"
+          style={{ background: '#5B4FCF' }}>
+          Sign up
+        </Link>
+        <button onClick={dismiss} className="text-[10px] font-semibold" style={{ color: t.textFaint }}>
+          Not now
+        </button>
+      </div>
+    </motion.div>
+  )
+}
+
+// ─────────────────────────────────────────────
+//  Main
 // ─────────────────────────────────────────────
 export default function HomeScreen() {
   const router    = useRouter()
   const scrollRef = useRef(null)
   const { t, dark, toggle: toggleDark } = useTheme()
 
-  const { scrollY }   = useScroll({ container: scrollRef })
-  const headerOpacity = useTransform(scrollY, [0, 40], [0, 1])
-
-  const [user,  , hydrated] = useLocalStorage('dw_user',  null)
-  const [plans, setPlans]   = useLocalStorage('dw_plans', [])
+  const [user, , hydrated] = useLocalStorage('dw_user', null)
   const [notifOpen, setNotifOpen] = useState(false)
-  const [compose,   setCompose]   = useState(false)
-  const { isCheckedInToday, streak, performCheckin } = useCheckin()
+  const { isCheckedInToday, streak } = useCheckin()
 
-  const heroImg      = getTodayVerseImage()
-  const verse        = getTodayVerse()
+  const [localPlans,   setLocalPlans]   = useState([])
+  const [sbPlans,      setSbPlans]      = useState([])
+  const [plansLoading, setPlansLoading] = useState(true)
+
   const userInitials = user?.name ? initials(user.name) : null
-  const daysMissed   = useMemo(
-    () => calcDaysMissed(streak?.lastCheckinDate),
-    [streak?.lastCheckinDate]
-  )
-  const companionId = user?.companionId || 'david'
+  const hasAccount   = !!user?.id
+  const greeting     = getGreeting(user?.name)
+  const daysMissed   = useMemo(() => calcDaysMissed(streak?.lastCheckinDate), [streak?.lastCheckinDate])
 
-  function handlePlanCheckin(passage) {
-    if (!isCheckedInToday) performCheckin({ passage, reflection: '' })
+  // Load plans
+  useEffect(() => {
+    if (!hydrated) return
+
+    // 1. Local plans — instant
+    advanceAllPlans()
+    const locals = readPlans().filter(p => p.status === 'active')
+    setLocalPlans(locals)
+    setPlansLoading(false)
+
+    // 2. Supabase plans — if signed in
+    if (user?.id) {
+      const sb = createClient()
+      if (sb) {
+        sb.auth.getUser().then(({ data: { user: sbUser } }) => {
+          if (!sbUser) return
+          import('../lib/supabase/plans')
+            .then(({ getActivePlanForHome }) => getActivePlanForHome(sbUser.id))
+            .then(rows => {
+              if (!rows?.length) return
+              const sbIds = new Set(rows.map(r => r.planId))
+              setSbPlans(rows)
+              setLocalPlans(prev => prev.filter(p => !sbIds.has(p.id)))
+            })
+            .catch(() => null)
+        }).catch(() => null)
+      }
+    }
+  }, [hydrated, user?.id])
+
+  // Normalise all active plans into one list
+  const allPlans = useMemo(() => {
+    const sb = sbPlans.map(r => ({
+      id:          r.planId,
+      name:        r.planName,
+      currentDay:  r.currentDay || 1,
+      totalDays:   r.personalDays || 0,
+      status:      'active',
+      days:        r.content?.map((item, i) => ({
+        day: i + 1,
+        passage: item.reference,
+        completedAt: null,
+      })) || [],
+      _sb: true,
+    }))
+    return [...sb, ...localPlans]
+  }, [sbPlans, localPlans])
+
+  function refreshPlans() {
+    const locals = readPlans().filter(p => p.status === 'active')
+    setLocalPlans(locals)
   }
 
   if (!hydrated) return null
 
   return (
-    <div
-      className="flex flex-col"
-      style={{ height: '100dvh', overflow: 'hidden', background: t.bg }}
-    >
-      {/*
-        ── STICKY HEADER ──
-        Placed OUTSIDE and ABOVE the scrollRef div.
-        The outer div is flex-col + height:100dvh + overflow:hidden,
-        so this header is a fixed-height row that never moves.
-        The scroll container below it fills the remaining space.
-      */}
-      <header
-        className="flex-shrink-0 flex items-center justify-between px-4 z-40"
-        style={{
-          height:       56,
-          background:   t.bgNav,
-          borderBottom: `1px solid ${t.border}`,
-        }}
-      >
-        {/* Wordmark */}
-        <span style={{
-          fontFamily:    'var(--font-jakarta, sans-serif)',
-          fontWeight:    700,
-          fontSize:      18,
-          letterSpacing: '-0.02em',
-          color:         t.text,
-        }}>
-          Daily Walk
-        </span>
+    <div className="flex flex-col" style={{ height: '100dvh', overflow: 'hidden', background: t.bg }}>
 
-        {/* Right actions */}
-        <div className="flex items-center gap-1.5">
-          <button
-            onClick={toggleDark}
-            className="w-9 h-9 rounded-full flex items-center justify-center transition-all active:scale-90 min-h-[44px] min-w-[44px]"
-            style={{ background: t.bgMuted, color: dark ? '#F5C518' : '#5B4FCF' }}
-            aria-label={dark ? 'Switch to light mode' : 'Switch to dark mode'}
-          >
-            {dark ? <Sun size={17} /> : <Moon size={17} />}
-          </button>
+      {/* ── HEADER ── */}
+      <header className="flex-shrink-0 flex items-center justify-between px-4 py-3"
+        style={{ background: t.bgCard, borderBottom: `1px solid ${t.border}` }}>
+        {/* Left: app logo + greeting */}
+        <div className="flex items-center gap-2.5">
+          <div className="w-8 h-8 rounded-[10px] flex items-center justify-center"
+            style={{ background: 'linear-gradient(135deg,#5B4FCF,#3D3190)' }}>
+            <BibleIcon size={18} color="white" />
+          </div>
+          <div>
+            <p className="font-display font-bold text-[15px] leading-none" style={{ color: t.text }}>
+              Daily Walk
+            </p>
+            <p className="text-[11px] mt-0.5" style={{ color: t.textFaint }}>{greeting}</p>
+          </div>
+        </div>
 
-          <NotificationBell onClick={() => setNotifOpen(true)} />
-
-          <Link
-            href="/profile"
-            className="w-9 h-9 rounded-full flex items-center justify-center text-white text-[13px] font-bold"
-            style={{ background: '#5B4FCF', minHeight: 44, minWidth: 44 }}
-          >
-            {userInitials ? userInitials : <UserCircle size={20} />}
+        {/* Right: streak + notif + avatar */}
+        <div className="flex items-center gap-2">
+          <StreakPill streak={streak} t={t} />
+          {hasAccount && <NotificationBell onClick={() => setNotifOpen(v => !v)} />}
+          <Link href="/profile"
+            className="w-9 h-9 rounded-full flex items-center justify-center font-bold text-[13px]"
+            style={{
+              background: hasAccount ? 'linear-gradient(135deg,#5B4FCF,#3D3190)' : t.bgMuted,
+              color: hasAccount ? 'white' : t.textMuted,
+            }}>
+            {hasAccount && userInitials ? userInitials : <UserCircle size={20} style={{ color: t.textMuted }} />}
           </Link>
         </div>
       </header>
 
-      {/*
-        ── SCROLLABLE CONTENT ──
-        Header is above this div, not inside it.
-        flex-1 makes this fill all remaining vertical space.
-        overflow-y-auto handles the scroll.
-      */}
-      <div
-        ref={scrollRef}
-        className="flex-1 overflow-y-auto scroll-hide"
-        style={{ background: t.bg, paddingBottom: 96 }}
-      >
-        {/* Hero verse */}
-        <div className="px-4 pt-4">
-          <motion.div initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.4 }}>
-            <HeroCard heroImg={heroImg} verse={verse} />
+      {/* ── BODY ── */}
+      <div ref={scrollRef} className="flex-1 overflow-y-auto scroll-hide"
+        style={{ background: t.bg, paddingBottom: 96 }}>
+
+        {/* ── PLAN HERO — top of feed ── */}
+        <div className="px-4 pt-5">
+          {plansLoading ? (
+            <div className="rounded-[24px] overflow-hidden animate-pulse"
+              style={{ height: 260, background: t.bgCard }} />
+          ) : allPlans.length > 0 ? (
+            <SwipablePlans plans={allPlans} onMarkDone={refreshPlans} t={t} dark={dark} />
+          ) : (
+            <NoPlanHero t={t} dark={dark} />
+          )}
+        </div>
+
+        {/* Grace message when missed days */}
+        {daysMissed >= 2 && (
+          <div className="px-4 mt-4">
+            <motion.div initial={{ opacity: 0, y: 6 }} animate={{ opacity: 1, y: 0 }}
+              className="rounded-[18px] px-5 py-4 flex items-start gap-3"
+              style={{ background: '#FFF3DC', border: '1px solid #F5D78A' }}>
+              <span style={{ fontSize: 20, flexShrink: 0 }}>🌅</span>
+              <p className="text-[13px] leading-relaxed font-medium" style={{ color: '#7A4A00' }}>
+                {daysMissed === 2
+                  ? "Yesterday slipped away — that's okay. His mercies are new this morning."
+                  : `It's been ${daysMissed} days. Grace is still here. Start again today.`}
+              </p>
+            </motion.div>
+          </div>
+        )}
+
+        {/* ── VERSE ACCENT ── */}
+        <div className="px-4 mt-4">
+          <motion.div initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }}
+            transition={{ delay: 0.15 }}>
+            <VerseAccent t={t} />
           </motion.div>
         </div>
 
-        {/* Character companion */}
+        {/* Quick actions row */}
         <div className="px-4 mt-4">
-          <motion.div
-            initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }}
-            transition={{ type: 'spring', stiffness: 260, damping: 22, delay: 0.1 }}
-            className="overflow-hidden"
-            style={{ borderRadius: 20, boxShadow: t.shadow }}
-          >
-            <CharacterCompanion
-              characterId={companionId}
-              streak={streak?.current || 0}
-              daysMissed={daysMissed}
-              checkedInToday={isCheckedInToday}
-            />
-          </motion.div>
-        </div>
-
-        {/* Today's Reading */}
-        <div className="px-4 mt-4">
-          <TodaysReadingCard plans={plans} setPlans={setPlans} onCheckin={handlePlanCheckin} t={t} />
-        </div>
-
-        {/* Open Bible CTA */}
-        <div className="px-4 mt-4">
-          <motion.div initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.4 }}>
-            <Link
-              href="/read"
-              className="flex items-center gap-4 rounded-[20px] p-5 active:scale-[0.98] transition-all"
-              style={{ background: '#4A7C5F' }}
-            >
-              <div className="w-12 h-12 rounded-2xl bg-white/20 flex items-center justify-center flex-shrink-0">
-                <BibleIcon size={26} />
+          <motion.div initial={{ opacity: 0, y: 6 }} animate={{ opacity: 1, y: 0 }}
+            transition={{ delay: 0.2 }}
+            className="flex gap-2.5">
+            <Link href="/read"
+              className="flex-1 flex items-center gap-2 px-4 py-3 rounded-[16px] active:scale-[0.97] transition-all"
+              style={{ background: '#E8F5EE' }}>
+              <span style={{ fontSize: 18 }}>📖</span>
+              <div className="min-w-0">
+                <p className="font-bold text-[13px]" style={{ color: '#2D5A3D' }}>Bible</p>
+                <p className="text-[11px]" style={{ color: '#4A7C5F99' }}>Open & read</p>
               </div>
-              <div>
-                <p className="font-display text-[17px] font-semibold text-white">Open the Bible</p>
-                <p className="text-[13px] mt-0.5" style={{ color: 'rgba(255,255,255,0.75)' }}>
-                  Start reading now
-                </p>
+            </Link>
+            <Link href="/plans"
+              className="flex-1 flex items-center gap-2 px-4 py-3 rounded-[16px] active:scale-[0.97] transition-all"
+              style={{ background: '#EDE9FF' }}>
+              <span style={{ fontSize: 18 }}>📅</span>
+              <div className="min-w-0">
+                <p className="font-bold text-[13px]" style={{ color: '#3D3190' }}>Plans</p>
+                <p className="text-[11px]" style={{ color: '#5B4FCF99' }}>All plans</p>
               </div>
             </Link>
           </motion.div>
         </div>
-      </div>
 
-      {/* FAB — fixed position, outside all scroll containers */}
-      <HomeFAB onPost={() => setCompose(true)} t={t} />
+        {/* Sign-in nudge — guests only */}
+        {!hasAccount && (
+          <div className="px-4 mt-4">
+            <motion.div initial={{ opacity: 0, y: 6 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.25 }}>
+              <SignInNudge t={t} />
+            </motion.div>
+          </div>
+        )}
+      </div>
 
       <AnimatePresence>
         {notifOpen && <NotificationPanel onClose={() => setNotifOpen(false)} />}
-      </AnimatePresence>
-      <AnimatePresence>
-        {compose && <PostComposer onClose={() => setCompose(false)} />}
       </AnimatePresence>
       <ToastContainer />
     </div>

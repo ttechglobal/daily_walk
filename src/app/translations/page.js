@@ -1,14 +1,10 @@
 'use client'
 
-// ── src/app/translations/page.js ──
-// My Bibles — simplified translation library.
-//
-// UX PRINCIPLES:
-//   1. KJV always works online — no download needed ever
-//   2. Download = offline access only (clearly communicated)
-//   3. One action per translation: Get / Switch / Active
-//   4. Zero info overload — name, status, button. That's it.
-//   5. Downloading shows a slim progress bar, nothing else
+// ── src/app/translations/page.js ── v3
+// FIX: removed TRANSLATIONS.filter(tr => tr.enabled) — that was the cause
+//      of the blank list. TRANSLATIONS no longer has an enabled field.
+//      All translations are shown. KJV is always available online.
+//      Others show a Download/Get button.
 
 import { useState, useEffect, useCallback } from 'react'
 import { useRouter } from 'next/navigation'
@@ -19,7 +15,6 @@ import {
   TRANSLATIONS,
   getActiveTranslation,
   setActiveTranslation,
-  isTranslationDownloaded,
   getDownloadedSet,
   markDeleted,
 } from '../../lib/bib-translations'
@@ -33,15 +28,13 @@ import {
 } from '../../lib/translation-download'
 
 // ─────────────────────────────────────────────
-//  Single translation row
+//  Single row
 // ─────────────────────────────────────────────
-function TranslationRow({ tr, isActive, isDownloaded, onActivate, onDownload, onDelete, t }) {
-  const [dlState, setDlState] = useState(() => getDownloadState(tr.id))
+function TranslationRow({ tr, isActive, isDownloaded, onActivate, onDownload, t }) {
+  const [dlState,       setDlState]       = useState(() => getDownloadState(tr.id))
   const [confirmDelete, setConfirmDelete] = useState(false)
 
-  useEffect(() => {
-    return subscribeToDownload(tr.id, setDlState)
-  }, [tr.id])
+  useEffect(() => subscribeToDownload(tr.id, setDlState), [tr.id])
 
   const isDownloading = dlState?.status === 'downloading'
   const isPaused      = dlState?.status === 'paused'
@@ -49,195 +42,143 @@ function TranslationRow({ tr, isActive, isDownloaded, onActivate, onDownload, on
   const isDeleting    = dlState?.status === 'deleting'
   const pct           = dlState?.pct ?? 0
 
+  async function handleDelete() {
+    setConfirmDelete(false)
+    await deleteTranslation(tr.id)
+    markDeleted(tr.id)
+  }
+
   return (
     <div style={{ borderBottom: `1px solid ${t.border}` }}>
-      <div className="flex items-center gap-3 px-4 py-4">
+      <button
+        onClick={() => onActivate(tr.id)}
+        className="w-full flex items-center gap-4 px-4 py-4 text-left active:opacity-70 transition-opacity"
+        style={{ background: isActive ? '#5B4FCF08' : 'transparent' }}>
 
         {/* Abbreviation */}
-        <div style={{
-          width:      52,
-          flexShrink: 0,
-          fontSize:   18,
-          fontWeight: 600,
-          color:      isActive ? '#5B4FCF' : isDone ? '#4A7C5F' : t.textMuted,
+        <span style={{
+          width: 54, flexShrink: 0, fontSize: 18, fontWeight: 700,
+          color: isActive ? '#5B4FCF' : isDone ? t.text : t.textMuted,
         }}>
           {tr.abbreviation}
-        </div>
+        </span>
 
-        {/* Name + status */}
+        {/* Name + progress bar */}
         <div className="flex-1 min-w-0">
-          <p style={{ fontSize: 15, fontWeight: 500, color: t.text }}>
+          <p style={{ fontSize: 14, fontWeight: 600, color: t.text }} className="truncate">
             {tr.name}
           </p>
-          {isActive && (
-            <p style={{ fontSize: 12, color: '#5B4FCF', marginTop: 1 }}>
-              Reading now · Online
-            </p>
-          )}
-          {isDone && !isActive && (
-            <p style={{ fontSize: 12, color: '#4A7C5F', marginTop: 1 }}>
-              Downloaded · Offline ready
-            </p>
-          )}
           {isDownloading && (
-            <p style={{ fontSize: 12, color: '#5B4FCF', marginTop: 1 }}>
-              Downloading {pct}%…
-            </p>
-          )}
-          {isPaused && (
-            <p style={{ fontSize: 12, color: t.textMuted, marginTop: 1 }}>
-              Paused at {pct}%
-            </p>
-          )}
-          {!isDone && !isDownloading && !isPaused && !isDeleting && (
-            <p style={{ fontSize: 12, color: t.textFaint, marginTop: 1 }}>
-              {tr.license}
-            </p>
-          )}
-          {isDeleting && (
-            <p style={{ fontSize: 12, color: t.textMuted, marginTop: 1 }}>
-              Removing…
-            </p>
-          )}
-
-          {/* Progress bar — only shown while downloading */}
-          {(isDownloading || isPaused) && (
-            <div style={{
-              height:       2,
-              background:   t.border,
-              borderRadius: 1,
-              marginTop:    6,
-              overflow:     'hidden',
-            }}>
-              <motion.div
-                style={{ height: 2, background: '#5B4FCF', borderRadius: 1 }}
-                animate={{ width: `${pct}%` }}
-                transition={{ duration: 0.3 }}
-              />
+            <div className="mt-1.5 h-1 rounded-full overflow-hidden" style={{ background: t.bgMuted }}>
+              <div style={{
+                height: '100%', width: `${pct}%`,
+                background: '#5B4FCF', borderRadius: 99,
+                transition: 'width 0.3s',
+              }} />
             </div>
           )}
         </div>
 
-        {/* Action */}
-        <div className="flex items-center gap-2 flex-shrink-0">
-          {/* Active state — no action needed */}
-          {isActive && !confirmDelete && (
+        {/* Right action */}
+        <div style={{ flexShrink: 0 }}>
+          {isActive && (
             <div style={{
-              width:        28, height:      28,
-              borderRadius: 14,
-              background:   '#5B4FCF',
-              display:      'flex', alignItems: 'center', justifyContent: 'center',
+              width: 24, height: 24, borderRadius: '50%',
+              background: '#5B4FCF', display: 'flex',
+              alignItems: 'center', justifyContent: 'center',
             }}>
-              <Check size={14} color="#fff" />
+              <Check size={13} color="white" strokeWidth={3} />
             </div>
           )}
 
-          {/* Downloaded, not active → Switch button */}
-          {isDone && !isActive && !confirmDelete && (
-            <>
-              <button
-                onClick={() => onActivate(tr.id)}
-                style={{
-                  height:       32,
-                  padding:      '0 14px',
-                  borderRadius: 16,
-                  background:   '#5B4FCF12',
-                  color:        '#5B4FCF',
-                  fontSize:     13,
-                  fontWeight:   600,
-                  border:       'none',
-                  cursor:       'pointer',
-                }}>
-                Switch
-              </button>
-              <button
-                onClick={() => setConfirmDelete(true)}
-                style={{
-                  height:       32,
-                  padding:      '0 10px',
-                  borderRadius: 16,
-                  background:   'transparent',
-                  color:        t.textFaint,
-                  fontSize:     12,
-                  border:       'none',
-                  cursor:       'pointer',
-                }}>
-                Remove
-              </button>
-            </>
+          {!isActive && tr.alwaysOnline && !isDone && (
+            <span style={{ fontSize: 11, fontWeight: 600, color: '#4A7C5F' }}>Online</span>
           )}
 
-          {/* Confirm delete */}
-          {confirmDelete && (
-            <>
-              <button onClick={() => setConfirmDelete(false)}
-                style={{ fontSize:12, color:t.textMuted, border:'none', background:'transparent', cursor:'pointer' }}>
-                Cancel
-              </button>
-              <button onClick={() => { setConfirmDelete(false); onDelete(tr.id) }}
-                style={{
-                  height:32, padding:'0 12px', borderRadius:16,
-                  background:'#E8403812', color:'#E84038',
-                  fontSize:12, fontWeight:600, border:'none', cursor:'pointer',
-                }}>
-                Remove
-              </button>
-            </>
-          )}
-
-          {/* Not downloaded → Get button */}
-          {!isDone && !isDownloading && !isPaused && !isDeleting && !confirmDelete && (
+          {!isActive && isDone && !isDownloading && !isPaused && (
             <button
-              onClick={() => onDownload(tr.id)}
+              onClick={e => { e.stopPropagation(); setConfirmDelete(v => !v) }}
               style={{
-                height:       32,
-                padding:      '0 16px',
-                borderRadius: 16,
-                background:   '#5B4FCF',
-                color:        '#fff',
-                fontSize:     13,
-                fontWeight:   600,
-                border:       'none',
-                cursor:       'pointer',
+                fontSize: 11, fontWeight: 600, color: t.textMuted,
+                background: 'transparent', border: 'none', cursor: 'pointer',
+              }}>
+              ✓ Saved
+            </button>
+          )}
+
+          {!isActive && !isDone && !isDownloading && !isPaused && !isDeleting && (
+            <button
+              onClick={e => { e.stopPropagation(); onDownload(tr.id) }}
+              style={{
+                height: 32, padding: '0 16px', borderRadius: 16,
+                background: '#5B4FCF', color: '#fff',
+                fontSize: 13, fontWeight: 600,
+                border: 'none', cursor: 'pointer',
               }}>
               Get
             </button>
           )}
 
-          {/* Downloading → pause */}
           {isDownloading && (
-            <button onClick={() => pauseDownload(tr.id)}
+            <button
+              onClick={e => { e.stopPropagation(); pauseDownload(tr.id) }}
               style={{
-                height:32, padding:'0 14px', borderRadius:16,
-                background:t.bgMuted, color:t.text,
-                fontSize:13, fontWeight:500, border:'none', cursor:'pointer',
+                height: 32, padding: '0 14px', borderRadius: 16,
+                background: t.bgMuted, color: t.text,
+                fontSize: 13, fontWeight: 500, border: 'none', cursor: 'pointer',
               }}>
               Pause
             </button>
           )}
 
-          {/* Paused → resume */}
           {isPaused && (
-            <button onClick={() => resumeDownload(tr.id)}
+            <button
+              onClick={e => { e.stopPropagation(); resumeDownload(tr.id) }}
               style={{
-                height:32, padding:'0 14px', borderRadius:16,
-                background:'#5B4FCF', color:'#fff',
-                fontSize:13, fontWeight:600, border:'none', cursor:'pointer',
+                height: 32, padding: '0 14px', borderRadius: 16,
+                background: '#5B4FCF', color: '#fff',
+                fontSize: 13, fontWeight: 600, border: 'none', cursor: 'pointer',
               }}>
               Resume
             </button>
           )}
 
-          {/* Deleting */}
-          {isDeleting && <Loader2 size={18} style={{ color:t.textMuted }} className="animate-spin"/>}
+          {isDeleting && (
+            <Loader2 size={17} className="animate-spin" style={{ color: t.textMuted }} />
+          )}
         </div>
-      </div>
+      </button>
+
+      {/* Confirm delete */}
+      {confirmDelete && isDone && !isActive && (
+        <div className="flex items-center gap-2 px-4 pb-3 pt-0">
+          <p style={{ fontSize: 12, color: t.textMuted, flex: 1 }}>
+            Remove offline copy?
+          </p>
+          <button onClick={handleDelete}
+            style={{
+              height: 28, padding: '0 12px', borderRadius: 14,
+              background: '#EF444420', color: '#EF4444',
+              fontSize: 12, fontWeight: 600, border: 'none', cursor: 'pointer',
+            }}>
+            Remove
+          </button>
+          <button onClick={() => setConfirmDelete(false)}
+            style={{
+              height: 28, padding: '0 12px', borderRadius: 14,
+              background: t.bgMuted, color: t.textMuted,
+              fontSize: 12, fontWeight: 500, border: 'none', cursor: 'pointer',
+            }}>
+            Cancel
+          </button>
+        </div>
+      )}
     </div>
   )
 }
 
 // ─────────────────────────────────────────────
-//  Main page
+//  Page
 // ─────────────────────────────────────────────
 export default function TranslationsPage() {
   const router = useRouter()
@@ -252,12 +193,15 @@ export default function TranslationsPage() {
     setOnline(navigator.onLine)
     const on  = () => setOnline(true)
     const off = () => setOnline(false)
-    window.addEventListener('online',  on)
+    window.addEventListener('online', on)
     window.addEventListener('offline', off)
-    return () => { window.removeEventListener('online', on); window.removeEventListener('offline', off) }
+    return () => {
+      window.removeEventListener('online', on)
+      window.removeEventListener('offline', off)
+    }
   }, [])
 
-  // Refresh downloaded list when any download completes
+  // Refresh downloaded set when any download completes
   useEffect(() => {
     const h = () => setDownloadedIds(getDownloadedSet())
     window.addEventListener('dw-translation-download', h)
@@ -274,12 +218,8 @@ export default function TranslationsPage() {
     downloadTranslation(id)
   }, [online])
 
-  const handleDelete = useCallback(async (id) => {
-    await deleteTranslation(id)
-    setDownloadedIds(getDownloadedSet())
-  }, [])
-
-  const enabled = TRANSLATIONS.filter(tr => tr.enabled)
+  // ── THE FIX: use TRANSLATIONS directly — no .filter(tr => tr.enabled)
+  const list = TRANSLATIONS
 
   return (
     <div className="min-h-[100dvh] flex flex-col" style={{ background: t.bg }}>
@@ -288,13 +228,11 @@ export default function TranslationsPage() {
       <div className="flex items-center gap-3 px-4 py-4 sticky top-0 z-10 border-b"
         style={{ background: t.bg, borderColor: t.border }}>
         <button onClick={() => router.back()}
-          className="w-9 h-9 rounded-full flex items-center justify-center active:scale-90 transition-all"
+          className="w-9 h-9 rounded-full flex items-center justify-center"
           style={{ background: t.bgMuted }}>
           <ArrowLeft size={18} style={{ color: t.text }} />
         </button>
-        <h1 style={{ fontSize: 18, fontWeight: 600, color: t.text }}>
-          My Bibles
-        </h1>
+        <h1 style={{ fontSize: 18, fontWeight: 700, color: t.text }}>My Bibles</h1>
       </div>
 
       {/* Offline banner */}
@@ -302,42 +240,33 @@ export default function TranslationsPage() {
         <div className="flex items-center gap-2 px-4 py-3"
           style={{ background: '#E8A83815', borderBottom: `1px solid ${t.border}` }}>
           <WifiOff size={14} style={{ color: '#B07000', flexShrink: 0 }} />
-          <p style={{ fontSize: 13, color: '#B07000' }}>
-            You're offline — downloads paused
-          </p>
+          <p style={{ fontSize: 13, color: '#B07000' }}>You're offline — downloads paused</p>
         </div>
       )}
 
-      {/* Explainer — one line, not a wall of text */}
+      {/* Subtitle */}
       <p style={{
-        fontSize:     13,
-        color:        t.textMuted,
-        padding:      '12px 16px',
+        fontSize: 13, color: t.textMuted, lineHeight: 1.5,
+        padding: '10px 16px',
         borderBottom: `1px solid ${t.border}`,
-        lineHeight:   1.5,
       }}>
         KJV is always available. Download others to read offline.
       </p>
 
-      {/* Translation list */}
+      {/* List — ALL translations, no filter */}
       <div className="flex-1">
-        <AnimatePresence>
-          {enabled.map(tr => (
-            <motion.div key={tr.id} layout initial={{ opacity: 0 }} animate={{ opacity: 1 }}>
-              <TranslationRow
-                tr={tr}
-                isActive={activeId === tr.id}
-                isDownloaded={downloadedIds.has(tr.id)}
-                onActivate={handleActivate}
-                onDownload={handleDownload}
-                onDelete={handleDelete}
-                t={t}
-              />
-            </motion.div>
-          ))}
-        </AnimatePresence>
+        {list.map(tr => (
+          <TranslationRow
+            key={tr.id}
+            tr={tr}
+            isActive={activeId === tr.id}
+            isDownloaded={downloadedIds.has(tr.id)}
+            onActivate={handleActivate}
+            onDownload={handleDownload}
+            t={t}
+          />
+        ))}
       </div>
-
     </div>
   )
 }

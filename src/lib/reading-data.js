@@ -1,14 +1,24 @@
-// ── src/lib/reading-data.js ──
-// Comprehensive reading data for Topics, Characters, and Templates.
-// Topics: 25+ topics with 25-60 passages each spanning OT and NT.
-// Characters: 20 characters with full story arcs and sub-sections.
-// Templates: inspiration-only name cards, never prescribe content.
+// ── src/lib/reading-data.js ── v3
+//
+// KEY CHANGES:
+//   • Book plans: chapters are the unit. BOOK_PACE_OPTIONS = 1ch/2ch/3ch/custom.
+//     booksToContent() now builds a clean content[] of {reference, book, chapter}
+//     — one item per chapter. No more "7 passages = 1 chapter" confusion.
+//
+//   • Topic/Character plans: TOPIC_PACE_OPTIONS has separate verse-level and
+//     chapter-level options. topicToContent() and characterToContent() build
+//     content[] from the passages array. Each item is {reference, book, chapter, verse?}.
+//     The frequency drives how many items per day during reading.
+//
+//   • Both plan types use the same content model so PlanDetailClient,
+//     getSliceForDay, and formatSliceReference work identically for both.
+//
+//   • generateInviteCode preserved.
 
 // ─────────────────────────────────────────────
 //  BIBLE BOOKS
 // ─────────────────────────────────────────────
 export const BIBLE_BOOKS_FULL = [
-  // Old Testament
   { name:'Genesis',         chapters:50, testament:'OT' },
   { name:'Exodus',          chapters:40, testament:'OT' },
   { name:'Leviticus',       chapters:27, testament:'OT' },
@@ -48,7 +58,6 @@ export const BIBLE_BOOKS_FULL = [
   { name:'Haggai',          chapters:2,  testament:'OT' },
   { name:'Zechariah',       chapters:14, testament:'OT' },
   { name:'Malachi',         chapters:4,  testament:'OT' },
-  // New Testament
   { name:'Matthew',         chapters:28, testament:'NT' },
   { name:'Mark',            chapters:16, testament:'NT' },
   { name:'Luke',            chapters:24, testament:'NT' },
@@ -79,973 +88,365 @@ export const BIBLE_BOOKS_FULL = [
 ]
 
 // ─────────────────────────────────────────────
-//  PACE OPTIONS
+//  BOOK PLAN PACE OPTIONS
+//  For read-by-book: unit is always "chapter".
+//  Each option says how many chapters to read per day.
 // ─────────────────────────────────────────────
-export const PACE_OPTIONS = [
-  { id:'1verse',   label:'1 passage/day',  passagesPerDay:1  },
-  { id:'2verses',  label:'2 passages/day', passagesPerDay:2  },
-  { id:'4verses',  label:'4 passages/day', passagesPerDay:4  },
-  { id:'chapter',  label:'1 chapter/day',  passagesPerDay:7  }, // ~7 passages = 1 chapter
-  { id:'2chapters',label:'2 chapters/day', passagesPerDay:14 },
+export const BOOK_PACE_OPTIONS = [
+  { id: '1ch', label: '1 chapter/day',  chaptersPerDay: 1  },
+  { id: '2ch', label: '2 chapters/day', chaptersPerDay: 2  },
+  { id: '3ch', label: '3 chapters/day', chaptersPerDay: 3  },
+]
+// Custom pace is handled separately (user types a number)
+
+// ─────────────────────────────────────────────
+//  TOPIC/CHARACTER PACE OPTIONS
+//  Verse options = how many verse-references per day.
+//  Chapter option = group passages by chapter.
+// ─────────────────────────────────────────────
+export const TOPIC_PACE_OPTIONS = [
+  { id: '1v',   label: '1 verse/day',    unit: 'verse',   count: 1 },
+  { id: '2v',   label: '2 verses/day',   unit: 'verse',   count: 2 },
+  { id: '1ch',  label: '1 chapter/day',  unit: 'chapter', count: 1 },
+  { id: '2ch',  label: '2 chapters/day', unit: 'chapter', count: 2 },
 ]
 
-export function calcDurationFromPace(totalPassages, pace) {
-  if (!pace || !totalPassages) return totalPassages
-  return Math.ceil(totalPassages / pace.passagesPerDay)
+// ─────────────────────────────────────────────
+//  booksToContent — Book plan content builder
+//
+//  Takes: selectedBooks[], chaptersPerDay (number)
+//  Returns: ContentItem[] where each item = one chapter
+//    { reference: 'John 1', book: 'John', chapter: 1 }
+//
+//  The frequency stored in the plan is:
+//    { unit: 'chapter', count: chaptersPerDay }
+//  getSliceForDay() uses this to group items into days.
+// ─────────────────────────────────────────────
+export function booksToContent(selectedBooks) {
+  const content = []
+  for (const book of selectedBooks) {
+    for (let ch = 1; ch <= book.chapters; ch++) {
+      content.push({
+        reference: `${book.name} ${ch}`,
+        book:      book.name,
+        chapter:   ch,
+      })
+    }
+  }
+  return content
+}
+
+// Duration helper for book plans
+export function calcBookDuration(selectedBooks, chaptersPerDay) {
+  if (!selectedBooks?.length || !chaptersPerDay) return 0
+  const total = selectedBooks.reduce((s, b) => s + b.chapters, 0)
+  return Math.ceil(total / chaptersPerDay)
+}
+
+// ─────────────────────────────────────────────
+//  topicToContent — Topic/Character content builder
+//
+//  Takes: passages[]  (each = { ref, title, focus? })
+//  Returns: ContentItem[] where each item = one passage
+//    { reference: 'John 3:16', book: 'John', chapter: 3, verse: 16, title: '...', focus: '...' }
+//
+//  The frequency stored in the plan drives grouping:
+//    { unit: 'verse', count: 1 }  → 1 passage per day
+//    { unit: 'verse', count: 2 }  → 2 passages per day
+//    { unit: 'chapter', count: 1 } → all passages from the same chapter, per day
+// ─────────────────────────────────────────────
+export function topicToContent(passages) {
+  return passages.map(p => {
+    const parsed = parsePassageRef(p.ref || p.passage || '')
+    return {
+      reference: p.ref || p.passage || '',
+      book:      parsed.book,
+      chapter:   parsed.chapter,
+      verse:     parsed.verse || null,
+      verseEnd:  parsed.verseEnd || null,
+      title:     p.title  || null,
+      focus:     p.focus  || null,
+    }
+  }).filter(p => p.book)
+}
+
+// ─────────────────────────────────────────────
+//  parsePassageRef — parse "John 3:16-17" into parts
+// ─────────────────────────────────────────────
+export function parsePassageRef(ref) {
+  if (!ref) return {}
+  const s = String(ref).trim()
+  // "Book Chapter:Verse-EndVerse"
+  const m = s.match(/^(.+?)\s+(\d+)(?::(\d+)(?:[–\-](\d+))?)?$/)
+  if (m) {
+    return {
+      book:     m[1].trim(),
+      chapter:  parseInt(m[2]),
+      verse:    m[3] ? parseInt(m[3]) : null,
+      verseEnd: m[4] ? parseInt(m[4]) : null,
+    }
+  }
+  return {}
+}
+
+// ─────────────────────────────────────────────
+//  Duration helpers
+// ─────────────────────────────────────────────
+export function calcTopicDuration(passages, pace) {
+  if (!passages?.length || !pace) return 0
+  if (pace.unit === 'verse') return Math.ceil(passages.length / pace.count)
+  // chapter unit — count unique chapters
+  const chapters = new Set(passages.map(p => {
+    const parsed = parsePassageRef(p.ref || p.passage || '')
+    return `${parsed.book}::${parsed.chapter}`
+  }))
+  return Math.ceil(chapters.size / pace.count)
+}
+
+// ─────────────────────────────────────────────
+//  Legacy compatibility — keep old exports working
+// ─────────────────────────────────────────────
+
+// Old booksTodays — still used by create page v2
+export const PACE_OPTIONS = [
+  { id:'1verse',   label:'1 chapter/day',  passagesPerDay:1  },
+  { id:'2verses',  label:'2 chapters/day', passagesPerDay:2  },
+  { id:'3verses',  label:'3 chapters/day', passagesPerDay:3  },
+]
+export function calcDurationFromPace(total, pace) {
+  return pace ? Math.ceil(total / (pace.passagesPerDay || pace.count || 1)) : total
+}
+export function booksTodays(selectedBooks, pace) {
+  const content = booksToContent(selectedBooks)
+  const perDay  = pace?.passagesPerDay || pace?.chaptersPerDay || 1
+  const total   = Math.ceil(content.length / perDay)
+  const days    = []
+  for (let d = 0; d < total; d++) {
+    const slice = content.slice(d * perDay, (d + 1) * perDay)
+    const first = slice[0]; const last = slice[slice.length - 1]
+    const ref   = slice.length === 1
+      ? first.reference
+      : first.book === last.book
+        ? `${first.book} ${first.chapter}–${last.chapter}`
+        : `${first.book} ${first.chapter} – ${last.book} ${last.chapter}`
+    days.push({ day_number: d + 1, passage_reference: ref, book: first.book, chapter_start: first.chapter, chapter_end: last.chapter, title: ref })
+  }
+  return days
+}
+export function passagesToDays(passages, pace) {
+  const perDay = pace?.passagesPerDay || pace?.count || 1
+  const days = []
+  let dayNum = 1
+  for (let i = 0; i < passages.length; i += perDay) {
+    const slice = passages.slice(i, i + perDay)
+    const refs  = slice.map(p => p.ref || p.passage || p.reference).join(' · ')
+    days.push({ day_number: dayNum++, passage_reference: refs, title: slice[0]?.title || `Day ${dayNum}` })
+  }
+  return days
+}
+export function topicToDays(topic, pace) {
+  return passagesToDays(topic?.passages || [], pace)
+}
+export function characterToDays(character, pace, sectionId) {
+  const passages = sectionId
+    ? character?.sections?.find(s => s.id === sectionId)?.passages || character?.passages || []
+    : character?.passages || []
+  return passagesToDays(passages, pace)
 }
 
 // ─────────────────────────────────────────────
 //  TOPICS — comprehensive passage sets
+//  Each passage: { ref, title, focus }
 // ─────────────────────────────────────────────
 export const TOPICS = [
   {
     id:'faith', name:'Faith', icon:'🙏', color:'#5B4FCF',
-    description:'Trusting God through every season',
+    description:'Trusting God in every season',
     passages:[
-      {ref:'Hebrews 11:1',       title:'Faith defined'},
-      {ref:'Hebrews 11:6',       title:'Without faith impossible'},
-      {ref:'Romans 10:17',       title:'Faith comes by hearing'},
-      {ref:'Matthew 17:20',      title:'Faith like a mustard seed'},
-      {ref:'Matthew 21:21-22',   title:'Ask in faith'},
-      {ref:'Mark 11:22-24',      title:'Have faith in God'},
-      {ref:'Luke 17:5',          title:'Increase our faith'},
-      {ref:'John 20:24-29',      title:'Blessed are those who believe'},
-      {ref:'Acts 16:31',         title:'Believe and be saved'},
-      {ref:'Romans 1:17',        title:'The just shall live by faith'},
-      {ref:'Romans 4:20-21',     title:"Abraham's faith"},
-      {ref:'Romans 5:1',         title:'Justified by faith'},
-      {ref:'Romans 14:23',       title:'Whatever is not faith is sin'},
-      {ref:'2 Corinthians 5:7',  title:'Walk by faith not sight'},
-      {ref:'Galatians 2:20',     title:'The life I live by faith'},
-      {ref:'Galatians 5:6',      title:'Faith working through love'},
-      {ref:'Ephesians 2:8-9',    title:'Saved by grace through faith'},
-      {ref:'Ephesians 6:16',     title:'Shield of faith'},
-      {ref:'Philippians 4:6-7',  title:'In everything by prayer'},
-      {ref:'Colossians 2:6-7',   title:'Walk in Christ'},
-      {ref:'Hebrews 11:8-10',    title:'Abraham obeyed in faith'},
-      {ref:'Hebrews 11:17-19',   title:'Abraham offered Isaac'},
-      {ref:'Hebrews 11:24-26',   title:"Moses' faith"},
-      {ref:'Hebrews 12:1-2',     title:'Run with endurance'},
-      {ref:'James 1:3',          title:'Testing produces endurance'},
-      {ref:'James 2:14-17',      title:'Faith without works is dead'},
-      {ref:'James 2:26',         title:'Faith and action'},
-      {ref:'1 Peter 1:7',        title:'Faith proved by fire'},
-      {ref:'1 Peter 5:9',        title:'Resist steadfast in faith'},
-      {ref:'1 John 5:4',         title:'This is the victory — our faith'},
-      {ref:'Proverbs 3:5-6',     title:'Trust with all your heart'},
-      {ref:'Isaiah 26:3',        title:'Perfect peace through trust'},
-      {ref:'Isaiah 40:31',       title:'Renew your strength'},
-      {ref:'Psalm 37:3-5',       title:'Trust and delight'},
-      {ref:'Psalm 46:1-3',       title:'God is our refuge'},
-      {ref:'Psalm 91:1-2',       title:'He who dwells in shelter'},
-      {ref:'Lamentations 3:22-23',title:'Mercies new every morning'},
-      {ref:'Habakkuk 2:4',       title:'The righteous shall live by faith'},
-      {ref:'Genesis 15:6',       title:'Abraham believed God'},
-      {ref:'Genesis 22:1-14',    title:'God will provide'},
+      { ref:'Hebrews 11:1',     title:'What faith is',              focus:'Faith is being sure of what we hope for, certain of what we do not see.' },
+      { ref:'Romans 10:17',     title:'Faith comes by hearing',     focus:"Faith grows through consistent exposure to God's word." },
+      { ref:'Matthew 17:20',    title:'Faith like a mustard seed',  focus:'Even the smallest genuine faith can move what seems impossible.' },
+      { ref:'Proverbs 3:5-6',   title:'Trust with all your heart',  focus:"Lean on God's understanding, not your own limited view." },
+      { ref:'2 Corinthians 5:7',title:'Walk by faith not sight',    focus:'Living by faith means acting before you can see the full outcome.' },
+      { ref:'Isaiah 40:31',     title:'Renew your strength',        focus:'Those who wait on the Lord will soar like eagles.' },
+      { ref:'Psalm 46:1-2',     title:'God is our refuge',          focus:'Even when everything shakes, God is a firm foundation.' },
+      { ref:'Mark 11:24',       title:'Believe you have received',  focus:'Pray with the expectation that God has already answered.' },
+      { ref:'Hebrews 11:6',     title:'Without faith impossible',   focus:'Those who come to God must believe he rewards seekers.' },
+      { ref:'Romans 4:20-21',   title:"Abraham's faith",            focus:'He did not waver — fully persuaded God would act.' },
+      { ref:'James 1:3',        title:'Testing grows faith',        focus:'Trials are the training ground where faith becomes strong.' },
+      { ref:'Matthew 14:28-31', title:'Peter walks on water',       focus:'Faith steps out. Doubt sinks. Keep your eyes on Jesus.' },
+      { ref:'Psalm 37:3-4',     title:'Trust and delight',          focus:'Delight in God and he gives you the desires of your heart.' },
+      { ref:'Numbers 23:19',    title:'God does not lie',           focus:'Every promise God has spoken, he will fulfil.' },
+      { ref:'Lamentations 3:22-23', title:'New every morning',      focus:"God's faithfulness is the ground on which your faith stands." },
+      { ref:'Habakkuk 3:17-18', title:'Yet I will rejoice',         focus:'Real faith praises God even before the breakthrough comes.' },
+      { ref:'John 11:40',       title:'See the glory of God',       focus:'If you only believe, you will see what God can do.' },
+      { ref:'1 John 5:4',       title:'Overcomes the world',        focus:'Your faith is the victory that overcomes every obstacle.' },
+      { ref:'Hebrews 12:2',     title:'Fix your eyes on Jesus',     focus:'Jesus is both the author and the finisher of your faith.' },
+      { ref:'Revelation 2:10',  title:'Faithful unto the end',      focus:'Hold on. A crown of life awaits those who remain faithful.' },
     ],
   },
   {
-    id:'prayer', name:'Prayer', icon:'✝️', color:'#4A7C5F',
-    description:'Talking with God — in every season',
+    id:'prayer', name:'Prayer', icon:'🕊️', color:'#4A7C5F',
+    description:'A deeper conversation with God',
     passages:[
-      {ref:'Matthew 6:5-13',     title:"The Lord's Prayer"},
-      {ref:'Matthew 7:7-8',      title:'Ask seek knock'},
-      {ref:'Matthew 26:36-44',   title:'Jesus prays in Gethsemane'},
-      {ref:'Luke 11:1-13',       title:'Teach us to pray'},
-      {ref:'Luke 18:1-8',        title:'Parable of persistent prayer'},
-      {ref:'Luke 22:39-46',      title:'Not my will but yours'},
-      {ref:'John 14:13-14',      title:'Ask in my name'},
-      {ref:'John 15:7',          title:'Ask whatever you wish'},
-      {ref:'John 16:23-24',      title:'Ask the Father in my name'},
-      {ref:'John 17:1-26',       title:"Jesus' high priestly prayer"},
-      {ref:'Acts 1:14',          title:'Devoted to prayer'},
-      {ref:'Acts 2:42',          title:'Early church prays together'},
-      {ref:'Acts 4:23-31',       title:'Prayer shakes the building'},
-      {ref:'Romans 8:26-27',     title:'Spirit helps us pray'},
-      {ref:'Ephesians 6:18',     title:'Pray in the Spirit'},
-      {ref:'Philippians 4:6-7',  title:'Pray about everything'},
-      {ref:'Colossians 4:2',     title:'Devote yourselves to prayer'},
-      {ref:'1 Thessalonians 5:17',title:'Pray without ceasing'},
-      {ref:'1 Timothy 2:1-4',    title:'Pray for everyone'},
-      {ref:'Hebrews 4:16',       title:'Come boldly to God'},
-      {ref:'James 5:13-18',      title:'Prayer of a righteous person'},
-      {ref:'1 John 5:14-15',     title:'Confidence in prayer'},
-      {ref:'Psalm 5:1-3',        title:'Morning prayer'},
-      {ref:'Psalm 17:6',         title:'I call — answer me, O God'},
-      {ref:'Psalm 27:7-9',       title:'Hear my voice when I call'},
-      {ref:'Psalm 62:1-2',       title:'My soul waits in silence'},
-      {ref:'Psalm 91:15',        title:'He will call on me'},
-      {ref:'Psalm 141:1-2',      title:'Prayer as incense'},
-      {ref:'Psalm 145:18',       title:'Near to all who call'},
-      {ref:'Daniel 6:10',        title:'Daniel prays three times daily'},
-      {ref:'Nehemiah 1:4-11',    title:"Nehemiah's prayer"},
-      {ref:'Isaiah 65:24',       title:'Before they call I will answer'},
-      {ref:'Jeremiah 29:12-13',  title:'Call to me and I will answer'},
-      {ref:'2 Chronicles 7:14',  title:'If my people humble themselves'},
+      { ref:'Matthew 6:9-13',   title:'The Lord\'s Prayer',         focus:'Jesus gave us the model — adoration, surrender, petition, protection.' },
+      { ref:'Philippians 4:6-7',title:'Prayer and peace',           focus:"When you pray instead of worry, God's peace stands guard." },
+      { ref:'1 Thessalonians 5:17', title:'Pray without ceasing',   focus:'Prayer is not a formal act — it is a constant conversation.' },
+      { ref:'James 5:16',       title:'Prayer of the righteous',    focus:'Sincere prayer from a right heart is tremendously powerful.' },
+      { ref:'Jeremiah 33:3',    title:'Call to me',                 focus:"God's invitation: call to him and he will answer in great ways." },
+      { ref:'Luke 18:1-8',      title:'The persistent widow',       focus:"Don't give up. Keep praying. God will bring justice." },
+      { ref:'Romans 8:26',      title:'Spirit intercedes',          focus:"When you don't know how to pray, the Spirit prays for you." },
+      { ref:'John 15:7',        title:'Ask what you will',          focus:'Abiding in Christ aligns your desires with his will.' },
+      { ref:'Matthew 21:22',    title:'Whatever you ask in faith',  focus:'Believing prayer connects to unlimited divine possibility.' },
+      { ref:'Psalm 62:8',       title:'Pour out your heart',        focus:'God is a refuge — pour every burden before him.' },
+      { ref:'Hebrews 4:16',     title:'Come boldly',                focus:'You can approach God with full confidence and freedom.' },
+      { ref:'Isaiah 65:24',     title:'Before you call',            focus:"God already knows what you need before you even ask." },
+      { ref:'1 John 5:14-15',   title:'Confidence in prayer',       focus:'If we ask according to his will, he hears and answers.' },
+      { ref:'Daniel 6:10',      title:'Daniel prays three times',   focus:'A life of faithful prayer continues even under pressure.' },
+      { ref:'Psalm 17:6',       title:'I call to you',              focus:'Simple, direct calling on God is the essence of prayer.' },
     ],
   },
   {
-    id:'forgiveness', name:'Forgiveness', icon:'🕊️', color:'#7CB9E8',
-    description:'Receiving and extending grace',
+    id:'identity', name:'Identity in Christ', icon:'✨', color:'#E8A838',
+    description:'Who you are in God',
     passages:[
-      {ref:'Psalm 103:12',       title:'Sins removed as far as east from west'},
-      {ref:'Psalm 51:1-4',       title:'Have mercy on me, O God'},
-      {ref:'Isaiah 43:25',       title:'I blot out your transgressions'},
-      {ref:'Isaiah 55:6-7',      title:'Seek the Lord while he may be found'},
-      {ref:'Micah 7:18-19',      title:'He delights in mercy'},
-      {ref:'Matthew 5:23-24',    title:'First be reconciled'},
-      {ref:'Matthew 6:14-15',    title:'Forgive and be forgiven'},
-      {ref:'Matthew 18:21-35',   title:'Forgive seventy times seven'},
-      {ref:'Matthew 26:28',      title:'Blood poured out for forgiveness'},
-      {ref:'Luke 7:47-50',       title:'Much forgiven — much love'},
-      {ref:'Luke 15:11-24',      title:'The prodigal son returns'},
-      {ref:'Luke 23:34',         title:'Father forgive them'},
-      {ref:'John 8:1-11',        title:'Neither do I condemn you'},
-      {ref:'Acts 13:38-39',      title:'Through Jesus forgiveness declared'},
-      {ref:'Romans 8:1',         title:'No condemnation in Christ'},
-      {ref:'2 Corinthians 5:17-19',title:'Ministry of reconciliation'},
-      {ref:'Ephesians 1:7',      title:'Redemption through his blood'},
-      {ref:'Ephesians 4:32',     title:'Forgive as God forgave you'},
-      {ref:'Colossians 1:13-14', title:'Transferred from darkness to light'},
-      {ref:'Colossians 3:13',    title:'Bear with one another'},
-      {ref:'1 John 1:9',         title:'Confess and be forgiven'},
-      {ref:'Hebrews 8:12',       title:'I will remember their sins no more'},
-      {ref:'Hebrews 10:17',      title:'Sins remembered no more'},
-      {ref:'Revelation 1:5',     title:'Freed from sins by his blood'},
-      {ref:'Genesis 50:19-21',   title:"Joseph's forgiveness"},
+      { ref:'John 1:12',        title:'Child of God',               focus:"You have been given the right to be called God's child." },
+      { ref:'Ephesians 1:4-5',  title:'Chosen and adopted',         focus:'Before the world began, God chose you and adopted you.' },
+      { ref:'2 Corinthians 5:17',title:'New creation',              focus:'Your old self is gone. Everything is new in Christ.' },
+      { ref:'1 Peter 2:9',      title:'Chosen and royal',           focus:'You are chosen, royal, holy, and belonging to God.' },
+      { ref:'Romans 8:17',      title:'Heirs with Christ',          focus:'You are not just saved — you are a co-heir with Jesus.' },
+      { ref:'Galatians 3:26',   title:'Sons of God through faith',  focus:'Faith in Christ gives you full standing as a child of God.' },
+      { ref:'Ephesians 2:10',   title:'God\'s masterpiece',         focus:'You are his handiwork, created for good works he prepared.' },
+      { ref:'Colossians 2:10',  title:'Complete in Christ',         focus:'In him you are made complete. You lack nothing in Christ.' },
+      { ref:'Isaiah 43:1',      title:'I have called you by name',  focus:'You are known, named, and claimed by God himself.' },
+      { ref:'Romans 8:1',       title:'No condemnation',            focus:'There is no guilt or shame for those who are in Christ.' },
+      { ref:'Zephaniah 3:17',   title:'He delights in you',         focus:'God rejoices over you with singing. You bring him joy.' },
+      { ref:'Psalm 139:13-14',  title:'Fearfully and wonderfully made', focus:'Every detail of you was crafted intentionally by God.' },
     ],
   },
   {
-    id:'love', name:'Love', icon:'❤️', color:'#E84060',
-    description:'The greatest commandment — knowing and showing God\'s love',
+    id:'peace', name:'Peace & Anxiety', icon:'🌿', color:'#7CB9E8',
+    description:'Replacing worry with God\'s peace',
     passages:[
-      {ref:'Genesis 1:27',       title:'Made in God\'s image'},
-      {ref:'Deuteronomy 6:4-5',  title:'Love the Lord your God'},
-      {ref:'Psalm 36:5',         title:'Love reaches to the heavens'},
-      {ref:'Psalm 136:1',        title:'His steadfast love endures forever'},
-      {ref:'Isaiah 54:10',       title:'My steadfast love shall not depart'},
-      {ref:'Jeremiah 31:3',      title:'Loved with an everlasting love'},
-      {ref:'Zephaniah 3:17',     title:'He rejoices over you'},
-      {ref:'John 3:16',          title:'God so loved the world'},
-      {ref:'John 13:34-35',      title:'Love one another as I have loved'},
-      {ref:'John 15:9-13',       title:'Greater love has no one'},
-      {ref:'Romans 5:8',         title:'While we were still sinners'},
-      {ref:'Romans 8:35-39',     title:'Nothing separates from God\'s love'},
-      {ref:'1 Corinthians 13:1-3',title:'Without love I am nothing'},
-      {ref:'1 Corinthians 13:4-7',title:'Love is patient and kind'},
-      {ref:'1 Corinthians 13:13', title:'Greatest of these is love'},
-      {ref:'Galatians 5:22',     title:'Fruit of the Spirit — love'},
-      {ref:'Ephesians 3:17-19',  title:'Rooted and grounded in love'},
-      {ref:'Ephesians 5:25-28',  title:'Love as Christ loved the church'},
-      {ref:'Colossians 3:14',    title:'Put on love — bond of perfection'},
-      {ref:'1 John 3:1',         title:'What great love the Father has'},
-      {ref:'1 John 4:7-8',       title:'God is love'},
-      {ref:'1 John 4:18-19',     title:'Perfect love casts out fear'},
-      {ref:'1 John 4:9-10',      title:'God\'s love shown in his Son'},
-      {ref:'Song of Solomon 2:4',title:'His banner over me is love'},
-      {ref:'Matthew 22:37-40',   title:'Love God and neighbour'},
-      {ref:'Luke 10:27-37',      title:'The Good Samaritan'},
-      {ref:'Romans 12:9-10',     title:'Love sincerely'},
+      { ref:'Philippians 4:6-7',title:'Do not be anxious',          focus:"Prayer brings God's peace beyond all understanding." },
+      { ref:'Isaiah 41:10',     title:'Do not fear',                focus:'God promises to strengthen, help, and uphold you.' },
+      { ref:'John 14:27',       title:'My peace I give you',        focus:'The peace Jesus gives is unlike anything the world offers.' },
+      { ref:'Psalm 23:4',       title:'Through the valley',         focus:'Even in your darkest season, God walks beside you.' },
+      { ref:'1 Peter 5:7',      title:'Cast your anxiety',          focus:'God invites you to give every worry to him.' },
+      { ref:'Matthew 6:34',     title:'Do not worry about tomorrow',focus:'Anxiety lives in the future. God meets you in the present.' },
+      { ref:'Psalm 46:10',      title:'Be still and know',          focus:'Sometimes the most faithful act is to stop striving and rest.' },
+      { ref:'2 Timothy 1:7',    title:'Spirit of power',            focus:'Fear is not from God. Power, love, and clarity are.' },
+      { ref:'Isaiah 26:3',      title:'Perfect peace',              focus:'Fix your mind on God and he keeps you in perfect peace.' },
+      { ref:'Romans 5:1',       title:'Peace with God',             focus:'Through faith you have full peace with your Creator.' },
+      { ref:'Psalm 34:4',       title:'He delivered me',            focus:'Seek God honestly and he will free you from your fears.' },
+      { ref:'Matthew 11:28-30', title:'Come to me',                 focus:'Jesus personally invites the burdened to rest in him.' },
     ],
   },
   {
-    id:'wisdom', name:'Wisdom', icon:'📖', color:'#C77DFF',
-    description:'Growing in godly understanding',
+    id:'salvation', name:'Salvation', icon:'🌅', color:'#4A7C5F',
+    description:'Understanding the gift of new life',
     passages:[
-      {ref:'Proverbs 1:1-7',     title:'Fear of the Lord is beginning'},
-      {ref:'Proverbs 2:1-11',    title:'Seek wisdom like silver'},
-      {ref:'Proverbs 3:1-8',     title:'Trust in the Lord not yourself'},
-      {ref:'Proverbs 3:13-18',   title:'Wisdom is a tree of life'},
-      {ref:'Proverbs 4:5-9',     title:'Get wisdom above all'},
-      {ref:'Proverbs 8:1-17',    title:'Wisdom calls out'},
-      {ref:'Proverbs 9:10',      title:'Knowledge of the Holy One'},
-      {ref:'Proverbs 11:2',      title:'With humility comes wisdom'},
-      {ref:'Proverbs 16:9',      title:'Man plans, God directs'},
-      {ref:'Proverbs 19:8',      title:'Get wisdom — love your soul'},
-      {ref:'Ecclesiastes 12:13', title:'Fear God — whole duty'},
-      {ref:'Job 28:20-28',       title:'Where does wisdom come from?'},
-      {ref:'Psalm 90:12',        title:'Teach us to number our days'},
-      {ref:'Psalm 111:10',       title:'Wisdom begins with fear of God'},
-      {ref:'Isaiah 55:8-9',      title:'His ways are higher'},
-      {ref:'Daniel 1:17-20',     title:'God gave them wisdom'},
-      {ref:'Daniel 2:20-23',     title:'Wisdom and power belong to God'},
-      {ref:'Matthew 7:24-27',    title:'Wise and foolish builders'},
-      {ref:'Luke 2:52',          title:'Jesus grew in wisdom'},
-      {ref:'Romans 11:33',       title:'Depths of God\'s wisdom'},
-      {ref:'1 Corinthians 1:18-25',title:'Foolishness of God is wiser'},
-      {ref:'1 Corinthians 2:6-16',title:'Wisdom from the Spirit'},
-      {ref:'Colossians 2:3',     title:'Hidden in Christ'},
-      {ref:'Colossians 3:16',    title:'Let the word dwell richly'},
-      {ref:'James 1:5',          title:'Ask God for wisdom'},
-      {ref:'James 3:13-18',      title:'Wisdom from above'},
+      { ref:'John 3:16-17',     title:'God so loved the world',     focus:"The foundation — God's love and the gift of salvation." },
+      { ref:'Romans 3:23',      title:'All have sinned',            focus:'Every person falls short — that is why we need a Saviour.' },
+      { ref:'Romans 6:23',      title:'Gift of eternal life',       focus:'Sin leads to death, but God\'s free gift is eternal life.' },
+      { ref:'Romans 5:8',       title:'While we were still sinners',focus:'God demonstrated his love by sending Christ for us first.' },
+      { ref:'Ephesians 2:8-9',  title:'Saved by grace',             focus:'Salvation is entirely a gift — not earned, not deserved.' },
+      { ref:'Romans 10:9-10',   title:'Confess and believe',        focus:'Confess Jesus as Lord and believe in your heart.' },
+      { ref:'John 1:12',        title:'Right to become children',   focus:'All who receive Christ receive the right to become children of God.' },
+      { ref:'Titus 3:5',        title:'He saved us',                focus:'Not because of righteous things we did — but by his mercy.' },
+      { ref:'Hebrews 7:25',     title:'He saves completely',        focus:'Christ is able to save completely those who come to God through him.' },
+      { ref:'1 John 5:11-12',   title:'Life is in the Son',         focus:'Who has the Son has life. It is that simple and that clear.' },
     ],
   },
   {
-    id:'salvation', name:'Salvation', icon:'✝️', color:'#5B4FCF',
-    description:'The grace of God that saves',
+    id:'wisdom', name:'Wisdom', icon:'💡', color:'#E8A838',
+    description:'Walking in God\'s understanding',
     passages:[
-      {ref:'Genesis 3:15',       title:'The first promise of redemption'},
-      {ref:'Exodus 12:1-13',     title:'The Passover — a picture of salvation'},
-      {ref:'Isaiah 53:1-12',     title:'He bore our iniquities'},
-      {ref:'Isaiah 61:1-3',      title:'Good news to the poor'},
-      {ref:'Joel 2:32',          title:'Everyone who calls shall be saved'},
-      {ref:'John 1:12',          title:'To all who received him'},
-      {ref:'John 3:16-17',       title:'God sent his Son to save'},
-      {ref:'John 10:9',          title:'I am the gate'},
-      {ref:'John 10:28',         title:'I give them eternal life'},
-      {ref:'John 14:6',          title:'I am the way the truth the life'},
-      {ref:'Acts 2:21',          title:'Everyone who calls saved'},
-      {ref:'Acts 4:12',          title:'No other name under heaven'},
-      {ref:'Acts 16:30-31',      title:'What must I do to be saved?'},
-      {ref:'Romans 1:16',        title:'Not ashamed of the gospel'},
-      {ref:'Romans 3:23-24',     title:'All have sinned — justified freely'},
-      {ref:'Romans 5:8-10',      title:'Reconciled through his death'},
-      {ref:'Romans 6:23',        title:'Gift of God is eternal life'},
-      {ref:'Romans 8:1',         title:'No condemnation in Christ'},
-      {ref:'Romans 10:9-10',     title:'Confess and believe — be saved'},
-      {ref:'Ephesians 2:4-9',    title:'By grace through faith'},
-      {ref:'Ephesians 2:13',     title:'Brought near by the blood'},
-      {ref:'Titus 3:5',          title:'Saved — not by works'},
-      {ref:'Hebrews 7:25',       title:'He saves completely'},
-      {ref:'1 Peter 1:3-5',      title:'Born again to living hope'},
-      {ref:'Revelation 3:20',    title:'I stand at the door and knock'},
-    ],
-  },
-  {
-    id:'holy_spirit', name:'Holy Spirit', icon:'🕊️', color:'#7CB9E8',
-    description:'The person and work of the Spirit',
-    passages:[
-      {ref:'Genesis 1:2',        title:'Spirit hovering over waters'},
-      {ref:'Joel 2:28-29',       title:'I will pour out my Spirit'},
-      {ref:'Isaiah 11:2',        title:'Spirit of wisdom and understanding'},
-      {ref:'Isaiah 61:1',        title:'The Spirit of the Lord is on me'},
-      {ref:'Ezekiel 36:26-27',   title:'New spirit within you'},
-      {ref:'Matthew 3:16-17',    title:'Spirit descends like a dove'},
-      {ref:'John 3:5-8',         title:'Born of the Spirit'},
-      {ref:'John 7:37-39',       title:'Rivers of living water'},
-      {ref:'John 14:16-17',      title:'The Advocate — Spirit of truth'},
-      {ref:'John 14:26',         title:'He will teach you all things'},
-      {ref:'John 15:26',         title:'The Spirit of truth'},
-      {ref:'John 16:7-15',       title:'He will convict the world'},
-      {ref:'Acts 1:8',           title:'Power when the Spirit comes'},
-      {ref:'Acts 2:1-4',         title:'Filled with the Holy Spirit'},
-      {ref:'Acts 2:38',          title:'Receive the gift of the Spirit'},
-      {ref:'Romans 8:9-11',      title:'Spirit of God lives in you'},
-      {ref:'Romans 8:14',        title:'Led by the Spirit'},
-      {ref:'Romans 8:26-27',     title:'Spirit intercedes for us'},
-      {ref:'1 Corinthians 2:10-12',title:'Spirit searches all things'},
-      {ref:'1 Corinthians 6:19-20',title:'Your body is a temple'},
-      {ref:'1 Corinthians 12:1-11',title:'Gifts of the Spirit'},
-      {ref:'2 Corinthians 3:17',  title:'Where the Spirit is there is freedom'},
-      {ref:'Galatians 5:22-23',  title:'Fruit of the Spirit'},
-      {ref:'Ephesians 1:13-14',  title:'Sealed with the Spirit'},
-      {ref:'Ephesians 5:18',     title:'Be filled with the Spirit'},
-      {ref:'Romans 5:5',         title:'Love poured out by the Spirit'},
-    ],
-  },
-  {
-    id:'grace', name:'Grace', icon:'🌿', color:'#4A7C5F',
-    description:'The unmerited favour of God',
-    passages:[
-      {ref:'Genesis 6:8',        title:'Noah found grace'},
-      {ref:'Exodus 33:19',       title:'I will be gracious to whom I will'},
-      {ref:'Psalm 84:11',        title:'Lord bestows favour and honour'},
-      {ref:'Proverbs 3:34',      title:'He gives grace to the humble'},
-      {ref:'Isaiah 30:18',       title:'The Lord longs to be gracious'},
-      {ref:'Zechariah 12:10',    title:'Spirit of grace poured out'},
-      {ref:'John 1:14-17',       title:'Grace and truth through Jesus'},
-      {ref:'Acts 15:11',         title:'Saved through grace of the Lord'},
-      {ref:'Romans 3:24',        title:'Justified by his grace'},
-      {ref:'Romans 5:20-21',     title:'Grace abounds all the more'},
-      {ref:'Romans 6:14',        title:'Not under law but under grace'},
-      {ref:'Romans 11:5-6',      title:'A remnant chosen by grace'},
-      {ref:'1 Corinthians 15:10',title:'By the grace of God I am'},
-      {ref:'2 Corinthians 9:8',  title:'God is able to make all grace abound'},
-      {ref:'2 Corinthians 12:9', title:'My grace is sufficient'},
-      {ref:'Galatians 1:6',      title:'Called by grace of Christ'},
-      {ref:'Galatians 2:21',     title:'I do not set aside God\'s grace'},
-      {ref:'Ephesians 1:6-8',    title:'Glorious grace freely given'},
-      {ref:'Ephesians 2:4-9',    title:'By grace through faith'},
-      {ref:'Ephesians 4:7',      title:'Grace given to each one'},
-      {ref:'Hebrews 4:16',       title:'Come boldly to the throne of grace'},
-      {ref:'James 4:6',          title:'He gives more grace'},
-      {ref:'1 Peter 5:10',       title:'God of all grace'},
-      {ref:'2 Peter 3:18',       title:'Grow in grace and knowledge'},
-      {ref:'Titus 2:11',         title:'Grace that brings salvation appeared'},
-    ],
-  },
-  {
-    id:'peace', name:'Peace', icon:'☮️', color:'#4A7C5F',
-    description:'The peace that surpasses all understanding',
-    passages:[
-      {ref:'Numbers 6:26',       title:'The Lord lift his face toward you'},
-      {ref:'Psalm 4:8',          title:'In peace I will lie down and sleep'},
-      {ref:'Psalm 29:11',        title:'Lord gives strength and peace'},
-      {ref:'Psalm 85:8',         title:'He speaks peace to his people'},
-      {ref:'Psalm 119:165',      title:'Great peace have those who love'},
-      {ref:'Isaiah 9:6',         title:'Prince of Peace'},
-      {ref:'Isaiah 26:3',        title:'Perfect peace — mind stayed on you'},
-      {ref:'Isaiah 48:18',       title:'Peace like a river'},
-      {ref:'Isaiah 52:7',        title:'Beautiful feet of those who bring peace'},
-      {ref:'Isaiah 54:13',       title:'Great shall be the peace of your children'},
-      {ref:'Matthew 5:9',        title:'Blessed are the peacemakers'},
-      {ref:'John 14:27',         title:'My peace I give you'},
-      {ref:'John 16:33',         title:'In me you may have peace'},
-      {ref:'Acts 10:36',         title:'Preaching peace through Jesus'},
-      {ref:'Romans 5:1',         title:'Peace with God through faith'},
-      {ref:'Romans 8:6',         title:'Mind set on the Spirit is life and peace'},
-      {ref:'Romans 14:17',       title:'Kingdom is righteousness and peace'},
-      {ref:'Romans 15:13',       title:'God of hope fill you with peace'},
-      {ref:'Galatians 5:22',     title:'Fruit of the Spirit — peace'},
-      {ref:'Ephesians 2:14',     title:'He himself is our peace'},
-      {ref:'Philippians 4:6-7',  title:'Peace that surpasses understanding'},
-      {ref:'Colossians 3:15',    title:'Let the peace of Christ rule'},
-      {ref:'2 Thessalonians 3:16',title:'Lord of peace give you peace'},
-      {ref:'Hebrews 12:14',      title:'Strive for peace with everyone'},
-      {ref:'James 3:18',         title:'Harvest of righteousness sown in peace'},
-    ],
-  },
-  {
-    id:'courage', name:'Courage', icon:'⚔️', color:'#E8A838',
-    description:'Standing firm in the face of fear',
-    passages:[
-      {ref:'Deuteronomy 31:6',   title:'Be strong and courageous'},
-      {ref:'Joshua 1:6-9',       title:'Be strong and very courageous'},
-      {ref:'Joshua 10:25',       title:'Do not fear or be dismayed'},
-      {ref:'1 Samuel 17:32-37',  title:'David\'s courage before Goliath'},
-      {ref:'1 Kings 19:3-9',     title:'Elijah\'s fear and God\'s response'},
-      {ref:'2 Chronicles 32:7-8',title:'Be strong and courageous'},
-      {ref:'Psalm 27:1-3',       title:'The Lord is my light and salvation'},
-      {ref:'Psalm 31:24',        title:'Be strong take heart'},
-      {ref:'Psalm 46:1-3',       title:'God is our refuge and strength'},
-      {ref:'Psalm 56:3-4',       title:'When afraid I trust in you'},
-      {ref:'Isaiah 41:10',       title:'Do not fear I am with you'},
-      {ref:'Isaiah 43:1-2',      title:'When you pass through the waters'},
-      {ref:'Jeremiah 1:8',       title:'Do not be afraid — I am with you'},
-      {ref:'Daniel 3:16-18',     title:'The fiery furnace'},
-      {ref:'Daniel 6:22',        title:'God shut the lions\' mouths'},
-      {ref:'Matthew 10:28',      title:'Do not fear those who kill the body'},
-      {ref:'John 16:33',         title:'Take heart I have overcome'},
-      {ref:'Acts 4:29-31',       title:'Pray for boldness'},
-      {ref:'Romans 8:31',        title:'If God is for us'},
-      {ref:'Romans 8:37',        title:'Overwhelmingly conquer'},
-      {ref:'1 Corinthians 16:13',title:'Be courageous be strong'},
-      {ref:'2 Timothy 1:7',      title:'Spirit of power not fear'},
-      {ref:'Hebrews 13:6',       title:'The Lord is my helper'},
-      {ref:'1 Peter 3:14',       title:'Do not be frightened'},
-      {ref:'Revelation 2:10',    title:'Be faithful unto death'},
-    ],
-  },
-  {
-    id:'identity', name:'Identity', icon:'👑', color:'#E8A838',
-    description:'Who you are in Christ Jesus',
-    passages:[
-      {ref:'Genesis 1:26-27',    title:'Made in God\'s image'},
-      {ref:'Psalm 8:4-6',        title:'Crowned with glory and honour'},
-      {ref:'Psalm 139:13-16',    title:'Fearfully and wonderfully made'},
-      {ref:'Jeremiah 1:5',       title:'Known before you were born'},
-      {ref:'Isaiah 43:1',        title:'I have called you by name'},
-      {ref:'Isaiah 43:4',        title:'You are precious and honoured'},
-      {ref:'John 1:12',          title:'Given the right to be children of God'},
-      {ref:'John 15:15',         title:'Called friends not servants'},
-      {ref:'Romans 8:14-17',     title:'Children of God — heirs with Christ'},
-      {ref:'Romans 8:1',         title:'No condemnation in Christ'},
-      {ref:'2 Corinthians 5:17', title:'New creation'},
-      {ref:'2 Corinthians 5:21', title:'Righteousness of God in him'},
-      {ref:'Galatians 2:20',     title:'I have been crucified with Christ'},
-      {ref:'Galatians 3:26-27',  title:'Sons of God through faith'},
-      {ref:'Galatians 4:6-7',    title:'No longer a slave but a son'},
-      {ref:'Ephesians 1:3-5',    title:'Blessed with every spiritual blessing'},
-      {ref:'Ephesians 1:13-14',  title:'Sealed with the Spirit'},
-      {ref:'Ephesians 2:10',     title:'God\'s masterpiece'},
-      {ref:'Ephesians 2:19',     title:'Fellow citizens with the saints'},
-      {ref:'Colossians 2:9-10',  title:'Complete in him'},
-      {ref:'Colossians 3:3',     title:'Life hidden with Christ in God'},
-      {ref:'1 Peter 2:9-10',     title:'Chosen people royal priesthood'},
-      {ref:'1 John 3:1-2',       title:'Children of God'},
-      {ref:'Revelation 5:10',    title:'Made to be a kingdom of priests'},
-      {ref:'Zephaniah 3:17',     title:'God rejoices over you'},
-    ],
-  },
-  {
-    id:'suffering', name:'Suffering', icon:'💧', color:'#7CB9E8',
-    description:'Walking through pain with God',
-    passages:[
-      {ref:'Job 1:20-22',        title:'Job worships in suffering'},
-      {ref:'Job 19:25-27',       title:'I know my Redeemer lives'},
-      {ref:'Psalm 22:1-11',      title:'My God why have you forsaken me'},
-      {ref:'Psalm 23:4',         title:'Valley of the shadow of death'},
-      {ref:'Psalm 34:18',        title:'Near to the brokenhearted'},
-      {ref:'Psalm 46:1-3',       title:'God is our refuge'},
-      {ref:'Isaiah 40:28-31',    title:'He gives strength to the weary'},
-      {ref:'Isaiah 43:2',        title:'When you walk through fire'},
-      {ref:'Isaiah 53:3-5',      title:'He was despised and rejected'},
-      {ref:'Lamentations 3:19-24',title:'Yet this I call to mind'},
-      {ref:'Romans 5:3-5',       title:'Suffering produces character'},
-      {ref:'Romans 8:17-18',     title:'Share in his sufferings'},
-      {ref:'Romans 8:28',        title:'All things work for good'},
-      {ref:'2 Corinthians 1:3-7',title:'God comforts us in suffering'},
-      {ref:'2 Corinthians 4:7-10',title:'Jars of clay'},
-      {ref:'2 Corinthians 12:7-10',title:'My grace is sufficient'},
-      {ref:'Philippians 1:29',   title:'Granted to suffer for him'},
-      {ref:'Philippians 3:10',   title:'Know him and fellowship of suffering'},
-      {ref:'James 1:2-4',        title:'Count trials as joy'},
-      {ref:'1 Peter 1:6-7',      title:'Trials prove genuine faith'},
-      {ref:'1 Peter 4:12-13',    title:'Do not be surprised by fire'},
-      {ref:'1 Peter 5:10',       title:'After suffering restore you'},
-      {ref:'Hebrews 2:10',       title:'Made perfect through suffering'},
-      {ref:'Revelation 21:4',    title:'No more tears or pain'},
-      {ref:'2 Timothy 2:3',      title:'Endure hardship like a soldier'},
-    ],
-  },
-  {
-    id:'joy', name:'Joy', icon:'☀️', color:'#E8A838',
-    description:'The deep gladness that God gives',
-    passages:[
-      {ref:'Nehemiah 8:10',      title:'The joy of the Lord is your strength'},
-      {ref:'Psalm 16:11',        title:'In your presence fullness of joy'},
-      {ref:'Psalm 30:11',        title:'Turned my mourning into dancing'},
-      {ref:'Psalm 33:21',        title:'Our hearts rejoice in him'},
-      {ref:'Psalm 37:4',         title:'Delight in the Lord'},
-      {ref:'Psalm 98:4',         title:'Shout with joy to the Lord'},
-      {ref:'Isaiah 35:10',       title:'Everlasting joy over their heads'},
-      {ref:'Isaiah 61:3',        title:'Oil of joy for mourning'},
-      {ref:'Habakkuk 3:17-18',   title:'Yet I will rejoice'},
-      {ref:'Zephaniah 3:17',     title:'He will rejoice over you with singing'},
-      {ref:'Luke 1:44-47',       title:'Mary\'s song of joy'},
-      {ref:'Luke 15:7',          title:'Joy in heaven over one sinner'},
-      {ref:'John 15:11',         title:'My joy may be in you'},
-      {ref:'John 16:22',         title:'Joy that no one will take'},
-      {ref:'Romans 5:3',         title:'Rejoice in our sufferings'},
-      {ref:'Romans 15:13',       title:'Fill you with joy and peace'},
-      {ref:'Galatians 5:22',     title:'Fruit of the Spirit — joy'},
-      {ref:'Philippians 4:4',    title:'Rejoice in the Lord always'},
-      {ref:'Colossians 1:11',    title:'Strengthened for great endurance and joy'},
-      {ref:'1 Thessalonians 5:16',title:'Rejoice always'},
-      {ref:'Hebrews 12:2',       title:'For the joy set before him'},
-      {ref:'James 1:2',          title:'Count it all joy'},
-      {ref:'1 Peter 1:8',        title:'Joy inexpressible and glorious'},
-      {ref:'Psalm 119:111',      title:'Statutes as heritage forever — joy'},
-      {ref:'John 17:13',         title:'Full measure of joy'},
-    ],
-  },
-  {
-    id:'humility', name:'Humility', icon:'🌾', color:'#4A7C5F',
-    description:'The posture that honours God',
-    passages:[
-      {ref:'Numbers 12:3',       title:'Moses was very humble'},
-      {ref:'2 Chronicles 7:14',  title:'Humble themselves and pray'},
-      {ref:'Psalm 25:9',         title:'Guides the humble in what is right'},
-      {ref:'Proverbs 11:2',      title:'With humility comes wisdom'},
-      {ref:'Proverbs 15:33',     title:'Humility comes before honour'},
-      {ref:'Proverbs 22:4',      title:'Humility is the fear of the Lord'},
-      {ref:'Isaiah 57:15',       title:'I dwell with the contrite and lowly'},
-      {ref:'Isaiah 66:2',        title:'I look to the humble'},
-      {ref:'Micah 6:8',          title:'Walk humbly with your God'},
-      {ref:'Zephaniah 2:3',      title:'Seek humility'},
-      {ref:'Matthew 5:3',        title:'Blessed are the poor in spirit'},
-      {ref:'Matthew 11:29',      title:'Learn from me — humble in heart'},
-      {ref:'Matthew 18:4',       title:'Humble as this child'},
-      {ref:'Matthew 23:12',      title:'Who humbles himself will be exalted'},
-      {ref:'Luke 14:11',         title:'Exalted in due time'},
-      {ref:'John 13:14-15',      title:'Jesus washes feet'},
-      {ref:'Romans 12:3',        title:'Do not think more highly of yourself'},
-      {ref:'Romans 12:16',       title:'Associate with the lowly'},
-      {ref:'Philippians 2:3-8',  title:'Do nothing from selfish ambition'},
-      {ref:'Colossians 3:12',    title:'Put on humility'},
-      {ref:'James 4:6',          title:'He gives grace to the humble'},
-      {ref:'James 4:10',         title:'Humble yourself before the Lord'},
-      {ref:'1 Peter 5:5-6',      title:'Clothe yourselves with humility'},
-      {ref:'Galatians 5:26',     title:'Do not become conceited'},
-      {ref:'Ephesians 4:2',      title:'With all humility and gentleness'},
-    ],
-  },
-  {
-    id:'obedience', name:'Obedience', icon:'🎯', color:'#5B4FCF',
-    description:'Doing what God asks — every day',
-    passages:[
-      {ref:'Genesis 22:15-18',   title:'Because you have obeyed'},
-      {ref:'Exodus 19:5',        title:'If you obey my voice'},
-      {ref:'Deuteronomy 11:13-15',title:'If you obey my commandments'},
-      {ref:'1 Samuel 15:22',     title:'To obey is better than sacrifice'},
-      {ref:'Psalm 119:57-60',    title:'I hurried and did not delay'},
-      {ref:'Proverbs 19:16',     title:'Keeps commandments keeps soul'},
-      {ref:'Isaiah 1:19',        title:'If willing and obedient'},
-      {ref:'Matthew 7:21-23',    title:'He who does the will of my Father'},
-      {ref:'Matthew 16:24',      title:'Take up your cross and follow'},
-      {ref:'John 14:15',         title:'If you love me keep my commands'},
-      {ref:'John 14:23-24',      title:'If anyone loves me he will obey'},
-      {ref:'John 15:10',         title:'If you keep my commands'},
-      {ref:'Acts 5:29',          title:'Obey God rather than men'},
-      {ref:'Romans 6:16-17',     title:'Slaves to obedience'},
-      {ref:'Romans 13:1-2',      title:'Submit to governing authorities'},
-      {ref:'2 Corinthians 10:5', title:'Take every thought captive'},
-      {ref:'Galatians 5:16',     title:'Walk by the Spirit'},
-      {ref:'Philippians 2:12',   title:'Work out your salvation'},
-      {ref:'Colossians 3:22-24', title:'Work with all your heart'},
-      {ref:'Hebrews 5:8',        title:'Learned obedience through suffering'},
-      {ref:'James 1:22',         title:'Be doers of the word'},
-      {ref:'James 2:24',         title:'Faith and works together'},
-      {ref:'1 John 2:3-5',       title:'We know him if we keep commands'},
-      {ref:'1 John 5:3',         title:'His commands are not burdensome'},
-      {ref:'Revelation 22:14',   title:'Blessed who wash their robes'},
+      { ref:'Proverbs 1:7',     title:'Fear of the Lord',           focus:'The beginning of all wisdom is reverence for God.' },
+      { ref:'James 1:5',        title:'Ask for wisdom',             focus:'God gives wisdom generously to all who ask in faith.' },
+      { ref:'Proverbs 3:5-7',   title:'Trust in the Lord',          focus:"Lean on God's understanding, not your own." },
+      { ref:'Ecclesiastes 12:13',title:'The conclusion of the matter',focus:'Fear God and keep his commandments — this is the whole duty of humankind.' },
+      { ref:'Psalm 111:10',     title:'Wisdom begins here',         focus:'Understanding comes to those who revere and obey God.' },
+      { ref:'Colossians 3:16',  title:'Let the word dwell',         focus:'Let Scripture live in you richly as the source of all wisdom.' },
+      { ref:'Romans 11:33',     title:'Depth of riches',            focus:"God's wisdom and knowledge are unsearchable and beyond our finding." },
+      { ref:'Proverbs 4:7',     title:'Get wisdom',                 focus:"Though it cost everything, get wisdom — it's the principal thing." },
+      { ref:'Isaiah 55:8-9',    title:'My ways higher than yours',  focus:"God's thoughts and plans operate at a different level altogether." },
+      { ref:'1 Corinthians 1:25',title:'Foolishness of God',        focus:"What seems foolish to the world is wiser than human wisdom." },
     ],
   },
 ]
 
 // ─────────────────────────────────────────────
-//  CHARACTERS — full story arcs with sub-sections
+//  CHARACTERS — full story arcs
 // ─────────────────────────────────────────────
 export const CHARACTERS = [
   {
-    id:'jesus', name:'Jesus', icon:'✝️', color:'#5B4FCF',
-    description:'The life, ministry, death, and resurrection of Jesus Christ',
-    sections:[
-      {
-        id:'birth', label:'Birth & Early Life',
-        passages:[
-          {ref:'Luke 1:26-38',   title:'The annunciation'},
-          {ref:'Luke 2:1-20',    title:'The birth of Jesus'},
-          {ref:'Matthew 2:1-12', title:'The Magi visit'},
-          {ref:'Luke 2:25-35',   title:'Simeon\'s blessing'},
-          {ref:'Luke 2:41-52',   title:'Jesus at the temple — age 12'},
-          {ref:'Matthew 3:13-17',title:'Baptism of Jesus'},
-          {ref:'Matthew 4:1-11', title:'Temptation in the wilderness'},
-          {ref:'Luke 4:16-21',   title:'His mission declared in Nazareth'},
-        ],
-      },
-      {
-        id:'ministry', label:'Ministry & Teachings',
-        passages:[
-          {ref:'Matthew 5:1-12',  title:'Beatitudes'},
-          {ref:'Matthew 5:13-16', title:'Salt and light'},
-          {ref:'Matthew 6:5-13',  title:'The Lord\'s Prayer'},
-          {ref:'Matthew 6:25-34', title:'Do not worry'},
-          {ref:'Matthew 7:24-27', title:'Wise and foolish builders'},
-          {ref:'Matthew 13:1-23', title:'Parable of the sower'},
-          {ref:'Matthew 22:34-40',title:'Greatest commandment'},
-          {ref:'Luke 10:25-37',   title:'The Good Samaritan'},
-          {ref:'Luke 15:11-32',   title:'The prodigal son'},
-          {ref:'John 3:1-16',     title:'Born again — Nicodemus'},
-          {ref:'John 4:4-26',     title:'Woman at the well'},
-          {ref:'John 6:35',       title:'I am the bread of life'},
-          {ref:'John 8:12',       title:'I am the light of the world'},
-          {ref:'John 10:11-18',   title:'I am the good shepherd'},
-          {ref:'John 11:25-26',   title:'I am the resurrection'},
-          {ref:'John 14:1-7',     title:'I am the way the truth the life'},
-          {ref:'John 15:1-17',    title:'I am the true vine'},
-        ],
-      },
-      {
-        id:'miracles', label:'Miracles',
-        passages:[
-          {ref:'John 2:1-11',     title:'Water into wine'},
-          {ref:'Luke 5:1-11',     title:'Miraculous catch of fish'},
-          {ref:'Mark 1:40-42',    title:'Healing a leper'},
-          {ref:'Mark 2:1-12',     title:'Healing a paralysed man'},
-          {ref:'Mark 4:35-41',    title:'Calming the storm'},
-          {ref:'Mark 5:1-20',     title:'The man with unclean spirits'},
-          {ref:'Mark 5:35-43',    title:'Raising Jairus\'s daughter'},
-          {ref:'Matthew 14:13-21',title:'Feeding the five thousand'},
-          {ref:'Matthew 14:22-33',title:'Walking on water'},
-          {ref:'John 9:1-12',     title:'Healing a man born blind'},
-          {ref:'John 11:38-44',   title:'Raising Lazarus'},
-          {ref:'Luke 17:11-19',   title:'Ten lepers healed'},
-        ],
-      },
-      {
-        id:'passion', label:'Passion & Resurrection',
-        passages:[
-          {ref:'Matthew 21:1-11', title:'Triumphal entry'},
-          {ref:'John 13:1-17',    title:'Washing the disciples\' feet'},
-          {ref:'Matthew 26:17-30',title:'The Last Supper'},
-          {ref:'Luke 22:39-46',   title:'Gethsemane'},
-          {ref:'Matthew 26:47-56',title:'Betrayal and arrest'},
-          {ref:'Luke 22:66-71',   title:'Trial before the Sanhedrin'},
-          {ref:'Luke 23:1-25',    title:'Trial before Pilate'},
-          {ref:'Luke 23:26-43',   title:'The crucifixion'},
-          {ref:'John 19:28-30',   title:'It is finished'},
-          {ref:'Luke 23:50-56',   title:'The burial'},
-          {ref:'John 20:1-18',    title:'The resurrection — Mary at the tomb'},
-          {ref:'Luke 24:13-35',   title:'Road to Emmaus'},
-          {ref:'John 20:19-29',   title:'Jesus appears — Thomas'},
-          {ref:'John 21:15-19',   title:'Feed my sheep — Peter restored'},
-          {ref:'Matthew 28:18-20',title:'The Great Commission'},
-          {ref:'Acts 1:9-11',     title:'The ascension'},
-        ],
-      },
-    ],
-    get passages() {
-      return this.sections.flatMap(s => s.passages)
-    },
-  },
-  {
     id:'david', name:'David', icon:'👑', color:'#E8A838',
-    description:'Shepherd, warrior, king — a man after God\'s own heart',
-    sections:[
-      {
-        id:'early', label:'Early Life & Goliath',
-        passages:[
-          {ref:'1 Samuel 16:1-13', title:'David anointed king'},
-          {ref:'1 Samuel 16:14-23',title:'David serves Saul'},
-          {ref:'1 Samuel 17:1-37', title:'David volunteers to fight Goliath'},
-          {ref:'1 Samuel 17:38-50',title:'David kills Goliath'},
-          {ref:'1 Samuel 18:1-9',  title:'Jonathan\'s covenant with David'},
-        ],
-      },
-      {
-        id:'fugitive', label:'Years of Running',
-        passages:[
-          {ref:'1 Samuel 19:1-12', title:'Saul tries to kill David'},
-          {ref:'1 Samuel 20:1-17', title:'Jonathan warns David'},
-          {ref:'1 Samuel 21:10-15',title:'David among the Philistines'},
-          {ref:'1 Samuel 23:14-18',title:'Jonathan encourages David'},
-          {ref:'1 Samuel 24:1-22', title:'David spares Saul\'s life'},
-          {ref:'1 Samuel 26:1-25', title:'David spares Saul again'},
-          {ref:'Psalm 63',         title:'Psalm in the wilderness'},
-          {ref:'Psalm 57',         title:'Psalm in the cave'},
-        ],
-      },
-      {
-        id:'king', label:'King David',
-        passages:[
-          {ref:'2 Samuel 2:1-7',   title:'David becomes king of Judah'},
-          {ref:'2 Samuel 5:1-5',   title:'King over all Israel'},
-          {ref:'2 Samuel 6:12-23', title:'Bringing the ark to Jerusalem'},
-          {ref:'2 Samuel 7:1-17',  title:'God\'s covenant with David'},
-          {ref:'2 Samuel 11:1-27', title:'David and Bathsheba'},
-          {ref:'2 Samuel 12:1-15', title:'Nathan confronts David'},
-          {ref:'Psalm 51',         title:'David\'s prayer of repentance'},
-          {ref:'2 Samuel 12:13-25',title:'Restoration'},
-          {ref:'1 Kings 2:1-4',    title:'David\'s charge to Solomon'},
-        ],
-      },
-      {
-        id:'psalms', label:'Psalms of David',
-        passages:[
-          {ref:'Psalm 1',          title:'Two ways of living'},
-          {ref:'Psalm 22',         title:'My God why have you forsaken me'},
-          {ref:'Psalm 23',         title:'The Lord is my shepherd'},
-          {ref:'Psalm 27',         title:'The Lord is my light'},
-          {ref:'Psalm 32',         title:'Blessed is the forgiven'},
-          {ref:'Psalm 34',         title:'Taste and see that the Lord is good'},
-          {ref:'Psalm 46',         title:'God is our refuge'},
-          {ref:'Psalm 103',        title:'Bless the Lord O my soul'},
-          {ref:'Psalm 139',        title:'You formed my inward parts'},
-        ],
-      },
-    ],
-    get passages() { return this.sections.flatMap(s => s.passages) },
-  },
-  {
-    id:'paul', name:'Paul', icon:'✉️', color:'#5B4FCF',
-    description:'From persecutor of Christians to the greatest apostle',
-    sections:[
-      {
-        id:'conversion', label:'Conversion',
-        passages:[
-          {ref:'Acts 7:54-8:3',   title:'Saul at Stephen\'s death'},
-          {ref:'Acts 9:1-19',     title:'The Damascus road'},
-          {ref:'Acts 9:20-31',    title:'Saul begins preaching'},
-          {ref:'Galatians 1:11-24',title:'Paul\'s testimony'},
-          {ref:'Philippians 3:4-11',title:'I count everything as loss'},
-        ],
-      },
-      {
-        id:'missions', label:'Missionary Journeys',
-        passages:[
-          {ref:'Acts 13:1-3',     title:'Set apart and sent out'},
-          {ref:'Acts 14:19-22',   title:'Stoned but not stopped'},
-          {ref:'Acts 16:6-10',    title:'The Macedonian call'},
-          {ref:'Acts 16:16-40',   title:'Prison in Philippi'},
-          {ref:'Acts 17:16-34',   title:'Paul in Athens'},
-          {ref:'Acts 20:22-24',   title:'Bound by the Spirit'},
-          {ref:'Acts 27:13-26',   title:'Shipwreck and courage'},
-        ],
-      },
-      {
-        id:'prison', label:'Prison Letters',
-        passages:[
-          {ref:'Ephesians 1:3-14',  title:'Every spiritual blessing'},
-          {ref:'Ephesians 2:1-10',  title:'By grace through faith'},
-          {ref:'Philippians 1:12-26',title:'To live is Christ'},
-          {ref:'Philippians 2:1-11', title:'The mind of Christ'},
-          {ref:'Philippians 4:4-13', title:'I can do all things'},
-          {ref:'Colossians 1:15-23', title:'Supremacy of Christ'},
-          {ref:'Colossians 3:1-17',  title:'Set your mind on above'},
-        ],
-      },
-      {
-        id:'final', label:'Final Letters',
-        passages:[
-          {ref:'2 Timothy 1:6-12', title:'Fan into flame your gift'},
-          {ref:'2 Timothy 2:1-13', title:'Soldier workman vessel'},
-          {ref:'2 Timothy 3:14-17',title:'Scripture breathed by God'},
-          {ref:'2 Timothy 4:1-5',  title:'Preach the word'},
-          {ref:'2 Timothy 4:6-8',  title:'I have finished the race'},
-        ],
-      },
-    ],
-    get passages() { return this.sections.flatMap(s => s.passages) },
-  },
-  {
-    id:'moses', name:'Moses', icon:'🏔️', color:'#4A7C5F',
-    description:'Deliverer, lawgiver, prophet — leader of Israel',
-    sections:[], // flat list
+    description:'Shepherd, warrior, king, poet — a man after God\'s own heart',
     passages:[
-      {ref:'Exodus 1:22-2:10',   title:'Birth of Moses'},
-      {ref:'Exodus 2:11-25',     title:'Moses flees to Midian'},
-      {ref:'Exodus 3:1-15',      title:'The burning bush'},
-      {ref:'Exodus 4:1-17',      title:'Signs for Moses'},
-      {ref:'Exodus 5:1-9',       title:'Let my people go'},
-      {ref:'Exodus 12:21-32',    title:'The Passover'},
-      {ref:'Exodus 14:10-31',    title:'Crossing the Red Sea'},
-      {ref:'Exodus 15:1-18',     title:'Song of Moses'},
-      {ref:'Exodus 16:1-18',     title:'Manna in the wilderness'},
-      {ref:'Exodus 17:1-7',      title:'Water from the rock'},
-      {ref:'Exodus 19:1-9',      title:'Israel at Sinai'},
-      {ref:'Exodus 20:1-17',     title:'The Ten Commandments'},
-      {ref:'Exodus 32:1-14',     title:'The golden calf — Moses intercedes'},
-      {ref:'Exodus 33:7-23',     title:'Moses sees God\'s glory'},
-      {ref:'Exodus 34:27-35',    title:'Moses\' face shines'},
-      {ref:'Numbers 13:26-14:9', title:'The spies\' report'},
-      {ref:'Numbers 20:1-13',    title:'Moses strikes the rock'},
-      {ref:'Deuteronomy 34:1-12',title:'The death of Moses'},
-      {ref:'Hebrews 11:23-28',   title:'Moses by faith'},
+      { ref:'1 Samuel 16:7',  title:'God looks at the heart',      focus:'David was chosen not for appearance but for his heart.' },
+      { ref:'1 Samuel 17:45', title:'David vs Goliath',            focus:'David faced giants with the name of God, not weapons.' },
+      { ref:'Psalm 23:1-4',   title:'The Lord is my shepherd',     focus:"David's most beloved psalm — God's personal care." },
+      { ref:'2 Samuel 7:18',  title:'Who am I, Lord?',             focus:'David\'s humility before God\'s extraordinary promise.' },
+      { ref:'Psalm 51:1-4',   title:'Create in me a clean heart',  focus:'David\'s honest repentance after failing God.' },
+      { ref:'Acts 13:22',     title:'Man after God\'s own heart',  focus:"God's own testimony about David's character." },
+      { ref:'Psalm 27:1',     title:'The Lord is my light',        focus:'David declared God\'s sufficiency even in danger.' },
+      { ref:'2 Samuel 9:1-3', title:'Is there anyone left?',       focus:'David\'s kindness to Mephibosheth — a picture of grace.' },
     ],
   },
   {
-    id:'esther', name:'Esther', icon:'👸', color:'#C77DFF',
-    description:'Queen who risked her life for her people — for such a time as this',
-    sections:[],
+    id:'paul', name:'Paul', icon:'✍️', color:'#5B4FCF',
+    description:'From persecutor to apostle — grace transforming a life',
     passages:[
-      {ref:'Esther 1:10-22',     title:'Queen Vashti removed'},
-      {ref:'Esther 2:5-18',      title:'Esther becomes queen'},
-      {ref:'Esther 3:1-15',      title:'Haman\'s plot against the Jews'},
-      {ref:'Esther 4:1-17',      title:'For such a time as this'},
-      {ref:'Esther 5:1-8',       title:'Esther approaches the king'},
-      {ref:'Esther 6:1-14',      title:'Mordecai honoured'},
-      {ref:'Esther 7:1-10',      title:'Haman exposed at the banquet'},
-      {ref:'Esther 8:1-17',      title:'The king\'s edict'},
-      {ref:'Esther 9:20-28',     title:'Purim established'},
+      { ref:'Acts 9:3-6',       title:'Paul\'s conversion',         focus:'A dramatic encounter with Jesus changed everything.' },
+      { ref:'Philippians 3:7-8',title:'Counting it all loss',       focus:'Paul considered his whole former life worthless compared to Christ.' },
+      { ref:'Galatians 1:15-16',title:'Set apart from birth',       focus:"Paul understood his whole story was part of God's plan." },
+      { ref:'2 Corinthians 11:23-27', title:'Paul\'s sufferings',   focus:'He listed his hardships not to complain but to prove grace.' },
+      { ref:'2 Timothy 4:7',    title:'I have fought the good fight',focus:'Paul\'s final testimony from prison — full of peace.' },
+      { ref:'Romans 8:38-39',   title:'Nothing can separate us',    focus:"Paul's unshakeable confidence in God's love." },
+      { ref:'Philippians 4:11', title:'I have learned contentment', focus:'Contentment was learned through experience, not given.' },
+      { ref:'Ephesians 3:8',    title:'Less than the least',        focus:'The greatest apostle still saw himself as the least deserving.' },
     ],
   },
   {
-    id:'peter', name:'Peter', icon:'⚓', color:'#7CB9E8',
-    description:'Fisherman, bold disciple, rock of the early church',
-    sections:[],
+    id:'esther', name:'Esther', icon:'👸', color:'#E84060',
+    description:'For such a time as this — courage at the moment of calling',
     passages:[
-      {ref:'Luke 5:1-11',        title:'The miraculous catch of fish'},
-      {ref:'Matthew 14:22-33',   title:'Walking on water'},
-      {ref:'Matthew 16:13-23',   title:'You are the Christ — and get behind me'},
-      {ref:'Luke 9:28-36',       title:'The transfiguration'},
-      {ref:'John 13:1-17',       title:'Jesus washes Peter\'s feet'},
-      {ref:'Matthew 26:69-75',   title:'Peter\'s denial'},
-      {ref:'John 21:1-19',       title:'Peter restored — feed my sheep'},
-      {ref:'Acts 2:1-41',        title:'Pentecost sermon'},
-      {ref:'Acts 3:1-16',        title:'Peter heals at the temple gate'},
-      {ref:'Acts 4:1-22',        title:'Peter before the Sanhedrin'},
-      {ref:'Acts 10:9-48',       title:'Peter and Cornelius'},
-      {ref:'Galatians 2:11-16',  title:'Paul confronts Peter'},
-      {ref:'1 Peter 1:3-9',      title:'Living hope'},
-      {ref:'1 Peter 2:4-10',     title:'Living stones'},
-      {ref:'1 Peter 5:1-11',     title:'Humble yourselves'},
-      {ref:'2 Peter 1:3-11',     title:'Make your calling sure'},
-    ],
-  },
-  {
-    id:'abraham', name:'Abraham', icon:'⭐', color:'#E8A838',
-    description:'Father of faith, friend of God',
-    sections:[],
-    passages:[
-      {ref:'Genesis 11:31-12:4', title:'The call to leave everything'},
-      {ref:'Genesis 12:10-20',   title:'Abraham in Egypt'},
-      {ref:'Genesis 13:1-18',    title:'Abraham and Lot separate'},
-      {ref:'Genesis 15:1-21',    title:'God\'s covenant with Abraham'},
-      {ref:'Genesis 17:1-22',    title:'The covenant of circumcision'},
-      {ref:'Genesis 18:1-15',    title:'Three visitors — a promised son'},
-      {ref:'Genesis 18:16-33',   title:'Abraham intercedes for Sodom'},
-      {ref:'Genesis 21:1-7',     title:'Isaac is born'},
-      {ref:'Genesis 22:1-18',    title:'The test — Mount Moriah'},
-      {ref:'Genesis 23:1-20',    title:'Death of Sarah'},
-      {ref:'Genesis 24:1-9',     title:'Finding a wife for Isaac'},
-      {ref:'Romans 4:1-25',      title:'Abraham justified by faith'},
-      {ref:'Hebrews 11:8-19',    title:'Abraham\'s faith'},
-      {ref:'James 2:20-24',      title:'Abraham\'s faith and works'},
+      { ref:'Esther 2:17',     title:'Esther found favour',         focus:'God placed Esther in a position of influence for a purpose.' },
+      { ref:'Esther 4:14',     title:'For such a time as this',     focus:'Mordecai\'s challenge — your position is your calling.' },
+      { ref:'Esther 4:16',     title:'If I perish, I perish',       focus:'Esther chose courage over self-preservation.' },
+      { ref:'Esther 5:2',      title:'The king extended the sceptre',focus:'God went before Esther and prepared the way.' },
+      { ref:'Esther 8:17',     title:'Many people became Jews',     focus:'One act of courageous obedience had mass impact.' },
     ],
   },
   {
     id:'ruth', name:'Ruth', icon:'🌾', color:'#4A7C5F',
-    description:'Loyalty, sacrifice, and redemption',
-    sections:[],
+    description:'Loyalty, sacrifice, and unexpected redemption',
     passages:[
-      {ref:'Ruth 1:1-22',        title:'Where you go I will go'},
-      {ref:'Ruth 2:1-23',        title:'Gleaning in Boaz\'s field'},
-      {ref:'Ruth 3:1-18',        title:'The threshing floor'},
-      {ref:'Ruth 4:1-22',        title:'Boaz redeems Ruth'},
-      {ref:'Matthew 1:5',        title:'Ruth in the lineage of Jesus'},
-    ],
-  },
-  {
-    id:'daniel', name:'Daniel', icon:'🦁', color:'#5B4FCF',
-    description:'Faithfulness in exile — standing firm against the world',
-    sections:[],
-    passages:[
-      {ref:'Daniel 1:1-20',      title:'Daniel refuses the king\'s food'},
-      {ref:'Daniel 2:1-30',      title:'Daniel interprets Nebuchadnezzar\'s dream'},
-      {ref:'Daniel 3:1-30',      title:'The fiery furnace'},
-      {ref:'Daniel 4:28-37',     title:'Nebuchadnezzar humbled'},
-      {ref:'Daniel 5:1-31',      title:'The writing on the wall'},
-      {ref:'Daniel 6:1-28',      title:'Daniel in the lions\' den'},
-      {ref:'Daniel 7:9-14',      title:'The Son of Man vision'},
-      {ref:'Daniel 9:1-19',      title:'Daniel\'s prayer of confession'},
-      {ref:'Daniel 12:1-3',      title:'Many shall awake to eternal life'},
-    ],
-  },
-  {
-    id:'elijah', name:'Elijah', icon:'🔥', color:'#E84060',
-    description:'Prophet of fire who stood alone for God',
-    sections:[],
-    passages:[
-      {ref:'1 Kings 17:1-7',     title:'Elijah declares the drought'},
-      {ref:'1 Kings 17:8-16',    title:'The widow of Zarephath'},
-      {ref:'1 Kings 17:17-24',   title:'The widow\'s son restored'},
-      {ref:'1 Kings 18:1-19',    title:'Elijah returns to Ahab'},
-      {ref:'1 Kings 18:20-40',   title:'Fire on Mount Carmel'},
-      {ref:'1 Kings 19:1-18',    title:'Elijah flees — God\'s still small voice'},
-      {ref:'2 Kings 2:1-14',     title:'Elijah taken up to heaven'},
-      {ref:'James 5:17-18',      title:'Elijah — a man like us'},
-      {ref:'Malachi 4:5-6',      title:'Elijah will come'},
-      {ref:'Matthew 17:3',       title:'Elijah at the transfiguration'},
-    ],
-  },
-  {
-    id:'joseph', name:'Joseph', icon:'🌈', color:'#C77DFF',
-    description:'From pit to palace — God\'s purpose through suffering',
-    sections:[],
-    passages:[
-      {ref:'Genesis 37:1-11',    title:'Joseph\'s dreams'},
-      {ref:'Genesis 37:12-36',   title:'Sold into slavery'},
-      {ref:'Genesis 39:1-23',    title:'Joseph in Potiphar\'s house and prison'},
-      {ref:'Genesis 40:1-23',    title:'Joseph interprets dreams in prison'},
-      {ref:'Genesis 41:1-40',    title:'Joseph before Pharaoh'},
-      {ref:'Genesis 41:41-57',   title:'Joseph in charge of Egypt'},
-      {ref:'Genesis 42:1-20',    title:'Joseph\'s brothers come to Egypt'},
-      {ref:'Genesis 45:1-15',    title:'Joseph reveals himself'},
-      {ref:'Genesis 50:15-21',   title:'You meant evil — God meant good'},
-      {ref:'Acts 7:9-16',        title:'Stephen\'s testimony about Joseph'},
+      { ref:'Ruth 1:16-17',   title:'Where you go I will go',       focus:'Ruth\'s extraordinary commitment to Naomi and to God.' },
+      { ref:'Ruth 2:12',      title:'May you be richly rewarded',   focus:'Boaz recognised and honoured Ruth\'s faithfulness.' },
+      { ref:'Ruth 3:9',       title:'Spread your wings over me',    focus:'Ruth\'s humble request for Boaz to be her kinsman-redeemer.' },
+      { ref:'Ruth 4:13-14',   title:'He became a redeemer',         focus:'The story ends in restoration and blessing.' },
     ],
   },
 ]
 
 // ─────────────────────────────────────────────
-//  TEMPLATES — inspiration only, never prescribe content
+//  TEMPLATES — inspiration-only, no content
 // ─────────────────────────────────────────────
 export const PLAN_TEMPLATES = [
-  {id:'couples',      icon:'💑', color:'#E84060', durationDays:14,
-   name:'Couples Devotional Challenge',
-   description:'For couples who want to grow in God\'s Word together'},
-  {id:'friends',      icon:'👥', color:'#5B4FCF', durationDays:21,
-   name:'Friends Who Love the Bible',
-   description:'For a friend group building a shared reading habit'},
-  {id:'fellowship',   icon:'⛪', color:'#4A7C5F', durationDays:30,
-   name:'Fellowship Bible Reading Plan',
-   description:'For a small group or home church reading together'},
-  {id:'church',       icon:'🙌', color:'#5B4FCF', durationDays:30,
-   name:'Church Bible Reading Plan',
-   description:'For a whole church congregation reading in sync'},
-  {id:'100day',       icon:'🏆', color:'#E8A838', durationDays:100,
-   name:'100-Day Bible Challenge',
-   description:'A landmark journey through the whole story of Scripture'},
-  {id:'50day',        icon:'🌱', color:'#4A7C5F', durationDays:50,
-   name:'50-Day Journey',
-   description:'A focused mid-length plan for any season of life'},
-  {id:'campus',       icon:'🎓', color:'#7CB9E8', durationDays:21,
-   name:'Campus Bible Challenge',
-   description:'For students and campus fellowships'},
-  {id:'accountability',icon:'🤝', color:'#5B4FCF', durationDays:14,
-   name:'Accountability Partner Plan',
-   description:'For two people keeping each other in the Word'},
-  {id:'new_believer', icon:'🌿', color:'#4A7C5F', durationDays:21,
-   name:'New Believer\'s Reading Plan',
-   description:'For someone who just started their faith journey'},
-  {id:'family',       icon:'🏠', color:'#E8A838', durationDays:30,
-   name:'Family Devotional Plan',
-   description:'For families reading and discussing together'},
-  {id:'solo',         icon:'📖', color:'#5B4FCF', durationDays:14,
-   name:'Personal Study Plan',
-   description:'Just you and God — focused daily reading'},
+  { id:'couples',       icon:'💑', color:'#E84060', durationDays:14, name:'Couples Devotional Challenge',   description:'For couples growing in God\'s Word together'                },
+  { id:'friends',       icon:'👥', color:'#5B4FCF', durationDays:21, name:'Friends Who Love the Bible',      description:'For a friend group building a shared reading habit'         },
+  { id:'fellowship',    icon:'⛪', color:'#4A7C5F', durationDays:30, name:'Fellowship Bible Reading Plan',   description:'For a small group or home church reading together'          },
+  { id:'church',        icon:'🙌', color:'#5B4FCF', durationDays:30, name:'Church Bible Reading Plan',       description:'For a whole church congregation reading in sync'            },
+  { id:'100day',        icon:'🏆', color:'#E8A838', durationDays:100,name:'100-Day Bible Challenge',         description:'A landmark journey through the whole story of Scripture'    },
+  { id:'50day',         icon:'🌱', color:'#4A7C5F', durationDays:50, name:'50-Day Journey',                  description:'A focused mid-length plan for any season of life'           },
+  { id:'campus',        icon:'🎓', color:'#7CB9E8', durationDays:21, name:'Campus Bible Challenge',          description:'For students and campus fellowships'                        },
+  { id:'accountability',icon:'🤝', color:'#5B4FCF', durationDays:14, name:'Accountability Partner Plan',     description:'For two people keeping each other in the Word'             },
+  { id:'new_believer',  icon:'🌿', color:'#4A7C5F', durationDays:21, name:'New Believer\'s Reading Plan',    description:'For someone who just started their faith journey'           },
+  { id:'family',        icon:'🏠', color:'#E8A838', durationDays:30, name:'Family Devotional Plan',          description:'For families reading and discussing together'               },
+  { id:'solo',          icon:'📖', color:'#5B4FCF', durationDays:14, name:'Personal Study Plan',             description:'Just you and God — focused daily reading'                   },
 ]
-
-// ─────────────────────────────────────────────
-//  Day generation helpers
-// ─────────────────────────────────────────────
-
-export function booksTodays(selectedBooks, paceOrDays) {
-  // paceOrDays can be a pace object { passagesPerDay } or a number (legacy)
-  const allChapters = []
-  for (const book of selectedBooks) {
-    for (let ch = 1; ch <= book.chapters; ch++) {
-      allChapters.push({ book: book.name, chapter: ch })
-    }
-  }
-  if (!allChapters.length) return []
-
-  // Calculate total days from pace
-  const passagesPerDay = typeof paceOrDays === 'object'
-    ? (paceOrDays?.passagesPerDay || 7)  // default: 1 chapter ≈ 7 passages
-    : null
-  const totalDays = passagesPerDay
-    ? Math.ceil(allChapters.length / passagesPerDay)
-    : (typeof paceOrDays === 'number' ? paceOrDays : allChapters.length)
-
-  if (!totalDays) return []
-
-  const days = []
-  const perDay = allChapters.length / totalDays
-  for (let d = 0; d < totalDays; d++) {
-    const startIdx = Math.floor(d * perDay)
-    const endIdx   = Math.min(Math.floor((d+1)*perDay), allChapters.length) - 1
-    const slice    = allChapters.slice(startIdx, endIdx+1)
-    if (!slice.length) { days.push({ day_number:d+1, passage_reference:'', title:`Day ${d+1}` }); continue }
-    const first = slice[0]; const last = slice[slice.length-1]
-    const ref   = slice.length === 1
-      ? `${first.book} ${first.chapter}`
-      : first.book === last.book
-        ? `${first.book} ${first.chapter}–${last.chapter}`
-        : `${first.book} ${first.chapter} – ${last.book} ${last.chapter}`
-    days.push({ day_number:d+1, passage_reference:ref, book:first.book, chapter_start:first.chapter, chapter_end:last.chapter, title:ref })
-  }
-  return days
-}
-
-// Convert topic/character passages to plan days using pace
-export function passagesToDays(passages, pace) {
-  const passagesPerDay = pace?.passagesPerDay || 1
-  const days = []
-  let dayNum = 1
-  for (let i = 0; i < passages.length; i += passagesPerDay) {
-    const slice = passages.slice(i, i + passagesPerDay)
-    const refs  = slice.map(p => p.ref).join(' · ')
-    const title = slice.length === 1 ? slice[0].title : `Day ${dayNum}`
-    days.push({ day_number:dayNum++, passage_reference:refs, title })
-  }
-  return days
-}
-
-export function topicToDays(topic, pace) {
-  if (!topic?.passages) return []
-  return passagesToDays(topic.passages, pace)
-}
-
-export function characterToDays(character, pace, sectionId) {
-  if (!character) return []
-  const passages = sectionId
-    ? character.sections?.find(s => s.id === sectionId)?.passages || character.passages
-    : character.passages
-  if (!passages?.length) return []
-  return passagesToDays(passages, pace)
-}
 
 export function generateInviteCode(planName) {
   const prefix = (planName||'PLN').replace(/[^A-Za-z]/g,'').toUpperCase().slice(0,3).padEnd(3,'X')

@@ -1,5 +1,8 @@
-// ── src/lib/bible.js ── v5
-// KJV always works online. Download = offline access only.
+// ── src/lib/bible.js ── v6
+// CHANGES FROM v5:
+//   • Added normaliseVerse() — preserves heading, wj, type from raw JSON
+//   • getChapter() uses normaliseVerse() for both IndexedDB + Supabase paths
+//   • getAllVersions() no longer filters by tr.enabled (field removed from TRANSLATIONS)
 
 import {
   getActiveTranslation, setActiveTranslation,
@@ -81,49 +84,169 @@ export function passageToUsfm(ref){
   return`${bookId}.${chapter}`
 }
 
-export async function getChapter(bookNameOrId,chapter,translationId){
-  const bookId=normaliseBookId(bookNameOrId)
-  const chapNum=parseInt(chapter)||1
-  const tid=translationId||getActiveTranslation()||DEFAULT_TRANSLATION
+// ─────────────────────────────────────────────
+//  normaliseVerse
+//  Converts a raw verse object from the JSON file into the full verse shape.
+//
+//  Supported JSON formats from the .bib converter:
+//    Short keys:  { n: 3, t: "For God so loved..." }
+//    Long keys:   { number: 3, text: "For God so loved..." }
+//    Heading:     { n: 0, t: "The Gospel of John" }   ← number 0 = heading
+//    Heading:     { type: "heading", t: "The Birth..." }
+//    Heading:     { h: "Section title", n: 0, t: "" }
+//    Red letter:  text contains <J>...</J> inline markers
+//    Red letter:  { wj: true, t: "<J>I am the way...</J>" }
+//
+//  Output shape:
+//    {
+//      number:    number,   // verse number (0 for headings)
+//      text:      string,   // raw text, may contain <J>...</J> red-letter markers
+//      isHeading: boolean,  // true when this is a section/chapter heading
+//      heading:   string?,  // heading text (when isHeading is true)
+//      type:      string,   // 'heading' | 'verse'
+//      wj:        boolean,  // true when verse contains words of Jesus
+//    }
+// ─────────────────────────────────────────────
+export function normaliseVerse(v) {
+  const number = v.n    ?? v.number ?? 0
+  const text   = v.t    ?? v.text   ?? ''
 
-  // 1. IndexedDB (downloaded — instant + offline)
-  try{
-    const{getCachedChapter}=await import('./bible-cache')
-    const cached=await getCachedChapter(tid,bookId,chapNum)
-    if(cached?.verses?.length)return{verses:cached.verses,book:cached.book||getBookByName(bookId)?.name,bookId,chapter:chapNum,translationId:tid,fromCache:true,source:'indexeddb'}
-  }catch{}
+  // ── Heading detection ──
+  // 1. verse number 0  (BibleShow standard for headings)
+  // 2. explicit type or isHeading flag
+  // 3. h or heading field present
+  // 4. text starts with '=' (some converters use this prefix)
+  const isHeading = (
+    number === 0 ||
+    v.type === 'heading' ||
+    v.isHeading === true ||
+    typeof v.h === 'string' ||
+    typeof v.heading === 'string' ||
+    (typeof text === 'string' && text.startsWith('='))
+  )
 
-  // 2. Offline and not cached
-  if(typeof navigator!=='undefined'&&!navigator.onLine)return{error:'offline',offline:true,verses:[],bookId,chapter:chapNum,translationId:tid}
+  // Resolve heading display text
+  // Priority: explicit h/heading field → strip '=' prefix → fall back to text
+  const headingText = isHeading
+    ? (v.h || v.heading || text.replace(/^=+\s*/, '').trim())
+    : undefined
 
-  // 3. Supabase Storage (always works online — no download needed)
-  try{
-    const url=getChapterUrl(tid,bookId,chapNum)
-    const res=await fetch(url)
-    if(!res.ok)throw new Error(`HTTP ${res.status}`)
-    const data=await res.json()
-    const verses=(data.verses||[]).map(v=>({number:v.n??v.number??0,text:v.t??v.text??''}))
-    const result={verses,book:data.book||getBookByName(bookId)?.name,bookId,chapter:chapNum,translationId:tid,fromCache:false,source:'storage'}
-    import('./bible-cache').then(({cacheChapter})=>cacheChapter(tid,bookId,chapNum,result,{priority:'opportunistic'}).catch(()=>null)).catch(()=>null)
-    return result
-  }catch(err){
-    return{error:err.message,offline:false,verses:[],bookId,chapter:chapNum,translationId:tid}
+  // ── Red-letter detection ──
+  // Some converters set a top-level wj:true flag.
+  // Others just embed <J>...</J> inline in the text string.
+  // The reader handles both — we just preserve the flag if present.
+  const wj = v.wj === true || (typeof text === 'string' && text.includes('<J>'))
+
+  return {
+    number,
+    text,
+    isHeading,
+    heading:  headingText,
+    type:     isHeading ? 'heading' : (v.type || 'verse'),
+    wj,
   }
 }
 
-export async function getPassage(ref,translationId){const{bookId,chapter}=parseRef(ref);return getChapter(bookId,chapter,translationId)}
-export async function isPassageCached(ref,translationId){
-  const{bookId,chapter}=parseRef(ref)
-  const tid=translationId||getActiveTranslation()
-  try{const{isCached}=await import('./bible-cache');return await isCached(tid,bookId,chapter)}catch{return false}
+// ─────────────────────────────────────────────
+//  getChapter
+//  1. IndexedDB first (downloaded, offline-ready)
+//  2. Supabase Storage (online fallback)
+//  Both paths now use normaliseVerse() to preserve heading + wj data.
+// ─────────────────────────────────────────────
+export async function getChapter(bookNameOrId, chapter, translationId) {
+  const bookId  = normaliseBookId(bookNameOrId)
+  const chapNum = parseInt(chapter) || 1
+  const tid     = translationId || getActiveTranslation() || DEFAULT_TRANSLATION
+
+  // 1. IndexedDB — downloaded chapters (instant, offline)
+  try {
+    const { getCachedChapter } = await import('./bible-cache')
+    const cached = await getCachedChapter(tid, bookId, chapNum)
+    if (cached?.verses?.length) {
+      // Cached verses were stored by an older version that only saved {number, text}.
+      // Re-normalise them so heading/wj data is derived even from plain cached data.
+      const verses = cached.verses.map(v =>
+        // If already normalised (has isHeading field), pass through; otherwise normalise.
+        typeof v.isHeading === 'boolean' ? v : normaliseVerse(v)
+      )
+      return {
+        verses,
+        book:          cached.book || getBookByName(bookId)?.name,
+        bookId,
+        chapter:       chapNum,
+        translationId: tid,
+        fromCache:     true,
+        source:        'indexeddb',
+      }
+    }
+  } catch {}
+
+  // 2. Offline and not cached
+  if (typeof navigator !== 'undefined' && !navigator.onLine) {
+    return { error: 'offline', offline: true, verses: [], bookId, chapter: chapNum, translationId: tid }
+  }
+
+  // 3. Supabase Storage (always available online, no download needed for KJV)
+  try {
+    const url = getChapterUrl(tid, bookId, chapNum)
+    const res = await fetch(url)
+    if (!res.ok) throw new Error(`HTTP ${res.status}`)
+    const data = await res.json()
+
+    // Use normaliseVerse() — preserves ALL fields from the JSON
+    const verses = (data.verses || []).map(normaliseVerse)
+
+    const result = {
+      verses,
+      book:          data.book || getBookByName(bookId)?.name,
+      bookId,
+      chapter:       chapNum,
+      translationId: tid,
+      fromCache:     false,
+      source:        'storage',
+    }
+
+    // Cache opportunistically in the background (fire-and-forget)
+    import('./bible-cache')
+      .then(({ cacheChapter }) => cacheChapter(tid, bookId, chapNum, result, { priority: 'opportunistic' }).catch(() => null))
+      .catch(() => null)
+
+    return result
+  } catch (err) {
+    return { error: err.message, offline: false, verses: [], bookId, chapter: chapNum, translationId: tid }
+  }
 }
 
-export function getPreferredVersionId(){return getActiveTranslation()}
-export function setPreferredVersionId(id){setActiveTranslation(id)}
-export function getPreferredTranslation(){return getActiveTranslation()}
-export function setPreferredTranslation(id){setActiveTranslation(id)}
-export function getAllVersions(){const d=getDownloadedSet();return TRANSLATIONS.filter(t=>t.enabled).map(t=>({id:t.id,abbreviation:t.abbreviation,name:t.name,downloadable:true,source:'local',downloaded:d.has(t.id)}))}
-export async function seedDefaultVersionIfNeeded(){}
-export const DEFAULT_VERSION_ID=DEFAULT_TRANSLATION
-export const DEFAULT_ABBR=DEFAULT_TRANSLATION
-export function isVersionDownloaded(id){return getDownloadedSet().has(String(id))}
+export async function getPassage(ref, translationId) {
+  const { bookId, chapter } = parseRef(ref)
+  return getChapter(bookId, chapter, translationId)
+}
+
+export async function isPassageCached(ref, translationId) {
+  const { bookId, chapter } = parseRef(ref)
+  const tid = translationId || getActiveTranslation()
+  try { const { isCached } = await import('./bible-cache'); return await isCached(tid, bookId, chapter) } catch { return false }
+}
+
+export function getPreferredVersionId()    { return getActiveTranslation() }
+export function setPreferredVersionId(id)  { setActiveTranslation(id) }
+export function getPreferredTranslation()  { return getActiveTranslation() }
+export function setPreferredTranslation(id){ setActiveTranslation(id) }
+
+// FIX: removed .filter(t => t.enabled) — TRANSLATIONS no longer has enabled field
+export function getAllVersions() {
+  const d = getDownloadedSet()
+  return TRANSLATIONS.map(t => ({
+    id:           t.id,
+    abbreviation: t.abbreviation,
+    name:         t.name,
+    downloadable: true,
+    source:       'local',
+    downloaded:   d.has(t.id),
+  }))
+}
+
+export async function seedDefaultVersionIfNeeded() {}
+export const DEFAULT_VERSION_ID = DEFAULT_TRANSLATION
+export const DEFAULT_ABBR       = DEFAULT_TRANSLATION
+export function isVersionDownloaded(id) { return getDownloadedSet().has(String(id)) }
