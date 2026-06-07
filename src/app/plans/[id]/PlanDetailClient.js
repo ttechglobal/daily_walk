@@ -444,7 +444,7 @@ export default function PlanDetailClient({ planId }) {
               total={totalDays}
               todayDone={todayDone}
               marking={marking}
-              onRead={() => router.push(buildReaderUrl(sliceRef))}
+              onRead={() => router.push(`/plans/${planId}/day/${currentDay}`)}
               onMark={handleMark}
               t={t}
             />
@@ -489,3 +489,29 @@ export default function PlanDetailClient({ planId }) {
     </div>
   )
 }
+
+
+// ─────────────────────────────────────────────
+//  NOTE: To enable the Reflections tab in PlanDetailClient,
+//  add this to the TABS array and render condition:
+//
+//  In the TABS const (after 'reading'):
+//    ...(isMember ? [{ k: 'reflections', l: 'Reflections' }] : []),
+//
+//  In the tab body:
+//    {tab === 'reflections' && (
+//      <PlanReflectionsTab
+//        planId={planId}
+//        currentDay={currentDay}
+//        isMember={isMember} />
+//    )}
+//
+//  Import at top:
+//    import PlanReflectionsTab from '../../../components/plans/PlanReflectionsTab'
+//
+//  The PlanReflectionsTab component (already built in a previous output) handles:
+//    - Viewing reflections (visible to plan members only — RLS enforced)
+//    - Adding new reflections or questions
+//    - Real-time updates via Supabase subscription
+//    - Delete own reflections
+//    - Auto-picks up verses added from Bible reader (sessionStorage)
