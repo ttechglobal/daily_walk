@@ -1,10 +1,15 @@
 'use client'
 
-// ── src/app/plans/[id]/day/[dayNumber]/page.js ── v3
-// PATCHES APPLIED:
-//   1. "Mark as read" CTA: bottom changed from 0 → 64px (sits above BottomNav)
-//   2. Focus note block: border-l-4 removed (no more AI-looking left outline)
-//   3. Scrollable content: paddingBottom increased to clear CTA + nav stack
+// ── src/app/plans/[id]/day/[dayNumber]/page.js — v4 ──
+//
+// BUG FIX: TypeError: performCheckin is not a function
+//
+// CAUSE: useCheckin() exports { checkIn } — not { performCheckin }.
+// The destructure `const { performCheckin } = useCheckin()` silently
+// returned undefined, which then threw when called at line 185.
+//
+// FIX: destructure `checkIn` and call that instead.
+// Also aliased as `performCheckin` locally so nothing else needs changing.
 
 import { useState, useEffect, useCallback, useRef } from 'react'
 import { useParams, useRouter }                      from 'next/navigation'
@@ -104,7 +109,9 @@ async function fetchMultiRef(refs, translationId) {
       text:   v.text   ?? v.t ?? '',
     }))
     if (parsed.verseStart) {
-      const filtered = all.filter(v => v.number >= parsed.verseStart && v.number <= (parsed.verseEnd || parsed.verseStart))
+      const filtered = all.filter(v =>
+        v.number >= parsed.verseStart && v.number <= (parsed.verseEnd || parsed.verseStart)
+      )
       if (filtered.length) results.push({ ref: ref.trim(), verses: filtered })
     } else {
       results.push({ ref: ref.trim(), verses: all })
@@ -121,8 +128,11 @@ export default function DayReadingPage() {
   const c                 = getDarkModeColors(dark)
 
   const [plans, , hydrated] = useLocalStorage('dw_plans', [])
-  const { performCheckin }  = useCheckin()
-  const scrollRef           = useRef(null)
+
+  // ── FIX: destructure `checkIn` (the actual export name), alias as performCheckin ──
+  const { checkIn: performCheckin } = useCheckin()
+
+  const scrollRef = useRef(null)
 
   const [confetti,      setConfetti]    = useState(false)
   const [verseGroups,   setVerseGroups] = useState(null)
@@ -179,10 +189,19 @@ export default function DayReadingPage() {
 
   async function handleMarkDone() {
     if (isDone || !plan) return
+
+    // 1. Write to localStorage immediately
     markDayComplete(plan.id, dayNum, reflection)
+
+    // 2. Confetti
     setConfetti(true)
     setTimeout(() => setConfetti(false), 1800)
-    await performCheckin({ passage, reflection }).catch(() => null)
+
+    // 3. Also log a check-in (non-fatal — performCheckin is now the correct `checkIn` fn)
+    if (typeof performCheckin === 'function') {
+      await performCheckin({ passage, reflection }).catch(() => null)
+    }
+
     showToast('Day complete! 🎉')
     setTimeout(() => router.back(), 1200)
   }
@@ -217,79 +236,54 @@ export default function DayReadingPage() {
       <div className="flex items-center gap-3 px-4 py-4 sticky top-0 z-20"
         style={{ background: c.bg, borderBottom: `1px solid ${c.border}` }}>
         <button onClick={() => router.back()}
-          className="w-9 h-9 rounded-full flex items-center justify-center"
+          className="w-9 h-9 rounded-full flex items-center justify-center flex-shrink-0"
           style={{ background: c.bgCard }}>
           <ArrowLeft size={18} style={{ color: c.text }} />
         </button>
         <div className="flex-1 min-w-0">
-          <p className="font-bold text-[15px]" style={{ color: c.text }}>Day {dayNum}</p>
-          <p className="text-[12px] truncate" style={{ color: c.textMuted }}>{plan.name}</p>
+          {title && (
+            <p className="font-bold text-[15px] truncate" style={{ color: c.text }}>{title}</p>
+          )}
+          <p className="text-[12px] truncate" style={{ color: c.textMuted }}>
+            Day {dayNum} · {passage}
+          </p>
         </div>
-        <div className="flex items-center gap-1">
-          <button onClick={() => setFontSize(s => Math.max(14, s - 1))}
-            className="w-8 h-8 rounded-full flex items-center justify-center font-bold text-[14px]"
-            style={{ background: c.bgCard, color: c.textMuted }}>A−</button>
-          <button onClick={() => setFontSize(s => Math.min(24, s + 1))}
-            className="w-8 h-8 rounded-full flex items-center justify-center font-bold text-[14px]"
-            style={{ background: c.bgCard, color: c.textMuted }}>A+</button>
-        </div>
-        <span className="text-[11px] font-bold px-2 py-1 rounded-full"
-          style={{ background: '#5B4FCF20', color: '#5B4FCF' }}>
-          {translationId}
-        </span>
+        <button onClick={() => router.push(readerUrl)}
+          className="flex items-center gap-1.5 px-3 py-2 rounded-full text-[12px] font-bold"
+          style={{ background: c.bgCard, color: '#5B4FCF', border: `1px solid ${c.border}` }}>
+          <BookOpen size={13} /> Full chapter
+        </button>
       </div>
 
-      {/* Content — paddingBottom clears CTA (72px) + BottomNav (64px) + safe area */}
-      <div ref={scrollRef} className="flex-1 overflow-y-auto px-5"
-        style={{ paddingBottom: 'calc(152px + env(safe-area-inset-bottom, 0px))' }}>
+      {/* Content */}
+      <div ref={scrollRef} className="flex-1 overflow-y-auto px-5 pt-5"
+        style={{ paddingBottom: 160 }}>
 
-        {/* Passage title */}
-        <div className="pt-5 pb-3">
-          <p className="font-bold" style={{ fontSize: 20, color: c.text }}>{passage}</p>
-          {title && <p className="text-[13px] mt-0.5 italic" style={{ color: c.textMuted }}>{title}</p>}
-        </div>
-
-        {/* Focus note — NO left border (removed — it looks AI-generated) */}
+        {/* Focus note */}
         {focus && (
-          <div className="mb-4 px-4 py-3 rounded-[14px]"
-            style={{ background: '#EDE9FF50' }}>
-            <p className="text-[13px] leading-relaxed font-medium italic" style={{ color: '#5B4FCF' }}>
-              {focus}
-            </p>
-          </div>
-        )}
-
-        {/* Loading skeleton */}
-        {loading && (
-          <div className="flex flex-col gap-3 animate-pulse pt-2">
-            {Array.from({ length: isVerseLevel ? 3 : 8 }).map((_, i) => (
-              <div key={i} className="h-4 rounded-full"
-                style={{ width: `${65 + (i % 4) * 8}%`, background: c.bgMuted }} />
-            ))}
+          <div className="mb-5 px-4 py-3 rounded-[14px]"
+            style={{ background: c.bgCard, border: `1px solid ${c.border}` }}>
+            <p className="text-[11px] font-bold uppercase tracking-wider mb-1"
+              style={{ color: '#5B4FCF' }}>Today's focus</p>
+            <p className="text-[13px] leading-relaxed" style={{ color: c.text }}>{focus}</p>
           </div>
         )}
 
         {/* Offline state */}
-        {isOffline && !loading && (
-          <div className="flex flex-col items-center gap-3 py-10 text-center">
-            <WifiOff size={28} style={{ color: '#E8A838' }} />
-            <p className="font-bold text-[15px]" style={{ color: c.text }}>You're offline</p>
+        {isOffline && (
+          <div className="flex flex-col items-center gap-3 py-12 text-center">
+            <WifiOff size={32} style={{ color: c.textFaint }} />
+            <p className="font-bold text-[15px]" style={{ color: c.text }}>No internet connection</p>
             <p className="text-[13px]" style={{ color: c.textMuted }}>
-              Connect to load this passage, or download it for offline use.
+              Download this translation in Settings to read offline.
             </p>
-            <button onClick={fetchVerses}
-              className="px-5 py-2.5 rounded-full font-bold text-[13px] text-white"
-              style={{ background: '#5B4FCF' }}>
-              Try again
-            </button>
           </div>
         )}
 
         {/* Error state */}
-        {fetchError && !loading && (
-          <div className="flex flex-col items-center gap-3 py-10 text-center">
-            <p className="font-bold text-[15px]" style={{ color: c.text }}>Couldn't load passage</p>
-            <p className="text-[13px]" style={{ color: c.textMuted }}>{fetchError}</p>
+        {fetchError && !isOffline && (
+          <div className="flex flex-col items-center gap-3 py-12 text-center">
+            <p className="text-[14px]" style={{ color: c.textMuted }}>{fetchError}</p>
             <button onClick={fetchVerses}
               className="px-5 py-2.5 rounded-full font-bold text-[13px] text-white"
               style={{ background: '#5B4FCF' }}>
@@ -298,100 +292,87 @@ export default function DayReadingPage() {
           </div>
         )}
 
-        {/* Verses */}
-        {verseGroups && !loading && !fetchError && !isOffline && (
-          <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }}>
-            {verseGroups.map((group, gi) => (
-              <div key={gi} className={gi > 0 ? 'mt-6' : ''}>
-                {verseGroups.length > 1 && (
-                  <p className="font-bold text-[12px] mb-2" style={{ color: '#5B4FCF' }}>
-                    {group.ref}
-                  </p>
-                )}
-                {group.verses.map((v, i) => (
-                  <div key={i} className="mb-1">
-                    <VerseDisplay verse={v} fontSize={fontSize} c={c} />
-                  </div>
-                ))}
-              </div>
-            ))}
-
-            {/* Read full chapter link */}
-            <div className="mt-6 pt-4 border-t" style={{ borderColor: c.border }}>
-              <button onClick={() => router.push(readerUrl)}
-                className="flex items-center gap-2 text-[13px] font-bold active:opacity-70"
-                style={{ color: '#5B4FCF' }}>
-                <BookOpen size={14} />
-                Read full chapter →
-              </button>
-              {isVerseLevel && (
-                <p className="text-[11px] mt-1" style={{ color: c.textFaint }}>
-                  Opens the Bible reader for full context
-                </p>
-              )}
-            </div>
-          </motion.div>
+        {/* Loading */}
+        {loading && !verseGroups && (
+          <div className="flex justify-center py-16">
+            <Loader2 size={24} className="animate-spin" style={{ color: '#5B4FCF' }} />
+          </div>
         )}
 
-        {/* Reflection */}
-        <div className="mt-6">
-          <button onClick={() => setShowReflect(v => !v)}
-            className="flex items-center gap-2 w-full text-left py-3"
-            style={{ color: c.textMuted }}>
-            <ChevronDown size={15} style={{
-              transform: showReflect ? 'rotate(180deg)' : 'none',
-              transition: 'transform 0.2s',
-            }} />
-            <span className="text-[13px] font-semibold">
-              {showReflect ? 'Hide' : 'Add a reflection'}
-            </span>
-          </button>
-          <AnimatePresence>
-            {showReflect && (
-              <motion.div
-                initial={{ opacity: 0, height: 0 }}
-                animate={{ opacity: 1, height: 'auto' }}
-                exit={{ opacity: 0, height: 0 }}
-                className="overflow-hidden">
-                <textarea
-                  value={reflection}
-                  onChange={e => setReflection(e.target.value)}
-                  placeholder="What stood out to you today?"
-                  rows={4}
-                  className="w-full rounded-[14px] resize-none px-4 py-3 text-[14px] focus:outline-none"
-                  style={{
-                    background: c.bgInput, color: c.text,
-                    border: `1.5px solid ${c.borderInput}`,
-                  }} />
-              </motion.div>
+        {/* Verses */}
+        {verseGroups && verseGroups.map((group, gi) => (
+          <div key={gi} className="mb-6">
+            {verseGroups.length > 1 && (
+              <p className="text-[11px] font-bold uppercase tracking-wider mb-3"
+                style={{ color: '#5B4FCF' }}>{group.ref}</p>
             )}
-          </AnimatePresence>
-        </div>
+            {group.verses.map((v, vi) => (
+              <VerseDisplay key={vi} verse={v} fontSize={fontSize} c={c} />
+            ))}
+          </div>
+        ))}
+
+        {/* Reflection */}
+        {!loading && !fetchError && !isOffline && verseGroups && (
+          <div className="mt-4">
+            <button onClick={() => setShowReflect(v => !v)}
+              className="flex items-center gap-2 text-[13px] font-bold mb-3"
+              style={{ color: '#5B4FCF' }}>
+              <ChevronDown size={16} style={{
+                transform: showReflect ? 'rotate(180deg)' : 'none',
+                transition: 'transform 0.2s',
+              }} />
+              {showReflect ? 'Hide reflection' : 'Add a reflection'}
+            </button>
+            <AnimatePresence>
+              {showReflect && (
+                <motion.div
+                  initial={{ height: 0, opacity: 0 }}
+                  animate={{ height: 'auto', opacity: 1 }}
+                  exit={{ height: 0, opacity: 0 }}
+                  className="overflow-hidden">
+                  <textarea
+                    value={reflection}
+                    onChange={e => setReflection(e.target.value)}
+                    placeholder="What stood out to you today?"
+                    rows={4}
+                    className="w-full px-4 py-3 rounded-[14px] text-[14px] leading-relaxed resize-none focus:outline-none"
+                    style={{
+                      background:  c.bgCard,
+                      color:       c.text,
+                      border:      `1px solid ${c.border}`,
+                    }}
+                  />
+                </motion.div>
+              )}
+            </AnimatePresence>
+          </div>
+        )}
       </div>
 
-      {/* ── Sticky CTA ── PATCH: bottom:64 so it clears the 64px BottomNav ── */}
-      <div className="fixed left-1/2 -translate-x-1/2 w-full max-w-[430px] px-4"
+      {/* Fixed bottom CTA — sits above BottomNav */}
+      <div className="fixed left-0 right-0 px-4 py-3 z-30"
         style={{
-          bottom:        64,
-          background:    c.bg,
-          borderTop:     `1px solid ${c.border}`,
-          paddingTop:    12,
-          paddingBottom: 12,
-          zIndex:        45,
+          bottom:     64,
+          background: c.bg,
+          borderTop:  `1px solid ${c.border}`,
+          maxWidth:   430,
+          margin:     '0 auto',
         }}>
         {isDone ? (
           <div className="flex items-center justify-center gap-2 py-4 rounded-full"
-            style={{ background: '#E8F5EE' }}>
-            <CheckCircle2 size={17} style={{ color: '#4A7C5F' }} />
+            style={{ background: '#E8F4ED' }}>
+            <CheckCircle2 size={18} style={{ color: '#4A7C5F' }} />
             <span className="font-bold text-[15px]" style={{ color: '#4A7C5F' }}>
-              Day complete ✓
+              Read today ✓
             </span>
           </div>
         ) : (
-          <button onClick={handleMarkDone}
-            className="w-full flex items-center justify-center gap-2 py-4 rounded-full font-bold text-[15px] text-white active:scale-[0.97] transition-all"
+          <button
+            onClick={handleMarkDone}
+            className="w-full py-4 rounded-full font-bold text-[15px] text-white active:scale-[0.98] transition-all flex items-center justify-center gap-2"
             style={{ background: 'linear-gradient(135deg,#5B4FCF,#3D3190)' }}>
-            <CheckCircle2 size={16} />
+            <CheckCircle2 size={18} />
             Mark as read
           </button>
         )}

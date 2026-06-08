@@ -1,21 +1,15 @@
 'use client'
 
-// ── src/app/auth/page.js — v5 (spinner-fix) ──
+// ── src/app/auth/page.js — v6 ──
 //
-// ROOT CAUSE OF INFINITE SPINNER:
-//   1. signInWithPassword() has no timeout — if Supabase is unreachable or
-//      misconfigured the promise never settles and finally{} never runs.
-//   2. The Supabase client singleton can return a non-null object even when
-//      env vars are wrong, so the !sb guard doesn't catch it.
-//
-// FIXES:
-//   1. All Supabase calls wrapped in withTimeout(promise, 10_000).
-//      If no response in 10s → error shown, spinner released.
-//   2. isSupabaseConfigured() checked explicitly before any call.
-//      Clear "Supabase not configured" toast if env vars are missing.
-//   3. Every code path that could leave loading=true now has a guaranteed
-//      setLoading(false) via try/catch/finally with timeout fallback.
-//   4. Detailed error messages for every known Supabase error code.
+// FIXES IN THIS VERSION:
+//   1. `next` param sanitised — must start with '/' to be a valid internal route.
+//      If it's a Bible ref like "1:1" or any external URL, defaults to '/'.
+//      This prevents the 404 caused by router.push('1:1') after sign-in.
+//   2. signInWithPassword wrapped in 10s timeout — spinner can never hang forever.
+//   3. isSupabaseConfigured() checked before any call.
+//   4. Friendly error messages for every known Supabase error code.
+//   5. Profile fetch failure is non-fatal — user still gets signed in.
 
 import { useState, useCallback, Suspense } from 'react'
 import { useRouter, useSearchParams }       from 'next/navigation'
@@ -25,10 +19,17 @@ import { createClient, isSupabaseConfigured } from '../../lib/supabase/client'
 import { useTheme }       from '../../lib/theme'
 import { ToastContainer, showToast } from '../../components/Toast'
 
-// ─────────────────────────────────────────────
-//  Timeout wrapper
-//  Rejects (not resolves) on timeout so catch() handles it
-// ─────────────────────────────────────────────
+// ── Sanitise redirect target ──
+// Only allow internal paths (start with '/') — never Bible refs or external URLs
+function sanitiseNext(raw) {
+  if (!raw) return '/'
+  const decoded = decodeURIComponent(raw)
+  // Must start with '/' and not be a protocol-relative URL (//)
+  if (decoded.startsWith('/') && !decoded.startsWith('//')) return decoded
+  return '/'
+}
+
+// ── Timeout wrapper — rejects after ms ──
 function withTimeout(promise, ms = 10000) {
   let timer
   const timeout = new Promise((_, reject) =>
@@ -37,9 +38,7 @@ function withTimeout(promise, ms = 10000) {
   return Promise.race([promise, timeout]).finally(() => clearTimeout(timer))
 }
 
-// ─────────────────────────────────────────────
-//  Friendly error messages for Supabase error codes / messages
-// ─────────────────────────────────────────────
+// ── Friendly Supabase error messages ──
 function friendlyAuthError(msg = '') {
   const m = msg.toLowerCase()
   if (m.includes('invalid login') || m.includes('invalid credentials') || m.includes('invalid email or password'))
@@ -57,9 +56,7 @@ function friendlyAuthError(msg = '') {
   return { field: null, text: msg || 'Sign in failed — please try again' }
 }
 
-// ─────────────────────────────────────────────
-//  Password strength
-// ─────────────────────────────────────────────
+// ── Password strength ──
 function passwordStrength(pw) {
   if (!pw) return { score: 0, label: '', color: '' }
   let s = 0
@@ -76,18 +73,13 @@ function passwordStrength(pw) {
   ][s]
 }
 
-// ─────────────────────────────────────────────
-//  Google Button (coming soon)
-// ─────────────────────────────────────────────
+// ── Google Button (coming soon) ──
 function GoogleButton() {
   return (
     <div style={{ position: 'relative' }}>
       <button type="button"
         className="w-full flex items-center justify-center gap-3 py-4 rounded-full font-bold text-[15px] border-2"
-        style={{
-          background: 'white', color: '#1A1A2E', borderColor: '#E5E7EB',
-          opacity: 0.4, pointerEvents: 'none', cursor: 'default',
-        }}>
+        style={{ background: 'white', color: '#1A1A2E', borderColor: '#E5E7EB', opacity: 0.4, pointerEvents: 'none' }}>
         <svg width="20" height="20" viewBox="0 0 24 24">
           <path d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z" fill="#4285F4"/>
           <path d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z" fill="#34A853"/>
@@ -98,9 +90,7 @@ function GoogleButton() {
       </button>
       <div className="absolute inset-0 flex items-end justify-center pb-1.5" style={{ pointerEvents: 'none' }}>
         <span className="text-[11px] font-bold px-2 py-0.5 rounded-full"
-          style={{ background: 'rgba(0,0,0,0.12)', color: '#6B7280' }}>
-          Coming soon
-        </span>
+          style={{ background: 'rgba(0,0,0,0.12)', color: '#6B7280' }}>Coming soon</span>
       </div>
     </div>
   )
@@ -120,13 +110,11 @@ function SignIn({ onToggle, onSuccess, t }) {
   const emailRe = /^[^\s@]+@[^\s@]+\.[^\s@]+$/
 
   async function submit() {
-    // Validate
     const errs = {}
     if (!emailRe.test(email)) errs.email    = 'Enter a valid email'
     if (!password)            errs.password = 'Enter your password'
     if (Object.keys(errs).length) { setErrors(errs); return }
 
-    // Guard: env vars
     if (!isSupabaseConfigured()) {
       showToast('⚠️ App not connected to database — contact support')
       return
@@ -138,7 +126,6 @@ function SignIn({ onToggle, onSuccess, t }) {
     try {
       const sb = createClient()
 
-      // ── Sign in with 10s timeout ──
       const { data, error } = await withTimeout(
         sb.auth.signInWithPassword({ email: email.trim(), password }),
         10000
@@ -149,8 +136,7 @@ function SignIn({ onToggle, onSuccess, t }) {
 
       const user = data.user
 
-      // ── Fetch profile with 8s timeout ──
-      // Non-fatal: if this fails, we still let the user in
+      // Profile fetch — non-fatal, 8s timeout
       let profile = null
       try {
         const { data: p } = await withTimeout(
@@ -161,11 +147,11 @@ function SignIn({ onToggle, onSuccess, t }) {
           8000
         )
         profile = p
-      } catch (profileErr) {
-        console.warn('[auth/signin] profile fetch failed (non-fatal):', profileErr.message)
+      } catch (e) {
+        console.warn('[auth/signin] profile fetch failed (non-fatal):', e.message)
       }
 
-      // ── Write to localStorage ──
+      // Write to localStorage
       try {
         const displayName = profile?.full_name || profile?.username || ''
         localStorage.setItem('dw_user', JSON.stringify({
@@ -182,16 +168,12 @@ function SignIn({ onToggle, onSuccess, t }) {
         }
       } catch {}
 
-      const isNew = !profile?.onboarding_complete
-      onSuccess(user, isNew, profile?.username || '')
+      onSuccess(user, !profile?.onboarding_complete, profile?.username || '')
 
     } catch (e) {
       const { field, text } = friendlyAuthError(e.message)
-      if (field) {
-        setErrors({ [field]: text })
-      } else {
-        showToast(text)
-      }
+      if (field) setErrors({ [field]: text })
+      else showToast(text)
     } finally {
       setLoading(false)
     }
@@ -210,7 +192,7 @@ function SignIn({ onToggle, onSuccess, t }) {
       )
       setResetSent(true)
       showToast('Reset link sent — check your email')
-    } catch (e) {
+    } catch {
       showToast('Could not send reset email — check your connection')
     }
   }
@@ -222,36 +204,22 @@ function SignIn({ onToggle, onSuccess, t }) {
 
       <div className="flex flex-col gap-1.5">
         <label className="font-bold text-[13px]" style={{ color: t.text }}>Email</label>
-        <input
-          type="email" value={email}
+        <input type="email" value={email}
           onChange={e => { setEmail(e.target.value); setErrors(v => ({ ...v, email: undefined })) }}
-          placeholder="you@example.com"
-          autoComplete="email"
+          placeholder="you@example.com" autoComplete="email"
           className="w-full px-4 py-3.5 rounded-[14px] border text-[15px] focus:outline-none"
-          style={{
-            background:   t.bgInput,
-            color:        t.text,
-            borderColor:  errors.email ? '#EF4444' : t.borderInput,
-          }}
-        />
+          style={{ background: t.bgInput, color: t.text, borderColor: errors.email ? '#EF4444' : t.borderInput }} />
         {errors.email && <p className="text-[12px]" style={{ color: '#EF4444' }}>{errors.email}</p>}
       </div>
 
       <div className="flex flex-col gap-1.5">
         <label className="font-bold text-[13px]" style={{ color: t.text }}>Password</label>
         <div className="relative">
-          <input
-            type={showPw ? 'text' : 'password'} value={password}
+          <input type={showPw ? 'text' : 'password'} value={password}
             onChange={e => { setPassword(e.target.value); setErrors(v => ({ ...v, password: undefined })) }}
-            placeholder="Your password"
-            autoComplete="current-password"
+            placeholder="Your password" autoComplete="current-password"
             className="w-full px-4 py-3.5 pr-12 rounded-[14px] border text-[15px] focus:outline-none"
-            style={{
-              background:  t.bgInput,
-              color:       t.text,
-              borderColor: errors.password ? '#EF4444' : t.borderInput,
-            }}
-          />
+            style={{ background: t.bgInput, color: t.text, borderColor: errors.password ? '#EF4444' : t.borderInput }} />
           <button type="button" onClick={() => setShowPw(v => !v)}
             className="absolute right-3 top-1/2 -translate-y-1/2 w-8 h-8 flex items-center justify-center"
             style={{ color: t.textMuted }}>
@@ -259,22 +227,16 @@ function SignIn({ onToggle, onSuccess, t }) {
           </button>
         </div>
         {errors.password && <p className="text-[12px]" style={{ color: '#EF4444' }}>{errors.password}</p>}
-
         {resetSent
           ? <p className="text-[12px] font-semibold mt-1" style={{ color: '#4A7C5F' }}>✓ Reset link sent</p>
           : <button onClick={handleReset} className="text-left text-[12px] font-semibold underline mt-0.5"
-              style={{ color: '#5B4FCF' }}>Forgot password?</button>
-        }
+              style={{ color: '#5B4FCF' }}>Forgot password?</button>}
       </div>
 
-      <button
-        onClick={submit}
-        disabled={loading}
+      <button onClick={submit} disabled={loading}
         className="w-full py-4 rounded-full text-white font-bold text-[15px] disabled:opacity-60 active:scale-[0.97] transition-all flex items-center justify-center gap-2"
         style={{ background: 'linear-gradient(135deg,#5B4FCF,#3D3190)' }}>
-        {loading
-          ? <><Loader2 size={18} className="animate-spin" /> Signing in…</>
-          : 'Sign in →'}
+        {loading ? <><Loader2 size={18} className="animate-spin" /> Signing in…</> : 'Sign in →'}
       </button>
 
       <p className="text-center text-[13px]" style={{ color: t.textMuted }}>
@@ -290,7 +252,7 @@ function SignIn({ onToggle, onSuccess, t }) {
 // ─────────────────────────────────────────────
 function SignUp({ onToggle, onSuccess, t }) {
   const [username,       setUsername]       = useState('')
-  const [usernameStatus, setUsernameStatus] = useState(null) // null|'checking'|'ok'|'taken'|'invalid'
+  const [usernameStatus, setUsernameStatus] = useState(null)
   const [email,          setEmail]          = useState('')
   const [password,       setPassword]       = useState('')
   const [showPw,         setShowPw]         = useState(false)
@@ -313,7 +275,7 @@ function SignUp({ onToggle, onSuccess, t }) {
       )
       setUsernameStatus(data ? 'taken' : 'ok')
     } catch {
-      setUsernameStatus('ok') // network error — don't block sign-up over a username check
+      setUsernameStatus('ok')
     }
   }, [])
 
@@ -335,7 +297,6 @@ function SignUp({ onToggle, onSuccess, t }) {
     try {
       const sb = createClient()
 
-      // ── Step 1: Create auth user ──
       const { data, error } = await withTimeout(
         sb.auth.signUp({ email: email.trim(), password }),
         10000
@@ -346,40 +307,32 @@ function SignUp({ onToggle, onSuccess, t }) {
       const user    = data.user
       const session = data.session
 
-      // ── Step 2: Write profile row ──
+      // Write profile row
       try {
         await withTimeout(
           sb.from('profiles').upsert({
             id:         user.id,
-            username:   username,
+            username,
             full_name:  username,
             email:      user.email,
             created_at: new Date().toISOString(),
           }, { onConflict: 'id' }),
           8000
         )
-      } catch (profileErr) {
-        console.warn('[auth/signup] profile upsert failed:', profileErr.message)
+      } catch (e) {
+        console.warn('[auth/signup] profile upsert failed:', e.message)
       }
 
-      // ── Step 3: Write to localStorage ──
+      // Write localStorage
       try {
         localStorage.setItem('dw_user', JSON.stringify({
-          id:          user.id,
-          username:    username,
-          name:        username,
-          email:       user.email,
+          id: user.id, username, name: username, email: user.email,
           companionId: 'david',
-          joinedAt:    new Date().toLocaleDateString('en-US', { month: 'long', year: 'numeric' }),
+          joinedAt: new Date().toLocaleDateString('en-US', { month: 'long', year: 'numeric' }),
         }))
       } catch {}
 
-      // ── Step 4: Email confirmation or direct session ──
-      if (!session) {
-        setAwaitEmail(true)
-        return // loading cleared in finally
-      }
-
+      if (!session) { setAwaitEmail(true); return }
       onSuccess(user, true, username)
 
     } catch (e) {
@@ -397,37 +350,30 @@ function SignUp({ onToggle, onSuccess, t }) {
   }
 
   const pw = passwordStrength(password)
-
   const unameHint = {
-    null:      { color: t.textFaint, text: '3–20 chars, letters, numbers and _' },
-    checking:  { color: '#E8A838',   text: 'Checking…'                          },
-    ok:        { color: '#4A7C5F',   text: '✓ Available!'                       },
-    taken:     { color: '#EF4444',   text: 'Username taken — try another'       },
-    invalid:   { color: '#EF4444',   text: '3–20 chars, lowercase letters, numbers and _' },
+    null:     { color: '#9CA3AF', text: '3–20 chars, letters, numbers and _' },
+    checking: { color: '#E8A838', text: 'Checking…' },
+    ok:       { color: '#4A7C5F', text: '✓ Available!' },
+    taken:    { color: '#EF4444', text: 'Username taken — try another' },
+    invalid:  { color: '#EF4444', text: '3–20 chars, lowercase letters, numbers and _' },
   }[usernameStatus]
 
   if (awaitEmail) {
     return (
-      <motion.div key="await-email"
-        initial={{ opacity: 0, scale: 0.97 }} animate={{ opacity: 1, scale: 1 }}
+      <motion.div key="await" initial={{ opacity: 0 }} animate={{ opacity: 1 }}
         className="flex flex-col items-center gap-5 py-6 text-center">
-        <div className="w-16 h-16 rounded-full flex items-center justify-center"
-          style={{ background: '#E8F4ED' }}>
+        <div className="w-16 h-16 rounded-full flex items-center justify-center" style={{ background: '#E8F4ED' }}>
           <Mail size={28} style={{ color: '#4A7C5F' }} />
         </div>
         <div>
           <p className="font-bold text-[20px] mb-2" style={{ color: t.text }}>Check your inbox</p>
           <p className="text-[14px] leading-relaxed" style={{ color: t.textMuted }}>
-            We sent a confirmation link to <strong>{email}</strong>.
-            Click it to activate your account.
+            We sent a confirmation link to <strong>{email}</strong>. Click it to activate your account.
           </p>
         </div>
-        <div className="flex items-center gap-2 px-4 py-3 rounded-[14px] w-full"
-          style={{ background: '#E8F4ED' }}>
+        <div className="flex items-center gap-2 px-4 py-3 rounded-[14px] w-full" style={{ background: '#E8F4ED' }}>
           <Check size={16} style={{ color: '#4A7C5F' }} />
-          <p className="text-[13px] font-semibold" style={{ color: '#4A7C5F' }}>
-            After confirming, come back and sign in
-          </p>
+          <p className="text-[13px] font-semibold" style={{ color: '#4A7C5F' }}>After confirming, come back and sign in</p>
         </div>
         <button onClick={onToggle} className="font-bold text-[14px] underline" style={{ color: '#5B4FCF' }}>
           Back to sign in
@@ -441,69 +387,40 @@ function SignUp({ onToggle, onSuccess, t }) {
       initial={{ opacity: 0, x: 20 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0, x: -20 }}
       className="flex flex-col gap-4">
 
-      {/* Username */}
       <div className="flex flex-col gap-1.5">
         <label className="font-bold text-[13px]" style={{ color: t.text }}>Username</label>
-        <input
-          type="text" value={username}
+        <input type="text" value={username}
           onChange={e => {
             const v = e.target.value.toLowerCase().replace(/[^a-z0-9_]/g, '')
             setUsername(v)
             setErrors(er => ({ ...er, username: undefined }))
             checkUsername(v)
           }}
-          placeholder="your_username"
-          autoCapitalize="none"
-          autoCorrect="off"
+          placeholder="your_username" autoCapitalize="none" autoCorrect="off"
           className="w-full px-4 py-3.5 rounded-[14px] border text-[15px] focus:outline-none"
-          style={{
-            background:  t.bgInput,
-            color:       t.text,
-            borderColor: errors.username ? '#EF4444' : t.borderInput,
-          }}
-        />
-        {unameHint && (
-          <p className="text-[12px]" style={{ color: unameHint.color }}>{unameHint.text}</p>
-        )}
-        {errors.username && (
-          <p className="text-[12px]" style={{ color: '#EF4444' }}>{errors.username}</p>
-        )}
+          style={{ background: t.bgInput, color: t.text, borderColor: errors.username ? '#EF4444' : t.borderInput }} />
+        {unameHint && <p className="text-[12px]" style={{ color: unameHint.color }}>{unameHint.text}</p>}
+        {errors.username && <p className="text-[12px]" style={{ color: '#EF4444' }}>{errors.username}</p>}
       </div>
 
-      {/* Email */}
       <div className="flex flex-col gap-1.5">
         <label className="font-bold text-[13px]" style={{ color: t.text }}>Email</label>
-        <input
-          type="email" value={email}
+        <input type="email" value={email}
           onChange={e => { setEmail(e.target.value); setErrors(er => ({ ...er, email: undefined })) }}
-          placeholder="you@example.com"
-          autoComplete="email"
+          placeholder="you@example.com" autoComplete="email"
           className="w-full px-4 py-3.5 rounded-[14px] border text-[15px] focus:outline-none"
-          style={{
-            background:  t.bgInput,
-            color:       t.text,
-            borderColor: errors.email ? '#EF4444' : t.borderInput,
-          }}
-        />
+          style={{ background: t.bgInput, color: t.text, borderColor: errors.email ? '#EF4444' : t.borderInput }} />
         {errors.email && <p className="text-[12px]" style={{ color: '#EF4444' }}>{errors.email}</p>}
       </div>
 
-      {/* Password */}
       <div className="flex flex-col gap-1.5">
         <label className="font-bold text-[13px]" style={{ color: t.text }}>Password</label>
         <div className="relative">
-          <input
-            type={showPw ? 'text' : 'password'} value={password}
+          <input type={showPw ? 'text' : 'password'} value={password}
             onChange={e => { setPassword(e.target.value); setErrors(er => ({ ...er, password: undefined })) }}
-            placeholder="At least 6 characters"
-            autoComplete="new-password"
+            placeholder="At least 6 characters" autoComplete="new-password"
             className="w-full px-4 py-3.5 pr-12 rounded-[14px] border text-[15px] focus:outline-none"
-            style={{
-              background:  t.bgInput,
-              color:       t.text,
-              borderColor: errors.password ? '#EF4444' : t.borderInput,
-            }}
-          />
+            style={{ background: t.bgInput, color: t.text, borderColor: errors.password ? '#EF4444' : t.borderInput }} />
           <button type="button" onClick={() => setShowPw(v => !v)}
             className="absolute right-3 top-1/2 -translate-y-1/2 w-8 h-8 flex items-center justify-center"
             style={{ color: t.textMuted }}>
@@ -524,14 +441,11 @@ function SignUp({ onToggle, onSuccess, t }) {
         {errors.password && <p className="text-[12px]" style={{ color: '#EF4444' }}>{errors.password}</p>}
       </div>
 
-      <button
-        onClick={submit}
+      <button onClick={submit}
         disabled={loading || usernameStatus === 'checking' || usernameStatus === 'taken' || usernameStatus === 'invalid'}
         className="w-full py-4 rounded-full text-white font-bold text-[15px] disabled:opacity-50 active:scale-[0.97] transition-all flex items-center justify-center gap-2"
         style={{ background: 'linear-gradient(135deg,#5B4FCF,#3D3190)' }}>
-        {loading
-          ? <><Loader2 size={18} className="animate-spin" /> Creating account…</>
-          : 'Create account →'}
+        {loading ? <><Loader2 size={18} className="animate-spin" /> Creating account…</> : 'Create account →'}
       </button>
 
       <p className="text-center text-[13px]" style={{ color: t.textMuted }}>
@@ -550,17 +464,11 @@ function AuthPageInner() {
   const searchParams = useSearchParams()
   const { t }        = useTheme()
 
-  const next     = searchParams.get('next') || '/'
+  // FIXED: sanitise `next` — reject Bible refs and non-path strings
+  const next     = sanitiseNext(searchParams.get('next'))
   const initMode = searchParams.get('mode') === 'signup' ? 'signup' : 'signin'
+  const reason   = searchParams.get('reason') || ''
   const [mode, setMode] = useState(initMode)
-
-  function handleSuccess(user, isNew, username) {
-    if (isNew) {
-      router.push(`/onboarding?username=${encodeURIComponent(username || '')}`)
-    } else {
-      router.push(next)
-    }
-  }
 
   const REASON_COPY = {
     post:    'Sign in to share what God is teaching you.',
@@ -568,16 +476,20 @@ function AuthPageInner() {
     comment: 'Sign in to join the conversation.',
     like:    'Sign in to like posts.',
     plan:    'Sign in to save your reading plans.',
-    default: '',
   }
-  const reason     = searchParams.get('reason') || ''
-  const reasonCopy = REASON_COPY[reason] || ''
+
+  function handleSuccess(user, isNew, username) {
+    if (isNew) {
+      router.push(`/onboarding?username=${encodeURIComponent(username || '')}`)
+    } else {
+      router.push(next) // next is now guaranteed to be a valid path like '/'
+    }
+  }
 
   return (
     <div className="flex flex-col min-h-screen" style={{ background: t.bg }}>
       <ToastContainer />
 
-      {/* Back */}
       <div className="px-4 pt-6 flex-shrink-0">
         <button onClick={() => router.push(next)}
           className="w-9 h-9 rounded-full flex items-center justify-center"
@@ -586,7 +498,6 @@ function AuthPageInner() {
         </button>
       </div>
 
-      {/* Logo + heading */}
       <div className="flex flex-col items-center pt-6 pb-8 px-6 flex-shrink-0">
         <div className="w-16 h-16 rounded-[20px] flex items-center justify-center mb-4"
           style={{ background: 'linear-gradient(135deg,#5B4FCF,#3D3190)' }}>
@@ -595,28 +506,33 @@ function AuthPageInner() {
         <h1 className="font-display text-[26px] font-bold text-center" style={{ color: t.text }}>
           {mode === 'signup' ? 'Create your account' : 'Welcome back'}
         </h1>
-        {reasonCopy && (
-          <p className="text-[14px] text-center mt-2" style={{ color: t.textMuted }}>{reasonCopy}</p>
+        {reason && REASON_COPY[reason] && (
+          <p className="text-[14px] text-center mt-2" style={{ color: t.textMuted }}>{REASON_COPY[reason]}</p>
         )}
       </div>
 
-      {/* Form */}
-      <div className="flex-1 px-6 pb-10">
-        <div className="flex flex-col gap-5">
+      <div className="flex-1 px-5 overflow-y-auto" style={{ paddingBottom: 40 }}>
+        <div className="rounded-[24px] p-5 flex flex-col gap-4"
+          style={{ background: t.bgCard, boxShadow: t.shadowMd }}>
           <GoogleButton />
-
           <div className="flex items-center gap-3">
             <div className="flex-1 h-px" style={{ background: t.border }} />
             <span className="text-[12px] font-semibold" style={{ color: t.textFaint }}>or</span>
             <div className="flex-1 h-px" style={{ background: t.border }} />
           </div>
-
           <AnimatePresence mode="wait">
-            {mode === 'signin'
-              ? <SignIn key="si" onToggle={() => setMode('signup')} onSuccess={handleSuccess} t={t} />
-              : <SignUp key="su" onToggle={() => setMode('signin')} onSuccess={handleSuccess} t={t} />
+            {mode === 'signup'
+              ? <SignUp key="up" onToggle={() => setMode('signin')} onSuccess={handleSuccess} t={t} />
+              : <SignIn key="in" onToggle={() => setMode('signup')} onSuccess={handleSuccess} t={t} />
             }
           </AnimatePresence>
+        </div>
+        <div className="text-center py-6">
+          <button onClick={() => router.push(next)}
+            className="text-[13px] font-semibold underline underline-offset-2"
+            style={{ color: t.textFaint }}>
+            Continue without an account
+          </button>
         </div>
       </div>
     </div>
@@ -625,11 +541,7 @@ function AuthPageInner() {
 
 export default function AuthPage() {
   return (
-    <Suspense fallback={
-      <div className="flex items-center justify-center min-h-screen">
-        <Loader2 size={24} className="animate-spin" style={{ color: '#5B4FCF' }} />
-      </div>
-    }>
+    <Suspense fallback={<div style={{ minHeight: '100dvh' }} />}>
       <AuthPageInner />
     </Suspense>
   )

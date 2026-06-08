@@ -1,24 +1,21 @@
-// ── src/app/layout.js ──
-// v3 — Offline cache integration.
-// Changes from v2:
-//   • AuthProvider imported and wraps everything (needed by useAuthContext in child components)
-//   • AppInit now handles the offline queue drain (see AppInit.js changes below)
-//
-// NOTE: The offline drain is NOT added here directly because layout.js is a
-// Server Component and cannot use hooks. Instead, AppInit.js (already a client
-// component that runs on mount) is updated to call useOfflineDrain().
-// This file only changes to ensure AuthProvider is present.
+// ── src/app/layout.js — v4 ──
+// Changes from v3:
+//   • SwUpdateBanner added (shows when new SW version is ready)
+//   • Fonts: Google Fonts links retained — SW now caches them offline
+//     (CacheFirst strategy in next.config.js handles both stylesheet + font files)
+//   • Script strategy for sw-register.js kept as afterInteractive
 
 import './globals.css'
-import Script        from 'next/script'
-import BottomNav     from '../components/BottomNav'
-import Sidebar       from '../components/Sidebar'
-import InstallPrompt from '../components/InstallPrompt'
-import AppInit       from '../components/AppInit'
-import OfflineBanner from '../components/OfflineBanner'
+import Script         from 'next/script'
+import BottomNav      from '../components/BottomNav'
+import Sidebar        from '../components/Sidebar'
+import InstallPrompt  from '../components/InstallPrompt'
+import AppInit        from '../components/AppInit'
+import OfflineBanner  from '../components/OfflineBanner'
+import SwUpdateBanner from '../components/SwUpdateBanner'
 import { DarkModeProvider } from '../contexts/DarkModeContext'
 import { AuthGateProvider } from '../components/AuthGate'
-import { AuthProvider }     from '../contexts/AuthContext'   // ← ensure this is present
+import { AuthProvider }     from '../contexts/AuthContext'
 
 export const metadata = {
   title:       'Daily Walk — Your daily devotion, together.',
@@ -38,6 +35,7 @@ export const viewport = {
   themeColor:   '#5B4FCF',
 }
 
+// Inline dark mode script — must run before first paint to prevent flash
 const DARK_MODE_SCRIPT = `try{if(localStorage.getItem('dw_dark_mode')==='true'){document.documentElement.setAttribute('data-theme','dark');document.documentElement.classList.add('dark');}}catch(e){}`
 
 export default function RootLayout({ children }) {
@@ -46,12 +44,14 @@ export default function RootLayout({ children }) {
       <head>
         <script dangerouslySetInnerHTML={{ __html: DARK_MODE_SCRIPT }} />
 
+        {/* Google Fonts — preconnect for performance, SW will cache these for offline */}
         <link rel="preconnect" href="https://fonts.googleapis.com" />
         <link rel="preconnect" href="https://fonts.gstatic.com" crossOrigin="anonymous" />
         <link
           href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=Lora:ital,wght@0,400;0,600;0,700;1,400;1,600&display=swap"
           rel="stylesheet"
         />
+
         <link rel="manifest"         href="/manifest.json" />
         <link rel="icon"             href="/icons/favicon-32.png" sizes="32x32" />
         <link rel="apple-touch-icon" href="/icons/icon-192.png" />
@@ -63,8 +63,11 @@ export default function RootLayout({ children }) {
 
       <body style={{ margin: 0 }}>
         <DarkModeProvider>
-          <AuthProvider>                    {/* ← ensures useAuthContext works everywhere */}
+          <AuthProvider>
             <AuthGateProvider>
+              {/* SW update notification — shown when new version is deployed */}
+              <SwUpdateBanner />
+
               <OfflineBanner />
 
               <div
@@ -89,13 +92,14 @@ export default function RootLayout({ children }) {
                 </div>
               </div>
 
-              {/* AppInit runs useOfflineDrain — see AppInit.js */}
+              {/* AppInit: background sync drain, pre-caching, eviction */}
               <AppInit />
               <InstallPrompt />
             </AuthGateProvider>
           </AuthProvider>
         </DarkModeProvider>
 
+        {/* SW registration — afterInteractive so it doesn't block FCP */}
         <Script src="/sw-register.js" strategy="afterInteractive" />
       </body>
     </html>

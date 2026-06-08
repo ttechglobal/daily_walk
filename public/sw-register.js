@@ -1,42 +1,60 @@
 // ── public/sw-register.js ──
-// Service worker registration — loaded via next/script afterInteractive.
-// Registers sw.js from root scope so it controls all pages.
-// Handles updates silently.
+// Service Worker registration — loaded via <Script strategy="afterInteractive">.
+// Handles:
+//   1. SW registration (points to /sw.js compiled by Serwist)
+//   2. Background Sync registration for offline queue drain
+//   3. Listening for DW_DRAIN_QUEUE messages from SW
+//   4. Prompting on SW update (new version available)
 
-if ('serviceWorker' in navigator) {
-  window.addEventListener('load', async () => {
-    try {
-      const registration = await navigator.serviceWorker.register('/sw.js', {
-        scope: '/',
-        updateViaCache: 'none',  // always check for updated SW
+;(function () {
+  if (typeof window === 'undefined') return
+  if (!('serviceWorker' in navigator)) return
+
+  // ── Register SW ──
+  navigator.serviceWorker.register('/sw.js', { scope: '/' }).then(registration => {
+
+    // ── Background Sync: register whenever we go online ──
+    // This ensures the SW fires a sync event and drains the offline queue.
+    function registerSync() {
+      if (!('SyncManager' in window)) return
+      registration.sync.register('dw-offline-queue').catch(() => null)
+    }
+
+    window.addEventListener('online', () => {
+      registerSync()
+      // Also fire immediately for any action queued in this session
+      window.dispatchEvent(new CustomEvent('dw-back-online'))
+    })
+
+    // Register on load in case we just came back online between page loads
+    if (navigator.onLine) registerSync()
+
+    // ── Handle SW update (new version deployed) ──
+    registration.addEventListener('updatefound', () => {
+      const newWorker = registration.installing
+      if (!newWorker) return
+
+      newWorker.addEventListener('statechange', () => {
+        if (newWorker.state === 'installed' && navigator.serviceWorker.controller) {
+          // A new SW is installed but waiting — dispatch event so UI can show update banner
+          window.dispatchEvent(new CustomEvent('dw-sw-update-ready', {
+            detail: { registration },
+          }))
+        }
       })
+    })
 
-      console.log('[sw-register] registered, scope:', registration.scope)
+  }).catch(() => null)
 
-      // Check for updates on every page load (silent)
-      registration.update().catch(() => null)
-
-      // When a new SW is waiting, activate it on next navigation
-      registration.addEventListener('updatefound', () => {
-        const newWorker = registration.installing
-        if (!newWorker) return
-
-        newWorker.addEventListener('statechange', () => {
-          if (newWorker.state === 'installed' && navigator.serviceWorker.controller) {
-            // New version available — activate on next page load
-            console.log('[sw-register] new version available')
-            newWorker.postMessage({ type: 'SKIP_WAITING' })
-          }
-        })
+  // ── Listen for messages from SW ──
+  navigator.serviceWorker.addEventListener('message', (event) => {
+    if (event.data?.type === 'DW_DRAIN_QUEUE') {
+      // SW Background Sync told us to drain — import and run
+      import('/sw-drain.js').catch(() => {
+        // Fallback: dispatch event for AppInit to pick up
+        window.dispatchEvent(new CustomEvent('dw-drain-queue'))
       })
-
-      // When SW activates, reload to get fresh assets
-      navigator.serviceWorker.addEventListener('controllerchange', () => {
-        window.location.reload()
-      })
-
-    } catch (e) {
-      console.warn('[sw-register] registration failed:', e.message)
     }
   })
-}
+
+})()
