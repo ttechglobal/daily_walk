@@ -1,12 +1,3 @@
-// ── src/lib/supabase/client.js ──
-//
-// FIX: Singleton was caching null or a broken client on first call,
-// then returning that forever. Auth calls would hang with no error.
-//
-// Changes:
-//   1. Singleton keyed on URL — rebuilds if env var changes.
-//   2. isSupabaseConfigured() exported for pre-call guard in auth pages.
-
 import { createClient as _create } from '@supabase/supabase-js'
 
 let _client    = null
@@ -17,8 +8,6 @@ export function createClient() {
   const key = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY
 
   if (!url || !key || url === 'your_supabase_project_url') return null
-
-  // Rebuild if URL changed (hot reload, env var fix)
   if (_client && _clientUrl === url) return _client
 
   _client = _create(url, key, {
@@ -26,6 +15,11 @@ export function createClient() {
       persistSession:     true,
       autoRefreshToken:   true,
       detectSessionInUrl: true,
+      // Use localStorage only — no cookie storage.
+      // auth-helpers-nextjs was conflicting here and causing signInWithPassword to hang.
+      storage:            typeof window !== 'undefined' ? window.localStorage : undefined,
+      storageKey:         'dw-auth-token',
+      flowType:           'implicit',
     },
   })
   _clientUrl = url
