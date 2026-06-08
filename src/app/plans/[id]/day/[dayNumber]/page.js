@@ -1,55 +1,36 @@
 'use client'
 
-// ── src/app/plans/[id]/day/[dayNumber]/page.js ── v2
-//
-// KEY FIX: Verse plans now show ONLY the referenced verses, not the full chapter.
-//   "John 3:16"   → shows only verse 16
-//   "John 3:16-17" → shows only verses 16 and 17
-//   "John 3"      → shows full chapter (chapter plans — unchanged)
-//   "John 3:16 · Romans 8:28" → shows both verses (multi-verse topic day)
-//
-// "Read full chapter" link always visible at the bottom for users who want more context.
+// ── src/app/plans/[id]/day/[dayNumber]/page.js ── v3
+// PATCHES APPLIED:
+//   1. "Mark as read" CTA: bottom changed from 0 → 64px (sits above BottomNav)
+//   2. Focus note block: border-l-4 removed (no more AI-looking left outline)
+//   3. Scrollable content: paddingBottom increased to clear CTA + nav stack
 
 import { useState, useEffect, useCallback, useRef } from 'react'
 import { useParams, useRouter }                      from 'next/navigation'
 import { motion, AnimatePresence }                   from 'framer-motion'
 import {
   ArrowLeft, BookOpen, Loader2, WifiOff,
-  CheckCircle2, ChevronDown, Lightbulb,
+  CheckCircle2, ChevronDown,
 } from 'lucide-react'
 import { useDarkMode, getDarkModeColors } from '../../../../../contexts/DarkModeContext'
 import { useLocalStorage }               from '../../../../../hooks/useLocalStorage'
 import { useCheckin }                    from '../../../../../hooks/useCheckin'
 import { ToastContainer, showToast }     from '../../../../../components/Toast'
 import {
-  readPlans, writePlans, markDayComplete,
+  readPlans, markDayComplete,
 } from '../../../../../lib/plans'
 import { getActiveTranslation }          from '../../../../../lib/bib-translations'
 import { todayStr }                      from '../../../../../lib/constants'
 
-// ─────────────────────────────────────────────
-//  Parse verse range from a reference string.
-//  Returns null for chapter-level refs (show all verses).
-//  Returns { start, end } for verse refs.
-//
-//  "John 3:16"      → { start: 16, end: 16 }
-//  "John 3:16-17"   → { start: 16, end: 17 }
-//  "Psalm 23:1-6"   → { start: 1,  end: 6  }
-//  "John 3"         → null  (full chapter)
-//  "John 3:16 · Romans 8:28" → null (multi-ref, fetch each)
-// ─────────────────────────────────────────────
 function parseVerseRange(ref) {
   if (!ref) return null
-  // Multi-reference (topic day: "Ref1 · Ref2")
   if (ref.includes('·') || ref.includes('–') || ref.includes('—')) return null
   const m = ref.match(/:(\d+)(?:[–\-](\d+))?/)
   if (!m) return null
-  const start = parseInt(m[1])
-  const end   = m[2] ? parseInt(m[2]) : start
-  return { start, end }
+  return { start: parseInt(m[1]), end: m[2] ? parseInt(m[2]) : parseInt(m[1]) }
 }
 
-// Parse a single ref into { book, chapter, verseStart, verseEnd }
 function parseRef(ref) {
   if (!ref) return null
   const m = ref.trim().match(/^(.+?)\s+(\d+)(?::(\d+)(?:[–\-](\d+))?)?$/)
@@ -69,9 +50,6 @@ function buildReaderUrl(passage) {
   return '/read'
 }
 
-// ─────────────────────────────────────────────
-//  Confetti burst
-// ─────────────────────────────────────────────
 function Confetti() {
   const dots = Array.from({ length: 14 }, (_, i) => ({
     x: Math.cos((i / 14) * 2 * Math.PI) * (30 + Math.random() * 60),
@@ -92,16 +70,11 @@ function Confetti() {
   )
 }
 
-// ─────────────────────────────────────────────
-//  Single verse display
-// ─────────────────────────────────────────────
 function VerseDisplay({ verse, fontSize = 18, c }) {
-  // Strip red-letter markers for display (they're in the plan reading context)
   const text = (verse.text || '')
     .replace(/<J>(.*?)<\/J>/g, '$1')
     .replace(/\[WJ\](.*?)\[\/WJ\]/g, '$1')
     .replace(/<WJ>(.*?)<\/WJ>/g, '$1')
-
   return (
     <p style={{ lineHeight: 2, color: c.text, fontSize }}>
       {verse.number > 0 && (
@@ -117,9 +90,6 @@ function VerseDisplay({ verse, fontSize = 18, c }) {
   )
 }
 
-// ─────────────────────────────────────────────
-//  Multi-ref loader — for topic days with "Ref1 · Ref2"
-// ─────────────────────────────────────────────
 async function fetchMultiRef(refs, translationId) {
   const { getPassage } = await import('../../../../../lib/bible')
   const results = []
@@ -133,7 +103,6 @@ async function fetchMultiRef(refs, translationId) {
       number: v.number ?? v.n ?? 0,
       text:   v.text   ?? v.t ?? '',
     }))
-    // Filter to specific verses if referenced
     if (parsed.verseStart) {
       const filtered = all.filter(v => v.number >= parsed.verseStart && v.number <= (parsed.verseEnd || parsed.verseStart))
       if (filtered.length) results.push({ ref: ref.trim(), verses: filtered })
@@ -144,9 +113,6 @@ async function fetchMultiRef(refs, translationId) {
   return { groups: results }
 }
 
-// ─────────────────────────────────────────────
-//  Main page
-// ─────────────────────────────────────────────
 export default function DayReadingPage() {
   const { id, dayNumber } = useParams()
   const router            = useRouter()
@@ -155,18 +121,18 @@ export default function DayReadingPage() {
   const c                 = getDarkModeColors(dark)
 
   const [plans, , hydrated] = useLocalStorage('dw_plans', [])
-  const { performCheckin } = useCheckin()
-  const scrollRef          = useRef(null)
+  const { performCheckin }  = useCheckin()
+  const scrollRef           = useRef(null)
 
-  const [confetti,    setConfetti]    = useState(false)
-  const [verseGroups, setVerseGroups] = useState(null)  // [{ ref, verses[] }]
-  const [loading,     setLoading]     = useState(false)
-  const [fetchError,  setFetchError]  = useState(null)
-  const [isOffline,   setIsOffline]   = useState(false)
-  const [reflection,  setReflection]  = useState('')
-  const [translationId, setTid]       = useState('KJV')
-  const [fontSize,    setFontSize]    = useState(18)
-  const [showReflect, setShowReflect] = useState(false)
+  const [confetti,      setConfetti]    = useState(false)
+  const [verseGroups,   setVerseGroups] = useState(null)
+  const [loading,       setLoading]     = useState(false)
+  const [fetchError,    setFetchError]  = useState(null)
+  const [isOffline,     setIsOffline]   = useState(false)
+  const [reflection,    setReflection]  = useState('')
+  const [translationId, setTid]         = useState('KJV')
+  const [fontSize,      setFontSize]    = useState(18)
+  const [showReflect,   setShowReflect] = useState(false)
 
   const plan    = (plans || []).find(p => p.id === id)
   const dayData = plan?.days?.find(d => d.day === dayNum)
@@ -177,15 +143,11 @@ export default function DayReadingPage() {
 
   useEffect(() => { setTid(getActiveTranslation()) }, [])
 
-  // ── Fetch verses ──
   const fetchVerses = useCallback(async () => {
     if (!passage) return
     setLoading(true); setFetchError(null); setIsOffline(false)
-
     try {
       const { getPassage } = await import('../../../../../lib/bible')
-
-      // Multi-reference day (topic/character plans with multiple verses)
       const isMultiRef = passage.includes('·')
       if (isMultiRef) {
         const refs = passage.split('·').map(r => r.trim()).filter(Boolean)
@@ -194,23 +156,17 @@ export default function DayReadingPage() {
         setVerseGroups(result.groups || [])
         return
       }
-
-      // Single reference
       const result = await getPassage(passage, translationId)
       if (result.offline) { setIsOffline(true); return }
       if (result.error)   { setFetchError(result.error); return }
-
       const allVerses = (result.verses || []).map(v => ({
         number: v.number ?? v.n ?? 0,
         text:   v.text   ?? v.t ?? '',
       }))
-
-      // Filter to specific verses for verse-level plans
-      const range = parseVerseRange(passage)
+      const range    = parseVerseRange(passage)
       const filtered = range
         ? allVerses.filter(v => v.number >= range.start && v.number <= range.end)
         : allVerses
-
       setVerseGroups([{ ref: passage, verses: filtered }])
     } catch (e) {
       setFetchError(e.message)
@@ -221,7 +177,6 @@ export default function DayReadingPage() {
 
   useEffect(() => { if (hydrated) fetchVerses() }, [fetchVerses, hydrated])
 
-  // ── Mark done ──
   async function handleMarkDone() {
     if (isDone || !plan) return
     markDayComplete(plan.id, dayNum, reflection)
@@ -249,16 +204,16 @@ export default function DayReadingPage() {
     )
   }
 
-  const allVerses = verseGroups?.flatMap(g => g.verses) || []
-  const isVerseLevel = !!parseVerseRange(passage) && !passage.includes('·')
-  const readerUrl = buildReaderUrl(passage)
+  const allVerses    = verseGroups?.flatMap(g => g.verses) || []
+  const isVerseLevel = !parseVerseRange(passage) && !passage.includes('·')
+  const readerUrl    = buildReaderUrl(passage)
 
   return (
     <div className="min-h-screen flex flex-col" style={{ background: c.bg }}>
       <ToastContainer />
       {confetti && <Confetti />}
 
-      {/* ── Header ── */}
+      {/* Header */}
       <div className="flex items-center gap-3 px-4 py-4 sticky top-0 z-20"
         style={{ background: c.bg, borderBottom: `1px solid ${c.border}` }}>
         <button onClick={() => router.back()}
@@ -270,7 +225,6 @@ export default function DayReadingPage() {
           <p className="font-bold text-[15px]" style={{ color: c.text }}>Day {dayNum}</p>
           <p className="text-[12px] truncate" style={{ color: c.textMuted }}>{plan.name}</p>
         </div>
-        {/* Font size controls */}
         <div className="flex items-center gap-1">
           <button onClick={() => setFontSize(s => Math.max(14, s - 1))}
             className="w-8 h-8 rounded-full flex items-center justify-center font-bold text-[14px]"
@@ -285,8 +239,9 @@ export default function DayReadingPage() {
         </span>
       </div>
 
-      {/* ── Content ── */}
-      <div ref={scrollRef} className="flex-1 overflow-y-auto px-5 pb-40">
+      {/* Content — paddingBottom clears CTA (72px) + BottomNav (64px) + safe area */}
+      <div ref={scrollRef} className="flex-1 overflow-y-auto px-5"
+        style={{ paddingBottom: 'calc(152px + env(safe-area-inset-bottom, 0px))' }}>
 
         {/* Passage title */}
         <div className="pt-5 pb-3">
@@ -294,60 +249,60 @@ export default function DayReadingPage() {
           {title && <p className="text-[13px] mt-0.5 italic" style={{ color: c.textMuted }}>{title}</p>}
         </div>
 
-        {/* Focus note (from topic/character plans) */}
+        {/* Focus note — NO left border (removed — it looks AI-generated) */}
         {focus && (
-          <div className="mb-4 px-4 py-3 rounded-[14px] border-l-4"
-            style={{ background: '#EDE9FF50', borderColor: '#5B4FCF' }}>
+          <div className="mb-4 px-4 py-3 rounded-[14px]"
+            style={{ background: '#EDE9FF50' }}>
             <p className="text-[13px] leading-relaxed font-medium italic" style={{ color: '#5B4FCF' }}>
               {focus}
             </p>
           </div>
         )}
 
-        {/* Loading */}
+        {/* Loading skeleton */}
         {loading && (
           <div className="flex flex-col gap-3 animate-pulse pt-2">
             {Array.from({ length: isVerseLevel ? 3 : 8 }).map((_, i) => (
-              <div key={i} className="h-5 rounded-xl"
-                style={{ background: c.bgCard, width: `${55 + (i % 4) * 11}%` }} />
+              <div key={i} className="h-4 rounded-full"
+                style={{ width: `${65 + (i % 4) * 8}%`, background: c.bgMuted }} />
             ))}
           </div>
         )}
 
-        {/* Offline */}
+        {/* Offline state */}
         {isOffline && !loading && (
-          <div className="py-10 flex flex-col items-center gap-3 text-center">
-            <WifiOff size={32} style={{ color: c.textMuted }} />
-            <p className="font-semibold text-[15px]" style={{ color: c.text }}>You're offline</p>
+          <div className="flex flex-col items-center gap-3 py-10 text-center">
+            <WifiOff size={28} style={{ color: '#E8A838' }} />
+            <p className="font-bold text-[15px]" style={{ color: c.text }}>You're offline</p>
             <p className="text-[13px]" style={{ color: c.textMuted }}>
-              Download this translation for offline reading.
+              Connect to load this passage, or download it for offline use.
             </p>
-            <button onClick={() => router.push('/translations')}
-              className="px-5 py-2.5 rounded-full font-bold text-white text-[13px]"
+            <button onClick={fetchVerses}
+              className="px-5 py-2.5 rounded-full font-bold text-[13px] text-white"
               style={{ background: '#5B4FCF' }}>
-              Download translations
+              Try again
             </button>
           </div>
         )}
 
-        {/* Error */}
-        {fetchError && !loading && !isOffline && (
-          <div className="py-10 text-center">
-            <p className="text-[14px]" style={{ color: c.textMuted }}>Couldn't load passage</p>
+        {/* Error state */}
+        {fetchError && !loading && (
+          <div className="flex flex-col items-center gap-3 py-10 text-center">
+            <p className="font-bold text-[15px]" style={{ color: c.text }}>Couldn't load passage</p>
+            <p className="text-[13px]" style={{ color: c.textMuted }}>{fetchError}</p>
             <button onClick={fetchVerses}
-              className="mt-3 px-5 py-2.5 rounded-full font-bold text-white text-[13px]"
+              className="px-5 py-2.5 rounded-full font-bold text-[13px] text-white"
               style={{ background: '#5B4FCF' }}>
               Retry
             </button>
           </div>
         )}
 
-        {/* ── Verses ── */}
-        {!loading && !isOffline && !fetchError && verseGroups && (
-          <motion.div initial={{ opacity: 0, y: 6 }} animate={{ opacity: 1, y: 0 }}>
+        {/* Verses */}
+        {verseGroups && !loading && !fetchError && !isOffline && (
+          <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }}>
             {verseGroups.map((group, gi) => (
               <div key={gi} className={gi > 0 ? 'mt-6' : ''}>
-                {/* Show reference header for multi-ref days */}
                 {verseGroups.length > 1 && (
                   <p className="font-bold text-[12px] mb-2" style={{ color: '#5B4FCF' }}>
                     {group.ref}
@@ -361,7 +316,7 @@ export default function DayReadingPage() {
               </div>
             ))}
 
-            {/* Read full chapter link — always shown */}
+            {/* Read full chapter link */}
             <div className="mt-6 pt-4 border-t" style={{ borderColor: c.border }}>
               <button onClick={() => router.push(readerUrl)}
                 className="flex items-center gap-2 text-[13px] font-bold active:opacity-70"
@@ -371,14 +326,14 @@ export default function DayReadingPage() {
               </button>
               {isVerseLevel && (
                 <p className="text-[11px] mt-1" style={{ color: c.textFaint }}>
-                  Opens the Bible reader for the full context
+                  Opens the Bible reader for full context
                 </p>
               )}
             </div>
           </motion.div>
         )}
 
-        {/* ── Reflection ── */}
+        {/* Reflection */}
         <div className="mt-6">
           <button onClick={() => setShowReflect(v => !v)}
             className="flex items-center gap-2 w-full text-left py-3"
@@ -414,12 +369,15 @@ export default function DayReadingPage() {
         </div>
       </div>
 
-      {/* ── Sticky bottom CTA ── */}
-      <div className="fixed bottom-0 left-1/2 -translate-x-1/2 w-full max-w-[430px] px-4 py-3"
+      {/* ── Sticky CTA ── PATCH: bottom:64 so it clears the 64px BottomNav ── */}
+      <div className="fixed left-1/2 -translate-x-1/2 w-full max-w-[430px] px-4"
         style={{
+          bottom:        64,
           background:    c.bg,
           borderTop:     `1px solid ${c.border}`,
-          paddingBottom: 'calc(12px + env(safe-area-inset-bottom, 0px))',
+          paddingTop:    12,
+          paddingBottom: 12,
+          zIndex:        45,
         }}>
         {isDone ? (
           <div className="flex items-center justify-center gap-2 py-4 rounded-full"

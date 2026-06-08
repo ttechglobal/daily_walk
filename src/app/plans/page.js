@@ -1,18 +1,16 @@
 'use client'
 
-// ── src/app/plans/page.js ── v6
-// FIXES:
-//   • Replaced useTheme() with getDarkModeColors() — no hydration flash
-//   • Removed BookOpen icon from "Read now" buttons on plan cards
-//   • Local plans load first (offline), Supabase plans merge in
-//   • Discover section with "See all →" link
+// ── src/app/plans/page.js ── v7
+// PATCHES APPLIED:
+//   1. Discover section: finally() + 6s hard timeout — can never hang forever
+//   2. BookOpen icon removed from "Read now" buttons (already correct in v6, preserved)
 
 import { useState, useEffect } from 'react'
 import { useRouter }           from 'next/navigation'
 import { motion, AnimatePresence } from 'framer-motion'
 import {
   Plus, Hash, Loader2, CheckCircle2,
-  ChevronRight, X, ArrowRight, Users, Globe, ChevronDown,
+  ChevronRight, X, ArrowRight, Users, ChevronDown,
 } from 'lucide-react'
 import { useDarkMode, getDarkModeColors } from '../../contexts/DarkModeContext'
 import { ToastContainer, showToast }      from '../../components/Toast'
@@ -46,7 +44,6 @@ function LocalPlanCard({ plan, onRefresh, c }) {
 
   function openReader(e) {
     e.stopPropagation()
-    // Go to plan day reading page — not the full Bible reader
     router.push(`/plans/${plan.id}/day/${plan.currentDay}`)
   }
 
@@ -84,7 +81,7 @@ function LocalPlanCard({ plan, onRefresh, c }) {
       </div>
 
       <div className="px-4 py-3 flex items-center gap-2">
-        {/* Read now — NO BookOpen icon */}
+        {/* NO BookOpen icon */}
         <button onClick={openReader}
           className="flex-1 flex items-center justify-center py-2.5 rounded-[12px] text-[13px] font-semibold active:opacity-70"
           style={{ background: c.bgMuted, color: c.textMuted }}>
@@ -135,7 +132,8 @@ function SbPlanCard({ plan, c }) {
     try {
       const { markDayComplete } = await import('../../lib/supabase/plans')
       await markDayComplete(plan.id, plan.currentDay)
-      setDone(true); showToast('Day complete! 🙌')
+      setDone(true)
+      showToast('Day complete! 🙌')
     } catch { showToast('Something went wrong') }
     finally { setMarking(false) }
   }
@@ -174,7 +172,7 @@ function SbPlanCard({ plan, c }) {
       </div>
 
       <div className="px-4 py-3 flex items-center gap-2">
-        {/* Read now — NO BookOpen icon */}
+        {/* NO BookOpen icon */}
         <button onClick={e => { e.stopPropagation(); router.push(`/plans/${plan.id}`) }}
           className="flex-1 flex items-center justify-center py-2.5 rounded-[12px] text-[13px] font-semibold active:opacity-70"
           style={{ background: c.bgMuted, color: c.textMuted }}>
@@ -335,11 +333,13 @@ export default function PlansPage() {
       }).catch(() => {})
     }
 
-    // 3. Discover — graceful fail if offline
+    // 3. Discover — hard 6s timeout + finally() so it can NEVER hang forever
+    const _discoverTimer = setTimeout(() => setDiscoverLoad(false), 6000)
     import('../../lib/supabase/plans')
       .then(({ getPublicPlans }) => getPublicPlans({ limit: 5 }))
-      .then(rows => { setDiscoverPlans(rows || []); setDiscoverLoad(false) })
-      .catch(() => setDiscoverLoad(false))
+      .then(rows => { setDiscoverPlans(rows || []) })
+      .catch(() => {})
+      .finally(() => { clearTimeout(_discoverTimer); setDiscoverLoad(false) })
   }, [])
 
   const sbIds       = new Set(sbPlans.map(p => p.id))
@@ -481,24 +481,10 @@ export default function PlansPage() {
             </button>
             <AnimatePresence>
               {showCompleted && (
-                <motion.div
-                  initial={{ opacity: 0, height: 0 }}
-                  animate={{ opacity: 1, height: 'auto' }}
-                  exit={{ opacity: 0, height: 0 }}
-                  className="overflow-hidden">
-                  <div className="flex flex-col gap-2 pb-2">
-                    {[...sbDone, ...localDone].map(p => (
-                      <div key={p.id}
-                        className="flex items-center gap-3 px-4 py-3.5 rounded-[14px]"
-                        style={{ background: c.bgCard, border: `1px solid ${c.border}` }}>
-                        <CheckCircle2 size={16} style={{ color: '#4A7C5F', flexShrink: 0 }} />
-                        <div className="flex-1 min-w-0">
-                          <p className="font-bold text-[14px] truncate" style={{ color: c.text }}>{p.name}</p>
-                          <p className="text-[12px]" style={{ color: c.textMuted }}>Completed 🏆</p>
-                        </div>
-                      </div>
-                    ))}
-                  </div>
+                <motion.div initial={{ opacity: 0, height: 0 }} animate={{ opacity: 1, height: 'auto' }}
+                  exit={{ opacity: 0, height: 0 }} className="overflow-hidden flex flex-col gap-3">
+                  {sbDone.map(p    => <SbPlanCard    key={p.id} plan={p} c={c} />)}
+                  {localDone.map(p => <LocalPlanCard key={p.id} plan={p} onRefresh={() => setLocalPlans(readPlans())} c={c} />)}
                 </motion.div>
               )}
             </AnimatePresence>
@@ -506,6 +492,7 @@ export default function PlansPage() {
         )}
       </div>
 
+      {/* Join sheet */}
       <AnimatePresence>
         {showJoin && <JoinSheet onClose={() => setShowJoin(false)} c={c} />}
       </AnimatePresence>

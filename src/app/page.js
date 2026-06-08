@@ -1,27 +1,23 @@
 'use client'
 
-// ── src/app/page.js ── v6 — HOMEPAGE REDESIGN
-//
-// DESIGN DIRECTION: Devotional clarity
-//   • Reading plan IS the hero — takes the place of the verse card
-//   • Daily verse becomes a soft accent below the plan, never competing
-//   • First-time / no-plan users see a clean "Start reading" onboarding state
-//   • Guest users see KJV immediately — no sign-in wall
-//   • Warm, unhurried — like picking up a Bible you've been reading for years
+// ── src/app/page.js ── v7
+// PATCHES APPLIED:
+//   1. Header: removed BibleIcon + greeting. Clean wordmark only.
+//   2. Body: GreetingBlock (personalised greeting + date + streak) added ABOVE plans.
+//   3. StreakPill removed from header (streak now lives in body greeting block).
 
 import { useMemo, useState, useRef, useEffect } from 'react'
 import Link from 'next/link'
 import { useRouter } from 'next/navigation'
 import { motion, AnimatePresence } from 'framer-motion'
-import { UserCircle, Sun, Moon, ChevronRight, BookOpen, CheckCircle2, Loader2 } from 'lucide-react'
-import { BibleIcon }         from '../components/icons/BibleIcon'
+import { UserCircle, ChevronRight, CheckCircle2, Loader2 } from 'lucide-react'
 import { useLocalStorage }   from '../hooks/useLocalStorage'
 import { useCheckin }        from '../hooks/useCheckin'
 import { ToastContainer, showToast } from '../components/Toast'
 import { NotificationBell, NotificationPanel } from '../components/NotificationPanel'
 import { useTheme }          from '../lib/theme'
 import { getTodayVerse, initials, todayStr } from '../lib/constants'
-import { readPlans, advanceAllPlans, getTodaysPlan, isPlanCompletedToday, markDayComplete, getPlanProgress } from '../lib/plans'
+import { readPlans, advanceAllPlans, isPlanCompletedToday, markDayComplete, getPlanProgress } from '../lib/plans'
 import { createClient } from '../lib/supabase/client'
 
 function calcDaysMissed(last) {
@@ -29,33 +25,14 @@ function calcDaysMissed(last) {
   return Math.max(0, Math.floor((new Date(todayStr()).getTime() - new Date(last).getTime()) / 86_400_000))
 }
 
-// ─────────────────────────────────────────────
-//  Greeting based on time of day
-// ─────────────────────────────────────────────
 function getGreeting(name) {
-  const h = new Date().getHours()
+  const h    = new Date().getHours()
   const base = h < 12 ? 'Good morning' : h < 17 ? 'Good afternoon' : 'Good evening'
   return name ? `${base}, ${name.split(' ')[0]}` : base
 }
 
 // ─────────────────────────────────────────────
-//  Streak flame pill
-// ─────────────────────────────────────────────
-function StreakPill({ streak, t }) {
-  if (!streak?.current) return null
-  return (
-    <div className="flex items-center gap-1.5 px-3 py-1.5 rounded-full"
-      style={{ background: streak.current >= 7 ? '#FFF3DC' : t.bgMuted }}>
-      <span style={{ fontSize: 14 }}>🔥</span>
-      <span className="font-bold text-[12px]" style={{ color: streak.current >= 7 ? '#E8A838' : t.textMuted }}>
-        {streak.current} day{streak.current !== 1 ? 's' : ''}
-      </span>
-    </div>
-  )
-}
-
-// ─────────────────────────────────────────────
-//  Today's verse accent — quiet, below the plan
+//  Today's verse accent
 // ─────────────────────────────────────────────
 function VerseAccent({ t }) {
   const verse = getTodayVerse()
@@ -74,7 +51,7 @@ function VerseAccent({ t }) {
 }
 
 // ─────────────────────────────────────────────
-//  No plan state — clean onboarding CTA
+//  No plan state
 // ─────────────────────────────────────────────
 function NoPlanHero({ t, dark }) {
   const router = useRouter()
@@ -82,31 +59,21 @@ function NoPlanHero({ t, dark }) {
     <motion.div initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }}
       className="rounded-[24px] overflow-hidden"
       style={{ background: dark ? '#1E1A3C' : 'linear-gradient(150deg,#5B4FCF 0%,#3D3190 100%)' }}>
-
-      {/* Decorative cross / Scripture motif */}
       <div className="relative px-6 pt-8 pb-2 overflow-hidden">
-        <div className="absolute -right-8 -top-8 w-40 h-40 rounded-full opacity-10"
-          style={{ background: 'white' }} />
-        <div className="absolute -right-2 top-4 w-20 h-20 rounded-full opacity-5"
-          style={{ background: 'white' }} />
-
-        <p className="text-white/70 text-[12px] font-bold uppercase tracking-widest mb-2">
-          Where are you reading?
-        </p>
-        <h2 className="font-display text-white font-bold leading-tight"
-          style={{ fontSize: 24 }}>
+        <div className="absolute -right-8 -top-8 w-40 h-40 rounded-full opacity-10" style={{ background: 'white' }} />
+        <div className="absolute -right-2 top-4 w-20 h-20 rounded-full opacity-5"  style={{ background: 'white' }} />
+        <p className="text-white/70 text-[12px] font-bold uppercase tracking-widest mb-2">Where are you reading?</p>
+        <h2 className="font-display text-white font-bold leading-tight" style={{ fontSize: 24 }}>
           Start a reading plan
         </h2>
         <p className="text-white/65 text-[13px] mt-2 leading-relaxed">
           One verse a day. One chapter a day. Whatever pace fits your life — we'll keep you on track.
         </p>
       </div>
-
       <div className="px-6 py-5 flex flex-col gap-2.5">
         <button onClick={() => router.push('/plans/create')}
           className="w-full flex items-center justify-center gap-2 py-3.5 rounded-full font-bold text-[14px] active:scale-[0.97] transition-all"
           style={{ background: 'white', color: '#5B4FCF' }}>
-          <BookOpen size={15} />
           Start a plan — it's free
         </button>
         <button onClick={() => router.push('/read')}
@@ -120,7 +87,7 @@ function NoPlanHero({ t, dark }) {
 }
 
 // ─────────────────────────────────────────────
-//  Active plan hero card — the centrepiece
+//  Active plan hero card
 // ─────────────────────────────────────────────
 function PlanHeroCard({ plan, onMarkDone, t, dark }) {
   const router   = useRouter()
@@ -150,52 +117,39 @@ function PlanHeroCard({ plan, onMarkDone, t, dark }) {
     <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }}
       className="rounded-[24px] overflow-hidden"
       style={{ background: dark ? '#1E1A3C' : 'linear-gradient(150deg,#5B4FCF 0%,#3D3190 100%)' }}>
-
-      {/* Header */}
       <div className="px-6 pt-6 pb-0">
         <div className="flex items-start justify-between gap-3">
           <div className="flex-1 min-w-0">
             <p className="text-white/60 text-[11px] font-bold uppercase tracking-widest">
               Day {plan.currentDay} of {plan.totalDays || '?'}
             </p>
-            <h2 className="font-display font-bold text-white mt-0.5 leading-tight truncate"
+            <p className="font-display text-white font-bold leading-tight mt-1 truncate"
               style={{ fontSize: 20 }}>
               {plan.name}
-            </h2>
+            </p>
             {passage && (
-              <p className="text-white/70 text-[13px] mt-1">{passage}</p>
+              <p className="text-white/65 text-[13px] mt-0.5 truncate">{passage}</p>
             )}
           </div>
-          {/* Progress ring */}
-          <div className="flex-shrink-0 flex flex-col items-center">
-            <svg width="48" height="48" viewBox="0 0 48 48">
-              <circle cx="24" cy="24" r="20" fill="none" stroke="rgba(255,255,255,0.15)" strokeWidth="4" />
-              <circle cx="24" cy="24" r="20" fill="none" stroke="rgba(255,255,255,0.85)" strokeWidth="4"
-                strokeDasharray={`${2 * Math.PI * 20}`}
-                strokeDashoffset={`${2 * Math.PI * 20 * (1 - pct / 100)}`}
-                strokeLinecap="round"
-                transform="rotate(-90 24 24)" />
-            </svg>
-            <span className="text-white/70 text-[10px] font-bold -mt-1">{pct}%</span>
+          {plan.totalDays > 0 && (
+            <p className="font-bold text-white flex-shrink-0" style={{ fontSize: 26 }}>{pct}%</p>
+          )}
+        </div>
+        {plan.totalDays > 0 && (
+          <div className="mt-3 h-1.5 rounded-full overflow-hidden" style={{ background: 'rgba(255,255,255,0.2)' }}>
+            <motion.div className="h-full rounded-full"
+              initial={{ width: 0 }} animate={{ width: `${pct}%` }}
+              transition={{ duration: 0.7, ease: 'easeOut' }}
+              style={{ background: 'rgba(255,255,255,0.9)' }} />
           </div>
-        </div>
-
-        {/* Progress bar */}
-        <div className="mt-4 h-1 rounded-full overflow-hidden" style={{ background: 'rgba(255,255,255,0.15)' }}>
-          <div className="h-full rounded-full transition-all duration-700"
-            style={{ width: `${pct}%`, background: 'rgba(255,255,255,0.85)' }} />
-        </div>
+        )}
       </div>
-
-      {/* Actions */}
-      <div className="px-6 py-5 flex flex-col gap-2.5">
-        <button onClick={() => router.push(buildReaderUrl(passage))}
-          className="w-full flex items-center justify-center gap-2 py-3 rounded-full text-[13px] font-semibold active:scale-95 transition-all"
-          style={{ background: 'rgba(255,255,255,0.12)', color: 'rgba(255,255,255,0.9)' }}>
-          <BookOpen size={14} />
-          {passage ? `Read ${passage}` : 'Open Bible reader'}
+      <div className="px-6 py-4 flex flex-col gap-2">
+        <button onClick={() => router.push(`/plans/${plan.id}/day/${plan.currentDay}`)}
+          className="w-full flex items-center justify-center py-3 rounded-full text-[14px] font-semibold active:scale-[0.97] transition-all"
+          style={{ background: 'rgba(255,255,255,0.15)', color: 'white' }}>
+          Open today's reading →
         </button>
-
         {isDone ? (
           <div className="flex items-center justify-center gap-2 py-3 rounded-full"
             style={{ background: 'rgba(255,255,255,0.95)' }}>
@@ -212,8 +166,6 @@ function PlanHeroCard({ plan, onMarkDone, t, dark }) {
           </button>
         )}
       </div>
-
-      {/* Footer link */}
       <button onClick={() => router.push(`/plans/${plan.id}`)}
         className="w-full flex items-center justify-center gap-1 py-3 text-[12px] font-semibold"
         style={{ background: 'rgba(0,0,0,0.15)', color: 'rgba(255,255,255,0.55)' }}>
@@ -224,12 +176,11 @@ function PlanHeroCard({ plan, onMarkDone, t, dark }) {
 }
 
 // ─────────────────────────────────────────────
-//  Multiple plans — swipable
+//  Swipable plans (multiple active)
 // ─────────────────────────────────────────────
 function SwipablePlans({ plans, onMarkDone, t, dark }) {
   const [idx, setIdx] = useState(0)
   const startX = useRef(null)
-
   function onTouchStart(e) { startX.current = e.touches[0].clientX }
   function onTouchEnd(e) {
     if (startX.current === null) return
@@ -239,23 +190,20 @@ function SwipablePlans({ plans, onMarkDone, t, dark }) {
     else          setIdx(i => Math.max(0, i - 1))
     startX.current = null
   }
-
   if (plans.length === 1) return <PlanHeroCard plan={plans[0]} onMarkDone={onMarkDone} t={t} dark={dark} />
-
   return (
     <div>
       <div className="overflow-hidden" onTouchStart={onTouchStart} onTouchEnd={onTouchEnd}>
         <motion.div className="flex"
           animate={{ x: `-${idx * 100}%` }}
           transition={{ type: 'spring', stiffness: 300, damping: 34 }}>
-          {plans.map((plan, i) => (
+          {plans.map(plan => (
             <div key={plan.id} className="w-full flex-shrink-0">
               <PlanHeroCard plan={plan} onMarkDone={onMarkDone} t={t} dark={dark} />
             </div>
           ))}
         </motion.div>
       </div>
-      {/* Dots */}
       <div className="flex items-center justify-center gap-1.5 mt-3">
         {plans.map((_, i) => (
           <button key={i} onClick={() => setIdx(i)} className="rounded-full transition-all"
@@ -306,11 +254,11 @@ function SignInNudge({ t }) {
 export default function HomeScreen() {
   const router    = useRouter()
   const scrollRef = useRef(null)
-  const { t, dark, toggle: toggleDark } = useTheme()
+  const { t, dark } = useTheme()
 
   const [user, , hydrated] = useLocalStorage('dw_user', null)
   const [notifOpen, setNotifOpen] = useState(false)
-  const { isCheckedInToday, streak } = useCheckin()
+  const { streak } = useCheckin()
 
   const [localPlans,   setLocalPlans]   = useState([])
   const [sbPlans,      setSbPlans]      = useState([])
@@ -321,17 +269,13 @@ export default function HomeScreen() {
   const greeting     = getGreeting(user?.name)
   const daysMissed   = useMemo(() => calcDaysMissed(streak?.lastCheckinDate), [streak?.lastCheckinDate])
 
-  // Load plans
   useEffect(() => {
     if (!hydrated) return
-
-    // 1. Local plans — instant
     advanceAllPlans()
     const locals = readPlans().filter(p => p.status === 'active')
     setLocalPlans(locals)
     setPlansLoading(false)
 
-    // 2. Supabase plans — if signed in
     if (user?.id) {
       const sb = createClient()
       if (sb) {
@@ -351,18 +295,15 @@ export default function HomeScreen() {
     }
   }, [hydrated, user?.id])
 
-  // Normalise all active plans into one list
   const allPlans = useMemo(() => {
     const sb = sbPlans.map(r => ({
-      id:          r.planId,
-      name:        r.planName,
-      currentDay:  r.currentDay || 1,
-      totalDays:   r.personalDays || 0,
-      status:      'active',
-      days:        r.content?.map((item, i) => ({
-        day: i + 1,
-        passage: item.reference,
-        completedAt: null,
+      id:         r.planId,
+      name:       r.planName,
+      currentDay: r.currentDay || 1,
+      totalDays:  r.personalDays || 0,
+      status:     'active',
+      days:       r.content?.map((item, i) => ({
+        day: i + 1, passage: item.reference, completedAt: null,
       })) || [],
       _sb: true,
     }))
@@ -379,34 +320,22 @@ export default function HomeScreen() {
   return (
     <div className="flex flex-col" style={{ height: '100dvh', overflow: 'hidden', background: t.bg }}>
 
-      {/* ── HEADER ── */}
-      <header className="flex-shrink-0 flex items-center justify-between px-4 py-3"
-        style={{ background: t.bgCard, borderBottom: `1px solid ${t.border}` }}>
-        {/* Left: app logo + greeting */}
-        <div className="flex items-center gap-2.5">
-          <div className="w-8 h-8 rounded-[10px] flex items-center justify-center"
-            style={{ background: 'linear-gradient(135deg,#5B4FCF,#3D3190)' }}>
-            <BibleIcon size={18} color="white" />
-          </div>
-          <div>
-            <p className="font-display font-bold text-[15px] leading-none" style={{ color: t.text }}>
-              Daily Walk
-            </p>
-            <p className="text-[11px] mt-0.5" style={{ color: t.textFaint }}>{greeting}</p>
-          </div>
-        </div>
-
-        {/* Right: streak + notif + avatar */}
+      {/* ── HEADER — clean wordmark only, no greeting, no BibleIcon, no streak ── */}
+      <header className="flex-shrink-0 flex items-center justify-between px-4"
+        style={{ background: t.bg, height: 52 }}>
+        <p className="font-display font-bold text-[18px]"
+          style={{ color: t.text, letterSpacing: '-0.02em' }}>
+          Daily Walk
+        </p>
         <div className="flex items-center gap-2">
-          <StreakPill streak={streak} t={t} />
           {hasAccount && <NotificationBell onClick={() => setNotifOpen(v => !v)} />}
           <Link href="/profile"
-            className="w-9 h-9 rounded-full flex items-center justify-center font-bold text-[13px]"
+            className="w-8 h-8 rounded-full flex items-center justify-center font-bold text-[12px]"
             style={{
               background: hasAccount ? 'linear-gradient(135deg,#5B4FCF,#3D3190)' : t.bgMuted,
-              color: hasAccount ? 'white' : t.textMuted,
+              color:      hasAccount ? 'white' : t.textMuted,
             }}>
-            {hasAccount && userInitials ? userInitials : <UserCircle size={20} style={{ color: t.textMuted }} />}
+            {hasAccount && userInitials ? userInitials : <UserCircle size={16} style={{ color: t.textMuted }} />}
           </Link>
         </div>
       </header>
@@ -415,8 +344,37 @@ export default function HomeScreen() {
       <div ref={scrollRef} className="flex-1 overflow-y-auto scroll-hide"
         style={{ background: t.bg, paddingBottom: 96 }}>
 
-        {/* ── PLAN HERO — top of feed ── */}
-        <div className="px-4 pt-5">
+        {/* ── GREETING + STREAK — in the body, above plans ── */}
+        <div className="px-4 pt-5 pb-2 flex items-start justify-between">
+          <div>
+            <p className="font-display font-bold" style={{ fontSize: 24, color: t.text, lineHeight: 1.2 }}>
+              {greeting}
+            </p>
+            <p className="text-[13px] mt-0.5" style={{ color: t.textMuted }}>
+              {new Date().toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric' })}
+            </p>
+          </div>
+          {streak?.current > 0 && (
+            <div className="flex flex-col items-center px-3 py-2 rounded-[14px] flex-shrink-0"
+              style={{
+                background: streak.current >= 7 ? '#FFF3DC' : t.bgCard,
+                border:     `1px solid ${t.border}`,
+              }}>
+              <span style={{ fontSize: 20, lineHeight: 1 }}>🔥</span>
+              <span className="font-bold text-[16px] mt-0.5"
+                style={{ color: streak.current >= 7 ? '#E8A838' : t.text }}>
+                {streak.current}
+              </span>
+              <span className="text-[9px] font-semibold uppercase tracking-wide"
+                style={{ color: streak.current >= 7 ? '#B87010' : t.textFaint }}>
+                {streak.current === 1 ? 'day' : 'days'}
+              </span>
+            </div>
+          )}
+        </div>
+
+        {/* ── PLAN HERO ── */}
+        <div className="px-4 pt-2">
           {plansLoading ? (
             <div className="rounded-[24px] overflow-hidden animate-pulse"
               style={{ height: 260, background: t.bgCard }} />
@@ -443,7 +401,7 @@ export default function HomeScreen() {
           </div>
         )}
 
-        {/* ── VERSE ACCENT ── */}
+        {/* Verse of the day */}
         <div className="px-4 mt-4">
           <motion.div initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }}
             transition={{ delay: 0.15 }}>
@@ -451,7 +409,7 @@ export default function HomeScreen() {
           </motion.div>
         </div>
 
-        {/* Quick actions row */}
+        {/* Quick actions */}
         <div className="px-4 mt-4">
           <motion.div initial={{ opacity: 0, y: 6 }} animate={{ opacity: 1, y: 0 }}
             transition={{ delay: 0.2 }}
@@ -477,7 +435,7 @@ export default function HomeScreen() {
           </motion.div>
         </div>
 
-        {/* Sign-in nudge — guests only */}
+        {/* Sign-in nudge */}
         {!hasAccount && (
           <div className="px-4 mt-4">
             <motion.div initial={{ opacity: 0, y: 6 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.25 }}>

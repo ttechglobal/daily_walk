@@ -1,26 +1,15 @@
 'use client'
 
-// ── src/app/plans/[id]/PlanDetailClient.js ── v5
-//
-// HANDLES:
-//   • Local plans: id starts with 'local_' OR 'plan_' OR is not a UUID
-//   • Supabase plans: standard UUID format
-//   • v2 content model: plan.content[] + frequency → getSliceForDay()
-//   • Legacy plans: plan_days table → still reads correctly
-//
-// FIXES:
-//   • isLocal detection covers 'plan_XXXX' IDs from old create page
-//   • Promise.all replaced with sequential try/catch so one failure doesn't kill the whole load
-//   • Mark as read works for both local and Supabase
-//   • Reader link built from today's slice reference
+// ── src/app/plans/[id]/PlanDetailClient.js ── v6
+// PATCH: Removed <BookOpen> icon from "Open in reader →" button in TodayCard.
 
 import { useState, useEffect, useCallback } from 'react'
 import { useRouter } from 'next/navigation'
 import { motion, AnimatePresence } from 'framer-motion'
 import {
-  ArrowLeft, BookOpen, CheckCircle2,
+  ArrowLeft, CheckCircle2,
   Share2, Copy, Loader2, MoreVertical, LogOut,
-  Users, ChevronRight,
+  Users,
 } from 'lucide-react'
 import { useTheme }                  from '../../../lib/theme'
 import { ToastContainer, showToast } from '../../../components/Toast'
@@ -30,24 +19,14 @@ import {
   isPlanCompletedToday, advancePlanIfNeeded,
 } from '../../../lib/plans'
 
-// ─────────────────────────────────────────────
-//  Is this a local (localStorage) plan?
-//  Covers: 'local_XXX', 'plan_XXX', or anything that isn't a UUID
-// ─────────────────────────────────────────────
 function isLocalPlanId(id) {
   if (!id) return false
   if (id.startsWith('local_')) return true
   if (id.startsWith('plan_'))  return true
-  // UUIDs are 36 chars with dashes e.g. 550e8400-e29b-41d4-a716-446655440000
   const uuidRe = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
   return !uuidRe.test(id)
 }
 
-// ─────────────────────────────────────────────
-//  Build the /read URL from a passage reference string
-//  e.g. "John 3" → /read?book=John&chapter=3
-//       "Romans 1–2" → /read?book=Romans&chapter=1
-// ─────────────────────────────────────────────
 function buildReaderUrl(ref) {
   if (!ref) return '/read'
   const first = ref.split(/[·–—]/)[0].trim()
@@ -81,6 +60,7 @@ function ProgressBar({ current, total, t }) {
 
 // ─────────────────────────────────────────────
 //  Today reading card
+//  PATCH: BookOpen icon removed from "Open in reader →" button
 // ─────────────────────────────────────────────
 function TodayCard({ sliceRef, currentDay, total, todayDone, marking, onRead, onMark, t }) {
   return (
@@ -95,10 +75,11 @@ function TodayCard({ sliceRef, currentDay, total, todayDone, marking, onRead, on
         </p>
       </div>
       <div className="px-5 pb-5 flex flex-col gap-2.5">
+        {/* NO BookOpen icon — text only */}
         <button onClick={onRead}
-          className="w-full flex items-center justify-center gap-2 py-3 rounded-full font-semibold text-[14px] active:scale-[0.97] transition-all"
+          className="w-full flex items-center justify-center py-3 rounded-full font-semibold text-[14px] active:scale-[0.97] transition-all"
           style={{ background: 'rgba(255,255,255,0.15)', color: 'white' }}>
-          <BookOpen size={15} /> Open in reader →
+          Open in reader →
         </button>
         {todayDone ? (
           <div className="flex items-center justify-center gap-2 py-3 rounded-full"
@@ -160,12 +141,10 @@ export default function PlanDetailClient({ planId }) {
     setLoading(true)
     try {
       if (isLocal) {
-        // ── LOCAL PLAN ──
         advancePlanIfNeeded(planId)
         const all   = readPlans()
         const local = all.find(p => p.id === planId)
         if (!local) { setLoading(false); return }
-
         setPlan({
           id:             local.id,
           name:           local.name,
@@ -185,30 +164,24 @@ export default function PlanDetailClient({ planId }) {
         return
       }
 
-      // ── SUPABASE PLAN ──
       const { getPlanById, getPlanMembers, getMyCompletions } = await import('../../../lib/supabase/plans')
       const { getAuthUser } = await import('../../../lib/supabase/communities')
 
-      // Load sequentially so one failure doesn't block everything
       let p = null, m = [], user = null, comps = new Set()
-
       try { p    = await getPlanById(planId)          } catch (e) { console.warn('[plan] getPlanById:', e.message) }
       try { m    = await getPlanMembers(planId) || [] } catch (e) { console.warn('[plan] getPlanMembers:', e.message) }
       try { user = await getAuthUser()                } catch (e) { console.warn('[plan] getAuthUser:', e.message) }
-
       if (user && p) {
         try { comps = await getMyCompletions(planId) } catch {}
       }
-
       setPlan(p)
       setMembers(m)
       setAuthUser(user)
-
       if (user) {
         const mine = m.find(mem => mem.userId === user.id)
         setMyMember(mine || null)
-        const currentDay = mine?.currentDay || 1
-        setTodayDone(comps instanceof Set ? comps.has(currentDay) : false)
+        const cd = mine?.currentDay || 1
+        setTodayDone(comps instanceof Set ? comps.has(cd) : false)
       }
     } catch (e) {
       console.error('[PlanDetailClient] load error:', e.message)
@@ -219,10 +192,7 @@ export default function PlanDetailClient({ planId }) {
 
   useEffect(() => { load() }, [load])
 
-  // ── Derived values ──
-  const currentDay = isLocal
-    ? (plan?.currentDay || 1)
-    : (myMember?.currentDay || 1)
+  const currentDay = isLocal ? (plan?.currentDay || 1) : (myMember?.currentDay || 1)
 
   const frequency = {
     unit:  isLocal ? (plan?.frequencyUnit  || 'chapter') : (myMember?.frequencyUnit  || plan?.frequencyUnit  || 'chapter'),
@@ -234,21 +204,12 @@ export default function PlanDetailClient({ planId }) {
     ? (plan?.personalDays || 0)
     : (myMember?.personal_days || plan?.personalDays || computePersonalDays(content, frequency) || 0)
 
-  // Get today's slice — instant, no network
-  const todaySlice = content.length > 0
-    ? getSliceForDay(content, frequency, currentDay)
-    : null
-
-  // Fallback to legacy days array for old local plans
+  const todaySlice   = content.length > 0 ? getSliceForDay(content, frequency, currentDay) : null
   const legacyPassage = !todaySlice && plan?.rawDays?.length
     ? plan.rawDays.find(d => d.day === currentDay)?.passage || null
     : null
+  const sliceRef = todaySlice ? formatSliceReference(todaySlice) : legacyPassage
 
-  const sliceRef = todaySlice
-    ? formatSliceReference(todaySlice)
-    : legacyPassage
-
-  // ── Mark as read ──
   async function handleMark() {
     if (todayDone || marking) return
     setMarking(true)
@@ -257,28 +218,20 @@ export default function PlanDetailClient({ planId }) {
         localMarkDone(planId, currentDay, '')
         setTodayDone(true)
         showToast('Day complete! 🙌')
-        // Update local plan currentDay in state
-        setPlan(prev => ({
-          ...prev,
-          currentDay: Math.min((prev.currentDay || 1) + 1, prev.personalDays || 9999),
-        }))
+        setPlan(prev => ({ ...prev, currentDay: Math.min((prev.currentDay || 1) + 1, prev.personalDays || 9999) }))
       } else {
         const { markDayComplete, notifyReadComplete } = await import('../../../lib/supabase/plans')
         await markDayComplete(planId, currentDay)
         setTodayDone(true)
         showToast('Day complete! 🙌')
         notifyReadComplete(planId, currentDay).catch(() => null)
-        setMyMember(prev => prev
-          ? { ...prev, currentDay: Math.min(currentDay + 1, totalDays) }
-          : prev
-        )
+        setMyMember(prev => prev ? { ...prev, currentDay: Math.min(currentDay + 1, totalDays) } : prev)
       }
     } catch (e) {
       showToast(e.message === 'not_authenticated' ? 'Sign in to track progress' : 'Something went wrong')
     } finally { setMarking(false) }
   }
 
-  // ── Share ──
   function handleShare() {
     const code = plan?.inviteCode
     if (!code) return
@@ -287,7 +240,6 @@ export default function PlanDetailClient({ planId }) {
     else navigator.clipboard?.writeText(text).then(() => showToast('Invite copied!'))
   }
 
-  // ── Leave ──
   async function handleLeave() {
     if (!confirm('Leave this plan?')) return
     try {
@@ -298,7 +250,6 @@ export default function PlanDetailClient({ planId }) {
     } catch { showToast('Something went wrong') }
   }
 
-  // ── Loading ──
   if (loading) {
     return (
       <div className="flex items-center justify-center min-h-screen" style={{ background: t.bg }}>
@@ -307,7 +258,6 @@ export default function PlanDetailClient({ planId }) {
     )
   }
 
-  // ── Not found ──
   if (!plan) {
     return (
       <div className="flex flex-col items-center justify-center min-h-screen gap-4 px-6 text-center"
@@ -327,7 +277,6 @@ export default function PlanDetailClient({ planId }) {
   }
 
   const isCreator = authUser?.id === plan?.creatorId
-  const isMember  = isLocal || !!myMember
   const showGroup = !isLocal && members.length > 1
 
   const TABS = [
@@ -339,7 +288,7 @@ export default function PlanDetailClient({ planId }) {
     <div className="flex flex-col min-h-screen" style={{ background: t.bg }}>
       <ToastContainer />
 
-      {/* ── Header ── */}
+      {/* Header */}
       <div className="flex items-center gap-3 px-4 pt-12 pb-3 flex-shrink-0">
         <button onClick={() => router.push('/plans')}
           className="w-9 h-9 rounded-full flex items-center justify-center flex-shrink-0"
@@ -395,7 +344,7 @@ export default function PlanDetailClient({ planId }) {
         </div>
       </div>
 
-      {/* ── Tab bar ── */}
+      {/* Tab bar */}
       {TABS.length > 1 && (
         <div className="flex px-4 border-b flex-shrink-0" style={{ borderColor: t.border }}>
           {TABS.map(({ k, l }) => (
@@ -411,12 +360,11 @@ export default function PlanDetailClient({ planId }) {
         </div>
       )}
 
-      {/* ── Body ── */}
+      {/* Body */}
       <div className="flex-1 overflow-y-auto px-4 pt-4 pb-28 flex flex-col gap-4">
 
         {tab === 'reading' && (
           <>
-            {/* Invite code pill */}
             {plan.inviteCode && (
               <button onClick={handleShare}
                 className="flex items-center gap-2 px-4 py-2.5 rounded-full self-start border"
@@ -429,15 +377,13 @@ export default function PlanDetailClient({ planId }) {
               </button>
             )}
 
-            {/* Progress bar */}
             {totalDays > 0 && (
               <div className="rounded-[16px] p-4"
                 style={{ background: t.bgCard, border: `1px solid ${t.border}` }}>
-                <ProgressBar current={currentDay} total={totalDays} />
+                <ProgressBar current={currentDay} total={totalDays} t={t} />
               </div>
             )}
 
-            {/* Today's reading card */}
             <TodayCard
               sliceRef={sliceRef}
               currentDay={currentDay}
@@ -449,7 +395,6 @@ export default function PlanDetailClient({ planId }) {
               t={t}
             />
 
-            {/* Plan info */}
             <div className="rounded-[16px] p-4"
               style={{ background: t.bgCard, border: `1px solid ${t.border}` }}>
               <p className="font-bold text-[14px] mb-1" style={{ color: t.text }}>About this plan</p>
@@ -489,29 +434,3 @@ export default function PlanDetailClient({ planId }) {
     </div>
   )
 }
-
-
-// ─────────────────────────────────────────────
-//  NOTE: To enable the Reflections tab in PlanDetailClient,
-//  add this to the TABS array and render condition:
-//
-//  In the TABS const (after 'reading'):
-//    ...(isMember ? [{ k: 'reflections', l: 'Reflections' }] : []),
-//
-//  In the tab body:
-//    {tab === 'reflections' && (
-//      <PlanReflectionsTab
-//        planId={planId}
-//        currentDay={currentDay}
-//        isMember={isMember} />
-//    )}
-//
-//  Import at top:
-//    import PlanReflectionsTab from '../../../components/plans/PlanReflectionsTab'
-//
-//  The PlanReflectionsTab component (already built in a previous output) handles:
-//    - Viewing reflections (visible to plan members only — RLS enforced)
-//    - Adding new reflections or questions
-//    - Real-time updates via Supabase subscription
-//    - Delete own reflections
-//    - Auto-picks up verses added from Bible reader (sessionStorage)
