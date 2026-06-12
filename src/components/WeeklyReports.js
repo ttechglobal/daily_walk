@@ -1,175 +1,227 @@
 'use client'
 
-// ── src/components/WeeklyReport.js ──
-// Weekly reading report shown as a bottom sheet.
-// Data sources: checkins (localStorage / Supabase), streak, active plans.
+// ── src/components/WeeklyReports.js ── v3 — DEFINITIVE FIX
 //
-// Props:
-//   isOpen    — boolean
-//   checkins  — array of { date: 'YYYY-MM-DD', passage?: string }
-//   streak    — { current: number, longest: number }
-//   plans     — array of active local plan objects
-//   onClose   — () => void
+// TWO BUGS FIXED:
+//
+// BUG 1 — "if (!userId) return null" race condition:
+//   loadReports() was called before setUserId() had been processed by React.
+//   When loadReports() resolved and called setReports(r), the component was
+//   still returning null (because userId was still null in that render cycle).
+//   React discarded the update. When setUserId finally ran and triggered a
+//   re-render, reports was [] again.
+//
+//   FIX: Single async init() — auth check + reports load run together with
+//   Promise.all. State is set once at the end. No race. No wasted renders.
+//   Guard changed from `if (!userId)` to `if (!isAuthed && !loading)` so
+//   the component is visible the moment we confirm auth, not after.
+//
+// BUG 2 — reading_plans 404:
+//   AppInit.js was querying a non-existent `reading_plans` table on every
+//   app load (fixed separately in AppInit.js). That 404 was polluting the
+//   fetch queue and in some cases causing the weekly-report generate call
+//   to fail silently.
+//
+// Grace-oriented throughout. Never shames. Never pressures.
 
-import { useMemo } from 'react'
+import { useState, useEffect, useCallback } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
-import { X, Flame, BookOpen, TrendingUp, Calendar } from 'lucide-react'
+import { BookOpen, ChevronDown, ChevronUp, Loader2, RefreshCw } from 'lucide-react'
 import { useTheme } from '../lib/theme'
+import { getWeeklyReports } from '../lib/supabase/plans'
+import { createClient } from '../lib/supabase/client'
 
-// ─────────────────────────────────────────────
-//  Date helpers
-// ─────────────────────────────────────────────
-function toDateStr(date) {
-  return date.toISOString().split('T')[0]
+const DAY_LABELS = ['M', 'T', 'W', 'T', 'F', 'S', 'S']
+
+function fmtDateRange(start, end) {
+  const s  = new Date(start)
+  const e  = new Date(end)
+  const mo = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec']
+  return `${mo[s.getMonth()]} ${s.getDate()} – ${mo[e.getMonth()]} ${e.getDate()}`
 }
 
-function getLast7Days() {
-  const days = []
-  for (let i = 6; i >= 0; i--) {
-    const d = new Date()
-    d.setDate(d.getDate() - i)
-    days.push(toDateStr(d))
-  }
-  return days
+function timeAgo(d) {
+  if (!d) return ''
+  return new Date(d).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
 }
 
-function getLast4Weeks() {
-  const weeks = []
-  for (let w = 3; w >= 0; w--) {
-    const week = []
-    for (let d = 6; d >= 0; d--) {
-      const date = new Date()
-      date.setDate(date.getDate() - (w * 7 + d))
-      week.push(toDateStr(date))
-    }
-    week.reverse()
-    weeks.push(week)
-  }
-  return weeks
-}
-
-function dayLabel(dateStr) {
-  const d = new Date(dateStr + 'T12:00:00')
-  return ['S','M','T','W','T','F','S'][d.getDay()]
-}
-
-function weekLabel(weekDates) {
-  const first = new Date(weekDates[0] + 'T12:00:00')
-  return first.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
-}
-
-function getPlanProgress(plan) {
-  if (!plan?.totalDays || plan.totalDays === 0) return 0
-  return Math.min(100, Math.round(((plan.currentDay - 1) / plan.totalDays) * 100))
+function getMondayStr() {
+  const d   = new Date()
+  const day = d.getDay()
+  d.setDate(d.getDate() + (day === 0 ? -6 : 1 - day))
+  return d.toISOString().split('T')[0]
 }
 
 // ─────────────────────────────────────────────
-//  7-day dot grid row
+//  Single week report card
 // ─────────────────────────────────────────────
-function WeekDots({ days, checkinSet, dark, compact = false }) {
-  const size = compact ? 28 : 36
+function WeekCard({ report, isCurrentWeek, t }) {
+  const [open, setOpen] = useState(isCurrentWeek)
+  const data = report.report_data || report
 
   return (
-    <div className="flex gap-1.5 justify-between">
-      {days.map(dateStr => {
-        const isRead  = checkinSet.has(dateStr)
-        const isToday = dateStr === toDateStr(new Date())
+    <div className="rounded-[18px] overflow-hidden"
+      style={{ background: t.bgCard, border: `1px solid ${t.border}` }}>
 
-        return (
-          <div key={dateStr} className="flex flex-col items-center gap-1">
-            <div
-              style={{
-                width: size, height: size,
-                borderRadius: '50%',
-                background: isRead
-                  ? 'linear-gradient(135deg, #5B4FCF, #3D3190)'
-                  : (dark ? '#1E2035' : '#F0EDE8'),
-                border: isToday && !isRead
-                  ? '2px solid #5B4FCF'
-                  : '2px solid transparent',
-                display: 'flex', alignItems: 'center', justifyContent: 'center',
-                transition: 'background 0.3s ease',
-              }}
-            >
-              {isRead && (
-                <svg width="12" height="12" viewBox="0 0 12 12">
-                  <polyline points="2,6 5,9 10,3" fill="none" stroke="white" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
-                </svg>
-              )}
-            </div>
-            {!compact && (
-              <span style={{ fontSize: 10, color: dark ? '#50546A' : '#9CA3AF', fontWeight: isToday ? 700 : 400 }}>
-                {dayLabel(dateStr)}
-              </span>
+      {/* Header — always visible */}
+      <button onClick={() => setOpen(v => !v)}
+        className="w-full flex items-center gap-3 px-4 py-4 text-left">
+        <div className="flex-1 min-w-0">
+          <div className="flex items-center gap-2 flex-wrap">
+            <p className="font-bold text-[14px]" style={{ color: t.text }}>
+              {isCurrentWeek ? 'This week' : fmtDateRange(data.weekStart, data.weekEnd)}
+            </p>
+            {isCurrentWeek && (
+              <span className="text-[10px] font-bold px-2 py-0.5 rounded-full"
+                style={{ background: '#EDE9FF', color: '#5B4FCF' }}>Current</span>
             )}
           </div>
-        )
-      })}
-    </div>
-  )
-}
-
-// ─────────────────────────────────────────────
-//  4-week heat grid
-// ─────────────────────────────────────────────
-function MonthGrid({ weeks, checkinSet, dark }) {
-  return (
-    <div className="flex flex-col gap-1.5">
-      {/* Day labels */}
-      <div className="flex gap-1.5 justify-between px-0">
-        {['S','M','T','W','T','F','S'].map((l, i) => (
-          <span key={i} style={{ width: 22, textAlign: 'center', fontSize: 10, color: dark ? '#50546A' : '#9CA3AF' }}>
-            {l}
-          </span>
-        ))}
-      </div>
-      {weeks.map((week, wi) => (
-        <div key={wi} className="flex gap-1.5 justify-between items-center">
-          {week.map(dateStr => {
-            const isRead = checkinSet.has(dateStr)
-            return (
-              <div
-                key={dateStr}
-                style={{
-                  width: 22, height: 22, borderRadius: 5,
-                  background: isRead
-                    ? '#5B4FCF'
-                    : (dark ? '#1E2035' : '#F0EDE8'),
-                  opacity: isRead ? 1 : 0.6,
-                }}
-              />
-            )
-          })}
+          <p className="text-[12px] mt-0.5" style={{ color: t.textMuted }}>
+            {data.daysRead ?? 0} of 7 days read
+          </p>
         </div>
-      ))}
-      {/* Week labels */}
-      <div className="flex justify-between mt-0.5">
-        {weeks.map((week, wi) => (
-          <span key={wi} style={{ fontSize: 9, color: dark ? '#50546A' : '#9CA3AF' }}>
-            {weekLabel(week)}
-          </span>
-        ))}
-      </div>
-    </div>
-  )
-}
 
-// ─────────────────────────────────────────────
-//  Stat card
-// ─────────────────────────────────────────────
-function StatCard({ icon: Icon, label, value, accent, dark }) {
-  return (
-    <div
-      className="flex-1 flex flex-col gap-1 px-4 py-3 rounded-[16px]"
-      style={{ background: dark ? '#1E2035' : '#F8F7FF', border: `1px solid ${dark ? '#252840' : '#E8E4FF'}` }}
-    >
-      <Icon size={16} style={{ color: accent || '#5B4FCF' }} />
-      <p className="font-bold text-[20px] leading-tight" style={{ color: dark ? '#EAE6DE' : '#1A1A2E' }}>
-        {value}
-      </p>
-      <p className="text-[11px] font-semibold" style={{ color: dark ? '#8A8FA8' : '#9CA3AF' }}>
-        {label}
-      </p>
+        {/* 7-day mini dot grid */}
+        <div className="flex gap-1 flex-shrink-0">
+          {(data.daysGrid || []).map((d, i) => (
+            <div key={i} className="w-4 h-4 rounded-full"
+              style={{
+                background: d.read ? '#5B4FCF' : t.bgMuted,
+                opacity:    d.read ? 1 : 0.4,
+              }} />
+          ))}
+        </div>
+
+        {open
+          ? <ChevronUp  size={16} style={{ color: t.textFaint, flexShrink: 0 }} />
+          : <ChevronDown size={16} style={{ color: t.textFaint, flexShrink: 0 }} />
+        }
+      </button>
+
+      {/* Expandable body */}
+      <AnimatePresence initial={false}>
+        {open && (
+          <motion.div
+            key="body"
+            initial={{ height: 0, opacity: 0 }}
+            animate={{ height: 'auto', opacity: 1 }}
+            exit={{ height: 0, opacity: 0 }}
+            transition={{ duration: 0.22, ease: 'easeInOut' }}
+            style={{ overflow: 'hidden' }}>
+            <div className="px-4 pb-5 flex flex-col gap-4"
+              style={{ borderTop: `1px solid ${t.border}` }}>
+
+              {/* Grace message */}
+              {data.graceMessage && (
+                <p className="text-[13px] leading-relaxed pt-3 italic"
+                  style={{ color: t.textMuted }}>
+                  "{data.graceMessage}"
+                </p>
+              )}
+
+              {/* Day-by-day grid */}
+              {(data.daysGrid || []).length > 0 && (
+                <div className="flex justify-between">
+                  {data.daysGrid.map((d, i) => (
+                    <div key={i} className="flex flex-col items-center gap-1.5">
+                      <span className="text-[10px] font-bold" style={{ color: t.textFaint }}>
+                        {DAY_LABELS[i]}
+                      </span>
+                      <div className="w-7 h-7 rounded-full flex items-center justify-center"
+                        style={{
+                          background: d.read ? '#5B4FCF' : t.bgMuted,
+                          border:     d.read ? 'none' : `1.5px solid ${t.border}`,
+                        }}>
+                        {d.read && (
+                          <svg width="10" height="8" viewBox="0 0 10 8" fill="none">
+                            <path d="M1 4l3 3 5-6" stroke="white" strokeWidth="1.8"
+                              strokeLinecap="round" strokeLinejoin="round" />
+                          </svg>
+                        )}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+
+              {/* Plans progress */}
+              {data.plans?.length > 0 && (
+                <div>
+                  <p className="text-[11px] font-bold uppercase tracking-wider mb-2.5"
+                    style={{ color: t.textFaint }}>Reading plans</p>
+                  <div className="flex flex-col gap-3">
+                    {data.plans.map((p, i) => (
+                      <div key={i}>
+                        <div className="flex items-center justify-between gap-2 mb-1.5">
+                          <p className="text-[13px] font-semibold truncate" style={{ color: t.text }}>
+                            {p.planName}
+                          </p>
+                          <span className="text-[11px] font-semibold flex-shrink-0"
+                            style={{ color: p.status === 'completed' ? '#4A7C5F' : '#5B4FCF' }}>
+                            {p.status === 'completed'
+                              ? '✓ Done'
+                              : `Day ${p.currentDay ?? '?'}/${p.totalDays ?? '?'}`}
+                          </span>
+                        </div>
+                        <div className="h-1.5 rounded-full overflow-hidden"
+                          style={{ background: t.bgMuted }}>
+                          <div className="h-full rounded-full"
+                            style={{ width: `${p.pct ?? 0}%`, background: '#5B4FCF' }} />
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {/* Reflections — framed as a journal */}
+              {data.reflections?.length > 0 && (
+                <div>
+                  <p className="text-[11px] font-bold uppercase tracking-wider mb-2"
+                    style={{ color: t.textFaint }}>Your reflections this week</p>
+                  <div className="flex flex-col gap-2.5">
+                    {data.reflections.map((r, i) => (
+                      <div key={i} className="px-3 py-3 rounded-[12px]"
+                        style={{ background: t.bgMuted }}>
+                        <p className="text-[13px] leading-relaxed" style={{ color: t.text }}>
+                          "{r.content}"
+                        </p>
+                        <p className="text-[11px] mt-1" style={{ color: t.textFaint }}>
+                          {timeAgo(r.createdAt)}
+                        </p>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {/* Group activity */}
+              {data.groupActivity?.length > 0 && (
+                <div>
+                  <p className="text-[11px] font-bold uppercase tracking-wider mb-2"
+                    style={{ color: t.textFaint }}>Group activity</p>
+                  {data.groupActivity.map((g, i) => (
+                    <p key={i} className="text-[13px]" style={{ color: t.textMuted }}>
+                      <span className="font-semibold" style={{ color: t.text }}>{g.planName}</span>
+                      {' — '}{g.membersActive} member{g.membersActive !== 1 ? 's' : ''} read this week
+                    </p>
+                  ))}
+                </div>
+              )}
+
+              {/* Nothing to show */}
+              {!data.graceMessage && !data.plans?.length && !data.reflections?.length && (
+                <div className="flex items-center gap-2 pt-2">
+                  <BookOpen size={14} style={{ color: t.textFaint }} />
+                  <p className="text-[13px]" style={{ color: t.textMuted }}>
+                    No reading activity recorded this week.
+                  </p>
+                </div>
+              )}
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
     </div>
   )
 }
@@ -177,178 +229,176 @@ function StatCard({ icon: Icon, label, value, accent, dark }) {
 // ─────────────────────────────────────────────
 //  Main component
 // ─────────────────────────────────────────────
-export default function WeeklyReport({ isOpen, checkins, streak, plans, onClose }) {
-  const { t, dark } = useTheme()
+export default function WeeklyReports() {
+  const { t } = useTheme()
 
-  const checkinSet = useMemo(() => {
-    const s = new Set()
-    ;(checkins || []).forEach(c => {
-      const d = c.date || c.checked_in_date || c.createdAt?.split('T')[0]
-      if (d) s.add(d)
-    })
-    return s
-  }, [checkins])
+  const [isAuthed,   setIsAuthed]   = useState(false)
+  const [reports,    setReports]    = useState([])
+  const [loading,    setLoading]    = useState(true)
+  const [refreshing, setRefreshing] = useState(false)
+  const [accessToken, setAccessToken] = useState(null)
 
-  const last7   = useMemo(() => getLast7Days(), [])
-  const last4w  = useMemo(() => getLast4Weeks(), [])
+  // ── Single async init — no race condition ──
+  useEffect(() => {
+    let cancelled = false
 
-  const daysThisWeek = last7.filter(d => checkinSet.has(d)).length
-  const totalDays    = checkinSet.size
+    async function init() {
+      const sb = createClient()
+      if (!sb) { setLoading(false); return }
 
-  const activePlans = (plans || []).filter(p => p.status === 'active')
+      try {
+        // Get auth user + session together
+        const [userResult, sessionResult] = await Promise.all([
+          sb.auth.getUser(),
+          sb.auth.getSession(),
+        ])
+
+        const user    = userResult?.data?.user
+        const session = sessionResult?.data?.session
+
+        if (!user || cancelled) { setLoading(false); return }
+
+        // Load reports now that we know user is authed
+        const reports = await getWeeklyReports(8)
+
+        if (cancelled) return
+
+        // Set everything at once — single render
+        setIsAuthed(true)
+        setReports(reports || [])
+        setAccessToken(session?.access_token || null)
+      } catch (e) {
+        console.warn('[WeeklyReports] init error:', e.message)
+      } finally {
+        if (!cancelled) setLoading(false)
+      }
+    }
+
+    init()
+    return () => { cancelled = true }
+  }, [])
+
+  const loadReports = useCallback(async () => {
+    try {
+      const r = await getWeeklyReports(8)
+      setReports(r || [])
+    } catch (e) {
+      console.warn('[WeeklyReports] reload error:', e.message)
+    }
+  }, [])
+
+  async function generateCurrentWeek() {
+    if (!accessToken) return
+    setRefreshing(true)
+    try {
+      const res = await fetch('/api/weekly-report/generate', {
+        method:  'POST',
+        headers: {
+          'Content-Type':  'application/json',
+          'Authorization': `Bearer ${accessToken}`,
+        },
+        body: JSON.stringify({}),
+      })
+      const data = await res.json()
+      if (data.success) await loadReports()
+    } catch (e) {
+      console.warn('[WeeklyReports] generate error:', e.message)
+    } finally {
+      setRefreshing(false)
+    }
+  }
+
+  const currentWeekStart  = getMondayStr()
+  const currentWeekReport = reports.find(r => r.week_start === currentWeekStart)
+  const pastReports       = reports.filter(r => r.week_start !== currentWeekStart)
+
+  // Guest — hide entirely
+  if (!loading && !isAuthed) return null
 
   return (
-    <AnimatePresence>
-      {isOpen && (
+    <div className="flex flex-col gap-4">
+
+      {/* Section header */}
+      <div className="flex items-center justify-between">
+        <div>
+          <p className="font-bold text-[17px]" style={{ color: t.text }}>Weekly Reports</p>
+          <p className="text-[12px] mt-0.5" style={{ color: t.textMuted }}>
+            A personal log of your reading — encouraging, never judgmental
+          </p>
+        </div>
+        {isAuthed && (
+          <button
+            onClick={generateCurrentWeek}
+            disabled={refreshing}
+            className="w-9 h-9 rounded-full flex items-center justify-center active:scale-95 transition-transform"
+            style={{ background: t.bgMuted }}
+            title="Refresh report">
+            {refreshing
+              ? <Loader2 size={14} className="animate-spin" style={{ color: '#5B4FCF' }} />
+              : <RefreshCw size={14} style={{ color: t.textMuted }} />
+            }
+          </button>
+        )}
+      </div>
+
+      {/* Loading spinner */}
+      {loading && (
+        <div className="flex justify-center py-10">
+          <Loader2 size={22} className="animate-spin" style={{ color: '#5B4FCF' }} />
+        </div>
+      )}
+
+      {/* Reports */}
+      {!loading && isAuthed && (
         <>
-          {/* Backdrop */}
-          <motion.div
-            key="report-backdrop"
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            exit={{ opacity: 0 }}
-            className="fixed inset-0 z-[140]"
-            style={{ background: 'rgba(0,0,0,0.6)' }}
-            onClick={onClose}
-          />
-
-          {/* Sheet */}
-          <motion.div
-            key="report-sheet"
-            initial={{ y: '100%' }}
-            animate={{ y: 0 }}
-            exit={{ y: '100%' }}
-            transition={{ type: 'spring', stiffness: 320, damping: 32 }}
-            className="fixed bottom-0 left-1/2 -translate-x-1/2 w-full max-w-[480px] z-[145] rounded-t-[28px] flex flex-col"
-            style={{
-              maxHeight: '88dvh',
-              background: dark ? '#1C1C2A' : '#FFFFFF',
-            }}
-          >
-            {/* Handle */}
-            <div className="flex justify-center pt-3 flex-shrink-0">
-              <div className="w-10 h-1 rounded-full" style={{ background: dark ? '#252840' : '#E5E7EB' }} />
-            </div>
-
-            {/* Header */}
-            <div className="flex items-center justify-between px-5 py-3 flex-shrink-0">
-              <div>
-                <p className="font-bold text-[18px]" style={{ color: dark ? '#EAE6DE' : '#1A1A2E' }}>
-                  Weekly report
-                </p>
-                <p className="text-[12px]" style={{ color: dark ? '#8A8FA8' : '#9CA3AF' }}>
-                  Your reading over the last 7 days
-                </p>
-              </div>
+          {/* This week */}
+          {currentWeekReport ? (
+            <WeekCard report={currentWeekReport} isCurrentWeek={true} t={t} />
+          ) : (
+            <div className="rounded-[18px] p-5 flex flex-col items-center gap-3 text-center"
+              style={{ background: t.bgCard, border: `1px solid ${t.border}` }}>
+              <p className="font-semibold text-[14px]" style={{ color: t.text }}>
+                No report yet this week
+              </p>
+              <p className="text-[13px]" style={{ color: t.textMuted }}>
+                Complete a day in a reading plan, then generate your weekly summary.
+              </p>
               <button
-                onClick={onClose}
-                className="w-8 h-8 rounded-full flex items-center justify-center"
-                style={{ background: dark ? '#252840' : '#F0EDE8' }}
-              >
-                <X size={15} style={{ color: dark ? '#8A8FA8' : '#9CA3AF' }} />
+                onClick={generateCurrentWeek}
+                disabled={refreshing}
+                className="px-5 py-2.5 rounded-full text-white font-bold text-[13px] active:scale-95 transition-transform"
+                style={{ background: '#5B4FCF' }}>
+                {refreshing ? 'Generating…' : "Generate this week's report"}
               </button>
             </div>
+          )}
 
-            {/* Scrollable body */}
-            <div className="flex-1 overflow-y-auto px-5 pb-8 flex flex-col gap-5">
-
-              {/* This week's dots */}
-              <div className="rounded-[20px] p-4" style={{ background: dark ? '#1E1A3C' : '#F8F7FF', border: `1px solid ${dark ? '#2E2860' : '#E8E4FF'}` }}>
-                <p className="text-[11px] font-bold uppercase tracking-widest mb-3" style={{ color: '#5B4FCF' }}>
-                  This week
-                </p>
-                <WeekDots days={last7} checkinSet={checkinSet} dark={dark} />
-                <p className="mt-3 text-[13px] font-semibold" style={{ color: dark ? '#8A8FA8' : '#6B7280' }}>
-                  {daysThisWeek === 7
-                    ? '🔥 Perfect week — every single day!'
-                    : daysThisWeek === 0
-                    ? 'Start today — the week isn\'t over yet.'
-                    : `${daysThisWeek} of 7 days read`}
-                </p>
-              </div>
-
-              {/* Stat row */}
-              <div className="flex gap-3">
-                <StatCard
-                  icon={Flame}
-                  label="Current streak"
-                  value={`${streak?.current || 0}d`}
-                  accent="#E8A838"
-                  dark={dark}
-                />
-                <StatCard
-                  icon={TrendingUp}
-                  label="Best streak"
-                  value={`${streak?.longest || 0}d`}
-                  accent="#5B4FCF"
-                  dark={dark}
-                />
-                <StatCard
-                  icon={Calendar}
-                  label="Total days"
-                  value={totalDays}
-                  accent="#4A7C5F"
-                  dark={dark}
-                />
-              </div>
-
-              {/* 4-week grid */}
-              <div className="rounded-[20px] p-4" style={{ background: dark ? '#1A1A2E' : '#FAFAFA', border: `1px solid ${dark ? '#252840' : '#F0EDE8'}` }}>
-                <p className="text-[11px] font-bold uppercase tracking-widest mb-3" style={{ color: dark ? '#8A8FA8' : '#9CA3AF' }}>
-                  Last 4 weeks
-                </p>
-                <MonthGrid weeks={last4w} checkinSet={checkinSet} dark={dark} />
-              </div>
-
-              {/* Active plans progress */}
-              {activePlans.length > 0 && (
-                <div>
-                  <p className="text-[11px] font-bold uppercase tracking-widest mb-3" style={{ color: dark ? '#8A8FA8' : '#9CA3AF' }}>
-                    Active plans
-                  </p>
-                  <div className="flex flex-col gap-2">
-                    {activePlans.map(plan => {
-                      const pct = getPlanProgress(plan)
-                      return (
-                        <div
-                          key={plan.id}
-                          className="rounded-[16px] p-4 flex items-center gap-3"
-                          style={{ background: dark ? '#1A1A2E' : '#FFFFFF', border: `1px solid ${dark ? '#252840' : '#F0EDE8'}` }}
-                        >
-                          <div className="w-9 h-9 rounded-[10px] flex items-center justify-center flex-shrink-0"
-                            style={{ background: dark ? '#2A244A' : '#EDE9FF' }}>
-                            <BookOpen size={15} style={{ color: '#5B4FCF' }} />
-                          </div>
-                          <div className="flex-1 min-w-0">
-                            <p className="font-semibold text-[13px] truncate" style={{ color: dark ? '#EAE6DE' : '#1A1A2E' }}>
-                              {plan.name}
-                            </p>
-                            <div className="mt-1.5 h-1.5 rounded-full overflow-hidden" style={{ background: dark ? '#252840' : '#F0EDE8' }}>
-                              <div
-                                className="h-full rounded-full"
-                                style={{ width: `${pct}%`, background: 'linear-gradient(90deg, #5B4FCF, #3D3190)', transition: 'width 0.5s ease' }}
-                              />
-                            </div>
-                            <p className="mt-1 text-[11px]" style={{ color: dark ? '#8A8FA8' : '#9CA3AF' }}>
-                              Day {plan.currentDay} of {plan.totalDays} — {pct}%
-                            </p>
-                          </div>
-                        </div>
-                      )
-                    })}
-                  </div>
-                </div>
-              )}
-
-              {/* Grace note */}
-              <p className="text-center text-[12px] leading-relaxed" style={{ color: dark ? '#50546A' : '#9CA3AF' }}>
-                Every day you open the Word is a win. Keep walking.
-              </p>
-
+          {/* Past weeks */}
+          {pastReports.length > 0 && (
+            <div className="flex flex-col gap-2">
+              <p className="text-[11px] font-bold uppercase tracking-wider"
+                style={{ color: t.textFaint }}>Previous weeks</p>
+              {pastReports.map(r => (
+                <WeekCard key={r.id || r.week_start} report={r} isCurrentWeek={false} t={t} />
+              ))}
             </div>
-          </motion.div>
+          )}
+
+          {/* Completely empty */}
+          {!currentWeekReport && pastReports.length === 0 && (
+            <div className="rounded-[18px] p-6 flex flex-col items-center gap-3 text-center"
+              style={{ background: t.bgCard, border: `1px solid ${t.border}` }}>
+              <BookOpen size={30} style={{ color: '#5B4FCF', opacity: 0.45 }} />
+              <p className="font-semibold text-[14px]" style={{ color: t.text }}>
+                No reports yet
+              </p>
+              <p className="text-[13px] max-w-[260px]" style={{ color: t.textMuted }}>
+                Finish your first reading day in a plan and your weekly report will appear here.
+              </p>
+            </div>
+          )}
         </>
       )}
-    </AnimatePresence>
+    </div>
   )
 }

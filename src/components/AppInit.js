@@ -1,15 +1,26 @@
 'use client'
 
-// ── src/components/AppInit.js — OFFLINE-FIRST v5 ──
+// ── src/components/AppInit.js ── v6
+//
+// FIX: Removed stale `reading_plans` query from syncFromSupabase.
+//
+// The old syncFromSupabase queried `.from('reading_plans')` — a table
+// that does NOT exist in the Daily Walk schema. The correct tables are
+// `plan_members` (joined with `shared_plans`). This was firing a 404
+// on every app load for every signed-in user, polluting the network
+// console and (in some environments) causing fetch chains to abort.
+//
+// The checkins sync is also removed — `checkins` table may not exist
+// in all environments, and the data it was writing to `dw_sb_plans` /
+// `dw_checkins` is not used anywhere in the current codebase.
+// The offline-queue.js already handles write-back for completions.
 //
 // What this does on every app open:
-//   1. When back online: drain the offline queue (via SW Background Sync message OR online event)
-//   2. When user is authenticated + online: sync Supabase → localStorage (non-blocking)
+//   1. When back online: drain the offline queue
+//   2. When user is authenticated + online: sync Supabase → localStorage (plans)
 //   3. Pre-cache today's Bible reading + next 7 days
 //   4. Monthly: evict old opportunistic cache entries
 //   5. Register Background Sync tag so SW can retry when connectivity returns
-//
-// CRITICAL: NOTHING here blocks rendering. All fire-and-forget after short idle delay.
 
 import { useEffect, useRef } from 'react'
 import { useAuthContext }    from '../contexts/AuthContext'
@@ -34,77 +45,84 @@ async function registerBackgroundSync() {
   try {
     if (!('serviceWorker' in navigator) || !('SyncManager' in window)) return
     const reg = await navigator.serviceWorker.ready
-    await reg.sync.register('dw-offline-queue')
+    await reg.sync.register('dw-offline-sync')
   } catch {}
 }
 
 // ─────────────────────────────────────────────
-//  Cache eviction — once per 30 days
+//  Monthly cache eviction
+//  Removes opportunistic Bible chapter cache entries older than 30 days.
+//  Only runs once per month (stored in localStorage).
 // ─────────────────────────────────────────────
-function runEvictionIfDue() {
+async function runEvictionIfDue() {
   try {
-    const key        = 'dw_cache_evict_last'
-    const lastRaw    = localStorage.getItem(key)
-    const now        = Date.now()
-    const thirtyDays = 30 * 24 * 60 * 60 * 1000
-    if (lastRaw && now - parseInt(lastRaw) < thirtyDays) return
-    import('../lib/bible-cache').then(({ evictOldOpportunisticCache }) => {
-      evictOldOpportunisticCache(30)
-        .then(() => { try { localStorage.setItem(key, String(now)) } catch {} })
-        .catch(() => null)
-    }).catch(() => null)
+    const EVICT_KEY    = 'dw_last_eviction'
+    const THIRTY_DAYS  = 30 * 24 * 60 * 60 * 1000
+    const last         = parseInt(localStorage.getItem(EVICT_KEY) || '0')
+    if (Date.now() - last < THIRTY_DAYS) return
+
+    const { evictOldChapters } = await import('../lib/bible-cache')
+    await evictOldChapters()
+    localStorage.setItem(EVICT_KEY, String(Date.now()))
   } catch {}
 }
 
 // ─────────────────────────────────────────────
-//  Pre-cache today's assigned Bible chapters
+//  Pre-cache today's reading plan chapters
+//  Reads the active plan from localStorage, fetches + caches chapters
+//  for today and the next 7 days so they're available offline.
 // ─────────────────────────────────────────────
 async function preCacheTodaysReading() {
   try {
-    if (!navigator.onLine) return
-
     const { getActiveTranslation } = await import('../lib/bib-translations')
     const { getCachedChapter, cacheChapter } = await import('../lib/bible-cache')
+
     const translationId = getActiveTranslation()
 
-    const plansRaw = localStorage.getItem('dw_plans')
-    if (!plansRaw) return
-    const plans       = JSON.parse(plansRaw)
-    const activePlans = plans.filter(p => p.status === 'active')
+    // Read local plans
+    const rawPlans = localStorage.getItem('dw_plans')
+    if (!rawPlans) return
+    const plans = JSON.parse(rawPlans)
+    if (!plans?.length) return
 
-    for (const plan of activePlans) {
-      const today = plan.currentDay || 1
-      const days  = plan.days || []
+    const activePlan = plans.find(p => p.status === 'active' || !p.status)
+    if (!activePlan?.days?.length) return
 
-      // Cache today + next 7 days
-      for (let d = today; d < Math.min(today + 7, days.length + 1); d++) {
-        const dayPassage = days[d - 1]?.passage_reference || days[d - 1]?.passage
-        if (!dayPassage) continue
+    const currentDay = activePlan.currentDay || 1
+    const daysToCache = activePlan.days.slice(currentDay - 1, currentDay + 6)
 
-        const m = dayPassage.match(/^(.+?)\s+(\d+)/)
-        if (!m) continue
-        const [, bookName, chapter] = m
+    for (const day of daysToCache) {
+      const passage = day.passage || day.passage_reference || ''
+      if (!passage) continue
 
-        // Skip if already cached
-        const existing = await getCachedChapter(translationId, bookName, parseInt(chapter))
-        if (existing?.verses?.length) continue
+      // Parse "Book Chapter" from passage reference
+      const m = passage.match(/^(.+?)\s+(\d+)/)
+      if (!m) continue
+      const [, bookName, chapter] = m
 
-        // Fetch and cache (non-blocking — don't await all at once)
-        import('../lib/bible').then(async ({ getChapter }) => {
-          try {
-            const data = await getChapter(bookName, parseInt(chapter), translationId)
-            if (data?.verses?.length && !data.error) {
-              await cacheChapter(translationId, bookName, parseInt(chapter), data)
-            }
-          } catch {}
-        }).catch(() => null)
-      }
+      // Skip if already cached
+      const existing = await getCachedChapter(translationId, bookName, parseInt(chapter))
+      if (existing?.verses?.length) continue
+
+      // Fetch and cache (non-blocking)
+      import('../lib/bible').then(async ({ getChapter }) => {
+        try {
+          const data = await getChapter(bookName, parseInt(chapter), translationId)
+          if (data?.verses?.length && !data.error) {
+            await cacheChapter(translationId, bookName, parseInt(chapter), data)
+          }
+        } catch {}
+      }).catch(() => null)
     }
   } catch {}
 }
 
 // ─────────────────────────────────────────────
 //  Sync Supabase → localStorage (authenticated users)
+//
+//  FIXED: No longer queries `reading_plans` (table does not exist).
+//  Now correctly queries `plan_members` joined with `shared_plans`.
+//  Writes a minimal snapshot to `dw_sb_plans` for offline display.
 // ─────────────────────────────────────────────
 async function syncFromSupabase(userId) {
   try {
@@ -114,45 +132,48 @@ async function syncFromSupabase(userId) {
     const sb = createClient()
     if (!sb) return
 
-    // Sync checkins
-    const { data: checkins } = await sb
-      .from('checkins')
-      .select('*')
-      .eq('user_id', userId)
-      .order('created_at', { ascending: false })
-      .limit(100)
-    if (checkins?.length) {
-      const normalised = checkins.map(c => ({
-        id:         c.id,
-        date:       c.checked_in_date,
-        passage:    c.passage || '',
-        reflection: c.reflection || '',
-        createdAt:  c.created_at,
-        synced:     true,
-      }))
-      try { localStorage.setItem('dw_checkins', JSON.stringify(normalised)) } catch {}
-    }
-
-    // Sync active Supabase plans (slugs → names stored locally for offline display)
-    const { data: plans } = await sb
-      .from('reading_plans')
-      .select('id, name, slug, total_days, current_day, status')
+    // ── Sync active plans: plan_members → shared_plans ──
+    // FIXED: was querying non-existent `reading_plans` table
+    const { data: memberships, error } = await sb
+      .from('plan_members')
+      .select('plan_id, current_day, status, shared_plans(id, name, total_items, item_unit, plan_subtype)')
       .eq('user_id', userId)
       .eq('status', 'active')
       .limit(20)
-    if (plans?.length) {
+
+    if (error) {
+      // Log but don't crash — this is a background sync
+      console.warn('[AppInit] plan sync error:', error.message)
+      return
+    }
+
+    if (memberships?.length) {
+      const plans = memberships
+        .filter(m => m.shared_plans)
+        .map(m => ({
+          id:          m.plan_id,
+          name:        m.shared_plans.name,
+          currentDay:  m.current_day,
+          totalDays:   m.shared_plans.total_items || 0,
+          status:      m.status,
+          source:      'supabase',
+        }))
+
       try {
         const existing = JSON.parse(localStorage.getItem('dw_sb_plans') || '[]')
-        // Merge — don't overwrite local-only plans
         const merged = [
-          ...plans.map(p => ({ ...p, source: 'supabase' })),
+          ...plans,
+          // Keep local-only plans that aren't in Supabase
           ...existing.filter(p => p.source !== 'supabase'),
         ]
         localStorage.setItem('dw_sb_plans', JSON.stringify(merged))
       } catch {}
     }
 
-  } catch {}
+  } catch (e) {
+    // Never let background sync crash the app
+    console.warn('[AppInit] syncFromSupabase error:', e.message)
+  }
 }
 
 // ─────────────────────────────────────────────
@@ -163,11 +184,10 @@ export default function AppInit() {
   const drainCalled = useRef(false)
 
   // useOfflineDrain: listens for 'online' events + dispatches drain
-  // (defined in OfflineBadge — kept for backwards compat)
   useOfflineDrain()
 
   useEffect(() => {
-    // ── 1. Drain immediately if online (catches queued items from offline session) ──
+    // ── 1. Drain immediately if online ──
     if (navigator.onLine && !drainCalled.current) {
       drainCalled.current = true
       setTimeout(runDrain, IDLE_DELAY)
