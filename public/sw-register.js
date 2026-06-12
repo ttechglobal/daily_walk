@@ -1,60 +1,54 @@
 // ── public/sw-register.js ──
-// Service Worker registration — loaded via <Script strategy="afterInteractive">.
-// Handles:
-//   1. SW registration (points to /sw.js compiled by Serwist)
-//   2. Background Sync registration for offline queue drain
-//   3. Listening for DW_DRAIN_QUEUE messages from SW
-//   4. Prompting on SW update (new version available)
+// Registers the Daily Walk service worker.
+// Loaded via <Script src="/sw-register.js" strategy="afterInteractive" /> in layout.js.
+// NO { type: 'module' } needed — sw.js has zero import statements.
 
-;(function () {
-  if (typeof window === 'undefined') return
+(function () {
   if (!('serviceWorker' in navigator)) return
 
-  // ── Register SW ──
-  navigator.serviceWorker.register('/sw.js', { scope: '/' }).then(registration => {
+  window.addEventListener('load', function () {
+    navigator.serviceWorker
+      .register('/sw.js', { scope: '/' })
+      .then(function (registration) {
 
-    // ── Background Sync: register whenever we go online ──
-    // This ensures the SW fires a sync event and drains the offline queue.
-    function registerSync() {
-      if (!('SyncManager' in window)) return
-      registration.sync.register('dw-offline-queue').catch(() => null)
-    }
+        // ── Detect new SW version waiting ──
+        registration.addEventListener('updatefound', function () {
+          var newWorker = registration.installing
+          if (!newWorker) return
 
-    window.addEventListener('online', () => {
-      registerSync()
-      // Also fire immediately for any action queued in this session
-      window.dispatchEvent(new CustomEvent('dw-back-online'))
-    })
+          newWorker.addEventListener('statechange', function () {
+            if (
+              newWorker.state === 'installed' &&
+              navigator.serviceWorker.controller
+            ) {
+              // New version is ready — notify SwUpdateBanner
+              window.dispatchEvent(
+                new CustomEvent('dw-sw-update-ready', {
+                  detail: { registration: registration },
+                })
+              )
+            }
+          })
+        })
 
-    // Register on load in case we just came back online between page loads
-    if (navigator.onLine) registerSync()
+        // ── Reload page after new SW takes over ──
+        var refreshing = false
+        navigator.serviceWorker.addEventListener('controllerchange', function () {
+          if (!refreshing) {
+            refreshing = true
+            window.location.reload()
+          }
+        })
 
-    // ── Handle SW update (new version deployed) ──
-    registration.addEventListener('updatefound', () => {
-      const newWorker = registration.installing
-      if (!newWorker) return
+        // ── Fire dw-back-online when connection returns ──
+        window.addEventListener('online', function () {
+          window.dispatchEvent(new Event('dw-back-online'))
+        })
 
-      newWorker.addEventListener('statechange', () => {
-        if (newWorker.state === 'installed' && navigator.serviceWorker.controller) {
-          // A new SW is installed but waiting — dispatch event so UI can show update banner
-          window.dispatchEvent(new CustomEvent('dw-sw-update-ready', {
-            detail: { registration },
-          }))
-        }
       })
-    })
-
-  }).catch(() => null)
-
-  // ── Listen for messages from SW ──
-  navigator.serviceWorker.addEventListener('message', (event) => {
-    if (event.data?.type === 'DW_DRAIN_QUEUE') {
-      // SW Background Sync told us to drain — import and run
-      import('/sw-drain.js').catch(() => {
-        // Fallback: dispatch event for AppInit to pick up
-        window.dispatchEvent(new CustomEvent('dw-drain-queue'))
+      .catch(function (err) {
+        // Non-fatal — app works fine without SW, just no offline/push
+        console.warn('[SW] Registration failed:', err.message)
       })
-    }
   })
-
 })()

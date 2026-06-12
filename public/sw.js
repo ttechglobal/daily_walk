@@ -1,151 +1,144 @@
-// ── src/app/sw.js — Daily Walk Service Worker ──
-// This file is the SW *source* — Serwist compiles it into public/sw.js at build time,
-// injecting the precache manifest automatically.
+// ── public/sw.js ──
+// Daily Walk service worker — v2 clean
+//
+// NO import statements — this file is served as a plain static file
+// from /public and must be self-contained. Using import here requires
+// { type: 'module' } registration AND has poor support on older iPhones.
 //
 // What this SW does:
-//   1. Precaches the complete app shell (all Next.js JS/CSS chunks + routes)
-//   2. Runtime-caches fonts, images, and pages with appropriate strategies
-//   3. Serves the /offline page when a navigation fails and no cache is available
-//   4. Handles Background Sync for offline queue drain
-//   5. Handles push notifications
+//   1. Caches the app shell on install (makes iPhone "Add to Home Screen" work offline)
+//   2. Serves cached shell while revalidating in background (stale-while-revalidate)
+//   3. Handles push notifications (VAPID)
+//   4. Opens the right URL on notification click
+//   5. Tells the app when a background sync should drain the offline queue
+//   6. Handles SKIP_WAITING from SwUpdateBanner
 
-import { defaultCache } from '@serwist/next/worker'
-import { Serwist }      from 'serwist'
+const CACHE_VERSION = 'dw-v2'
 
-// ── BACKGROUND SYNC TAG ──
-const SYNC_TAG = 'dw-offline-queue'
+// App shell — pages and assets that should always be cached
+const SHELL_URLS = [
+  '/',
+  '/offline',
+  '/manifest.json',
+  '/icons/icon-192.png',
+  '/icons/icon-512.png',
+]
 
-// ── Serwist instance ──
-// self.__SW_MANIFEST is injected by the build pipeline (Serwist/Workbox precache manifest).
-// It contains { url, revision } entries for every static asset Next.js emits.
-const serwist = new Serwist({
-  precacheEntries:    self.__SW_MANIFEST,
-  skipWaiting:        true,      // Activate new SW immediately (no waiting for tabs to close)
-  clientsClaim:       true,      // Take control of all open clients immediately
-  navigationPreload:  false,     // Disabled — we use NetworkFirst with timeout instead
-
-  // ── Offline fallback ──
-  // When a navigation request fails (offline) and the page isn't cached,
-  // serve /offline. This MUST be in the precache list (additionalPrecacheEntries in config).
-  fallbacks: {
-    entries: [
-      {
-        url:    '/offline',
-        matcher: ({ request }) => request.destination === 'document',
-      },
-    ],
-  },
-
-  // ── Runtime caching strategies ──
-  // Merged with the strategies defined in next.config.js runtimeCaching.
-  // The defaultCache from @serwist/next adds sensible defaults for Next.js internals.
-  runtimeCaching: defaultCache,
-})
-
-serwist.addEventListeners()
-
-// ── INSTALL event ──
-// Force the new SW to take effect without waiting for all tabs to close.
+// ── Install: cache app shell ──
 self.addEventListener('install', (event) => {
-  event.waitUntil(self.skipWaiting())
-})
-
-// ── ACTIVATE event ──
-// Clean up old caches from previous SW versions.
-self.addEventListener('activate', (event) => {
   event.waitUntil(
-    (async () => {
-      await self.clients.claim()
-
-      // Delete caches from old versions (anything not matching our current cache names)
-      const CURRENT_CACHES = [
-        'dw-pages',
-        'dw-google-fonts-stylesheets',
-        'dw-google-fonts-webfonts',
-        'dw-static',
-        'dw-images',
-        'dw-icons',
-        'dw-supabase-storage',
-        'serwist-precache-v2',  // Serwist's own precache name
-      ]
-      const cacheNames = await caches.keys()
-      await Promise.all(
-        cacheNames
-          .filter(name => !CURRENT_CACHES.some(c => name.startsWith(c)))
-          .map(name => caches.delete(name))
-      )
-    })()
+    caches.open(CACHE_VERSION)
+      .then((cache) => cache.addAll(SHELL_URLS))
+      .then(() => self.skipWaiting())
+      .catch((err) => {
+        console.warn('[SW] install cache partial failure:', err.message)
+        return self.skipWaiting()
+      })
   )
 })
 
-// ── SYNC event — Background Sync API ──
-// When the browser gains connectivity, it fires a sync event for each registered tag.
-// We use this to trigger the offline queue drain in the main thread.
-self.addEventListener('sync', (event) => {
-  if (event.tag === SYNC_TAG) {
-    event.waitUntil(
-      // Post a message to all open clients — they'll run drainOfflineQueue()
-      self.clients.matchAll({ includeUncontrolled: true, type: 'window' }).then(clients => {
-        clients.forEach(client => {
-          client.postMessage({ type: 'DW_DRAIN_QUEUE' })
-        })
-      })
-    )
-  }
-})
-
-// ── PUSH event — Push Notifications ──
-self.addEventListener('push', (event) => {
-  try {
-    const data    = event.data?.json() || {}
-    const title   = data.title   || 'Daily Walk'
-    const body    = data.body    || 'Time to read your Bible 📖'
-    const url     = data.url     || '/'
-    const tag     = data.type    || 'general'
-    const icon    = '/icons/icon-192.png'
-    const badge   = '/icons/icon-96.png'
-
-    event.waitUntil(
-      self.registration.showNotification(title, {
-        body,
-        icon,
-        badge,
-        tag,
-        data:    { url },
-        vibrate: [100, 50, 100],
-        actions: [
-          { action: 'open',    title: 'Open'    },
-          { action: 'dismiss', title: 'Dismiss' },
-        ],
-      })
-    )
-  } catch {}
-})
-
-// ── NOTIFICATIONCLICK event ──
-self.addEventListener('notificationclick', (event) => {
-  event.notification.close()
-  if (event.action === 'dismiss') return
-
-  const url = event.notification.data?.url || '/'
+// ── Activate: clean up old caches ──
+self.addEventListener('activate', (event) => {
   event.waitUntil(
-    self.clients.matchAll({ type: 'window', includeUncontrolled: true }).then(clients => {
-      // Focus an existing window if one is open at this origin
-      const existing = clients.find(c => c.url.startsWith(self.registration.scope))
-      if (existing) {
-        existing.focus()
-        existing.navigate(url)
-      } else {
-        self.clients.openWindow(url)
-      }
+    caches.keys()
+      .then((keys) =>
+        Promise.all(
+          keys
+            .filter((key) => key !== CACHE_VERSION)
+            .map((key) => caches.delete(key))
+        )
+      )
+      .then(() => self.clients.claim())
+  )
+})
+
+// ── Fetch: serve from cache, update in background ──
+self.addEventListener('fetch', (event) => {
+  const { request } = event
+
+  if (request.method !== 'GET') return
+  if (!request.url.startsWith(self.location.origin)) return
+
+  const url = new URL(request.url)
+  if (
+    url.pathname.startsWith('/api/') ||
+    url.pathname.startsWith('/_next/') ||
+    url.hostname.includes('supabase.co') ||
+    url.hostname.includes('googleapis.com')
+  ) return
+
+  event.respondWith(
+    caches.open(CACHE_VERSION).then((cache) =>
+      cache.match(request).then((cached) => {
+        const networkFetch = fetch(request)
+          .then((response) => {
+            if (response.ok) cache.put(request, response.clone())
+            return response
+          })
+          .catch(() => null)
+
+        return cached || networkFetch || caches.match('/offline')
+      })
+    )
+  )
+})
+
+// ── Push: show notification ──
+self.addEventListener('push', (event) => {
+  let payload = {
+    title: 'Daily Walk',
+    body:  'Time for your daily reading 📖',
+    url:   '/',
+    type:  'general',
+    icon:  '/icons/icon-192.png',
+    badge: '/icons/icon-96.png',
+  }
+
+  try {
+    if (event.data) Object.assign(payload, event.data.json())
+  } catch (e) {}
+
+  event.waitUntil(
+    self.registration.showNotification(payload.title, {
+      body:    payload.body,
+      icon:    payload.icon  || '/icons/icon-192.png',
+      badge:   payload.badge || '/icons/icon-96.png',
+      tag:     payload.type  || 'daily-walk',
+      vibrate: [100, 50, 100],
+      data:    { url: payload.url || '/' },
     })
   )
 })
 
-// ── MESSAGE event ──
-// Handle messages from the main thread (e.g., skip waiting on update).
-self.addEventListener('message', (event) => {
-  if (event.data?.type === 'SKIP_WAITING') {
-    self.skipWaiting()
+// ── Notification click: navigate to URL ──
+self.addEventListener('notificationclick', (event) => {
+  event.notification.close()
+  const targetUrl = event.notification.data?.url || '/'
+  event.waitUntil(
+    clients
+      .matchAll({ type: 'window', includeUncontrolled: true })
+      .then((windowClients) => {
+        const existing = windowClients.find(
+          (c) => new URL(c.url).pathname === new URL(targetUrl, self.location.origin).pathname
+        )
+        if (existing) return existing.focus()
+        return clients.openWindow(targetUrl)
+      })
+  )
+})
+
+// ── Background Sync: drain offline queue ──
+self.addEventListener('sync', (event) => {
+  if (event.tag === 'dw-offline-queue') {
+    event.waitUntil(
+      clients.matchAll({ includeUncontrolled: true }).then((allClients) => {
+        allClients.forEach((c) => c.postMessage({ type: 'DW_DRAIN_QUEUE' }))
+      })
+    )
   }
+})
+
+// ── Message: SKIP_WAITING from SwUpdateBanner ──
+self.addEventListener('message', (event) => {
+  if (event.data?.type === 'SKIP_WAITING') self.skipWaiting()
 })
