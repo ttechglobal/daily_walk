@@ -1,39 +1,34 @@
 // ── public/sw.js ──
-// Daily Walk service worker — v2 clean
-//
-// NO import statements — this file is served as a plain static file
-// from /public and must be self-contained. Using import here requires
-// { type: 'module' } registration AND has poor support on older iPhones.
-//
-// What this SW does:
-//   1. Caches the app shell on install (makes iPhone "Add to Home Screen" work offline)
-//   2. Serves cached shell while revalidating in background (stale-while-revalidate)
-//   3. Handles push notifications (VAPID)
-//   4. Opens the right URL on notification click
-//   5. Tells the app when a background sync should drain the offline queue
-//   6. Handles SKIP_WAITING from SwUpdateBanner
+// Daily Walk service worker — v3
+// NO import statements — fully self-contained.
 
-const CACHE_VERSION = 'dw-v2'
+const CACHE_VERSION = 'dw-v3'
 
-// App shell — pages and assets that should always be cached
-const SHELL_URLS = [
-  '/',
-  '/offline',
+// Static assets that definitely exist in /public
+// Do NOT include Next.js routes like /offline here — those are
+// server-rendered and can't be cached with cache.addAll at install time.
+// They get cached automatically on first visit via the fetch handler below.
+const STATIC_ASSETS = [
   '/manifest.json',
   '/icons/icon-192.png',
   '/icons/icon-512.png',
+  '/icons/icon-96.png',
 ]
 
-// ── Install: cache app shell ──
+// ── Install: cache static assets individually (never fail install) ──
 self.addEventListener('install', (event) => {
   event.waitUntil(
-    caches.open(CACHE_VERSION)
-      .then((cache) => cache.addAll(SHELL_URLS))
-      .then(() => self.skipWaiting())
-      .catch((err) => {
-        console.warn('[SW] install cache partial failure:', err.message)
-        return self.skipWaiting()
+    caches.open(CACHE_VERSION).then((cache) => {
+      // Cache each asset independently — one failure won't block the SW
+      var promises = STATIC_ASSETS.map(function (url) {
+        return cache.add(url).catch(function (err) {
+          console.warn('[SW] Could not cache ' + url + ':', err.message)
+        })
       })
+      return Promise.all(promises)
+    }).then(function () {
+      return self.skipWaiting()
+    })
   )
 })
 
@@ -41,51 +36,77 @@ self.addEventListener('install', (event) => {
 self.addEventListener('activate', (event) => {
   event.waitUntil(
     caches.keys()
-      .then((keys) =>
-        Promise.all(
+      .then(function (keys) {
+        return Promise.all(
           keys
-            .filter((key) => key !== CACHE_VERSION)
-            .map((key) => caches.delete(key))
+            .filter(function (key) { return key !== CACHE_VERSION })
+            .map(function (key) { return caches.delete(key) })
         )
-      )
-      .then(() => self.clients.claim())
+      })
+      .then(function () { return self.clients.claim() })
   )
 })
 
-// ── Fetch: serve from cache, update in background ──
+// ── Fetch: network first for navigations, cache-first for assets ──
 self.addEventListener('fetch', (event) => {
-  const { request } = event
+  var request = event.request
 
+  // Only handle GET from our own origin
   if (request.method !== 'GET') return
   if (!request.url.startsWith(self.location.origin)) return
 
-  const url = new URL(request.url)
+  var url = new URL(request.url)
+
+  // Never intercept: API routes, Next.js internals, auth
   if (
     url.pathname.startsWith('/api/') ||
     url.pathname.startsWith('/_next/') ||
-    url.hostname.includes('supabase.co') ||
-    url.hostname.includes('googleapis.com')
+    url.pathname.startsWith('/admin')
   ) return
 
-  event.respondWith(
-    caches.open(CACHE_VERSION).then((cache) =>
-      cache.match(request).then((cached) => {
-        const networkFetch = fetch(request)
-          .then((response) => {
-            if (response.ok) cache.put(request, response.clone())
-            return response
-          })
-          .catch(() => null)
-
-        return cached || networkFetch || caches.match('/offline')
-      })
+  // For page navigations: network first, fallback to cache
+  if (request.mode === 'navigate') {
+    event.respondWith(
+      fetch(request)
+        .then(function (response) {
+          // Cache successful navigations for offline fallback
+          if (response.ok) {
+            var clone = response.clone()
+            caches.open(CACHE_VERSION).then(function (cache) {
+              cache.put(request, clone)
+            })
+          }
+          return response
+        })
+        .catch(function () {
+          // Offline — try cache first, then cached home page
+          return caches.match(request)
+            .then(function (cached) {
+              return cached || caches.match('/')
+            })
+        })
     )
+    return
+  }
+
+  // For static assets: cache first, update in background
+  event.respondWith(
+    caches.open(CACHE_VERSION).then(function (cache) {
+      return cache.match(request).then(function (cached) {
+        var networkFetch = fetch(request).then(function (response) {
+          if (response.ok) cache.put(request, response.clone())
+          return response
+        }).catch(function () { return null })
+
+        return cached || networkFetch
+      })
+    })
   )
 })
 
 // ── Push: show notification ──
 self.addEventListener('push', (event) => {
-  let payload = {
+  var payload = {
     title: 'Daily Walk',
     body:  'Time for your daily reading 📖',
     url:   '/',
@@ -113,15 +134,17 @@ self.addEventListener('push', (event) => {
 // ── Notification click: navigate to URL ──
 self.addEventListener('notificationclick', (event) => {
   event.notification.close()
-  const targetUrl = event.notification.data?.url || '/'
+  var targetUrl = (event.notification.data && event.notification.data.url) || '/'
   event.waitUntil(
     clients
       .matchAll({ type: 'window', includeUncontrolled: true })
-      .then((windowClients) => {
-        const existing = windowClients.find(
-          (c) => new URL(c.url).pathname === new URL(targetUrl, self.location.origin).pathname
-        )
-        if (existing) return existing.focus()
+      .then(function (windowClients) {
+        for (var i = 0; i < windowClients.length; i++) {
+          var client = windowClients[i]
+          if (new URL(client.url).pathname === new URL(targetUrl, self.location.origin).pathname) {
+            return client.focus()
+          }
+        }
         return clients.openWindow(targetUrl)
       })
   )
@@ -131,8 +154,10 @@ self.addEventListener('notificationclick', (event) => {
 self.addEventListener('sync', (event) => {
   if (event.tag === 'dw-offline-queue') {
     event.waitUntil(
-      clients.matchAll({ includeUncontrolled: true }).then((allClients) => {
-        allClients.forEach((c) => c.postMessage({ type: 'DW_DRAIN_QUEUE' }))
+      clients.matchAll({ includeUncontrolled: true }).then(function (allClients) {
+        allClients.forEach(function (c) {
+          c.postMessage({ type: 'DW_DRAIN_QUEUE' })
+        })
       })
     )
   }
@@ -140,5 +165,7 @@ self.addEventListener('sync', (event) => {
 
 // ── Message: SKIP_WAITING from SwUpdateBanner ──
 self.addEventListener('message', (event) => {
-  if (event.data?.type === 'SKIP_WAITING') self.skipWaiting()
+  if (event.data && event.data.type === 'SKIP_WAITING') {
+    self.skipWaiting()
+  }
 })
