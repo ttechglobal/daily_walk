@@ -1,10 +1,9 @@
 'use client'
 
 // ── src/app/admin/login/page.js ──
-// Dedicated admin login — completely separate from the normal /auth page.
-// Asks only for email + password.
-// On success, checks profiles.role === 'superadmin' before letting in.
-// Redirects away immediately if already authenticated as superadmin.
+// KEY FIX: Pre-check uses getSession() instead of getUser().
+// getUser() verifies the JWT over the network → times out.
+// getSession() reads from localStorage instantly → never times out.
 
 import { useState, useEffect } from 'react'
 import { useRouter } from 'next/navigation'
@@ -21,18 +20,29 @@ export default function AdminLoginPage() {
   const [checking, setChecking] = useState(true)
   const [error,    setError]    = useState('')
 
-  // If already signed in as superadmin, go straight to admin
+  // If already signed in as superadmin, skip login
   useEffect(() => {
     async function check() {
-      const sb = createClient()
-      if (!sb) { setChecking(false); return }
-      const { data: { user } } = await sb.auth.getUser()
-      if (!user) { setChecking(false); return }
-      const { data: profile } = await sb.from('profiles')
-        .select('role').eq('id', user.id).single()
-      if (profile?.role === 'superadmin') {
-        router.replace('/admin')
-      } else {
+      try {
+        const sb = createClient()
+        if (!sb) { setChecking(false); return }
+
+        // getSession() — reads from localStorage, no network call
+        const { data: { session } } = await sb.auth.getSession()
+        if (!session?.user) { setChecking(false); return }
+
+        const { data: profile } = await sb
+          .from('profiles')
+          .select('role')
+          .eq('id', session.user.id)
+          .single()
+
+        if (profile?.role === 'superadmin') {
+          router.replace('/admin')
+        } else {
+          setChecking(false)
+        }
+      } catch {
         setChecking(false)
       }
     }
@@ -41,21 +51,28 @@ export default function AdminLoginPage() {
 
   async function handleLogin() {
     setError('')
-    if (!email.trim() || !password) { setError('Enter your email and password.'); return }
+    if (!email.trim() || !password) {
+      setError('Enter your email and password.')
+      return
+    }
     setLoading(true)
     const sb = createClient()
     if (!sb) { setError('Supabase not configured.'); setLoading(false); return }
 
     try {
-      const { data, error: authError } = await sb.auth.signInWithPassword({ email, password })
+      const { data, error: authError } = await sb.auth.signInWithPassword({
+        email:    email.trim(),
+        password,
+      })
       if (authError) throw authError
 
-      const user = data.user
-      const { data: profile } = await sb.from('profiles')
-        .select('role').eq('id', user.id).single()
+      const { data: profile } = await sb
+        .from('profiles')
+        .select('role')
+        .eq('id', data.user.id)
+        .single()
 
       if (profile?.role !== 'superadmin') {
-        // Sign them back out — not an admin
         await sb.auth.signOut()
         setError('Access denied. This account does not have admin access.')
         setLoading(false)
@@ -64,23 +81,20 @@ export default function AdminLoginPage() {
 
       router.replace('/admin')
     } catch (e) {
-      const msg = e.message || ''
-      if (msg.toLowerCase().includes('invalid login') || msg.toLowerCase().includes('invalid credentials')) {
+      const msg = e.message?.toLowerCase() || ''
+      if (msg.includes('invalid login') || msg.includes('invalid credentials')) {
         setError('Incorrect email or password.')
       } else {
-        setError(msg || 'Sign in failed — please try again.')
+        setError(e.message || 'Sign in failed — please try again.')
       }
       setLoading(false)
     }
   }
 
-  function handleKeyDown(e) {
-    if (e.key === 'Enter') handleLogin()
-  }
-
   if (checking) {
     return (
-      <div className="flex items-center justify-center min-h-screen" style={{ background: '#0F1117' }}>
+      <div className="flex items-center justify-center min-h-screen"
+        style={{ background: '#0F1117' }}>
         <div className="w-8 h-8 rounded-full border-2 border-t-transparent animate-spin"
           style={{ borderColor: '#5B4FCF' }}/>
       </div>
@@ -96,7 +110,7 @@ export default function AdminLoginPage() {
         <div className="flex flex-col items-center gap-3 mb-8">
           <div className="w-14 h-14 rounded-[18px] flex items-center justify-center"
             style={{ background: 'linear-gradient(135deg,#5B4FCF,#3D3190)' }}>
-            <Shield size={28} className="text-white" />
+            <Shield size={28} className="text-white"/>
           </div>
           <div className="text-center">
             <p className="font-bold text-white text-[20px]">Admin Access</p>
@@ -119,14 +133,14 @@ export default function AdminLoginPage() {
               type="email"
               value={email}
               onChange={e => { setEmail(e.target.value); setError('') }}
-              onKeyDown={handleKeyDown}
+              onKeyDown={e => e.key === 'Enter' && handleLogin()}
               placeholder="admin@dailywalk.app"
               autoComplete="email"
-              className="w-full px-4 py-3.5 rounded-[12px] text-[15px] focus:outline-none transition-all"
+              className="w-full px-4 py-3.5 rounded-[12px] text-[15px] focus:outline-none"
               style={{
-                background:  '#252840',
-                color:       '#EAE6DE',
-                border:      `1px solid ${error ? '#EF4444' : '#2E3258'}`,
+                background: '#252840',
+                color:      '#EAE6DE',
+                border:     `1px solid ${error ? '#EF4444' : '#2E3258'}`,
               }}
             />
           </div>
@@ -141,43 +155,37 @@ export default function AdminLoginPage() {
                 type={showPw ? 'text' : 'password'}
                 value={password}
                 onChange={e => { setPassword(e.target.value); setError('') }}
-                onKeyDown={handleKeyDown}
+                onKeyDown={e => e.key === 'Enter' && handleLogin()}
                 placeholder="••••••••••"
                 autoComplete="current-password"
-                className="w-full px-4 py-3.5 pr-12 rounded-[12px] text-[15px] focus:outline-none transition-all"
+                className="w-full px-4 py-3.5 pr-12 rounded-[12px] text-[15px] focus:outline-none"
                 style={{
-                  background:  '#252840',
-                  color:       '#EAE6DE',
-                  border:      `1px solid ${error ? '#EF4444' : '#2E3258'}`,
+                  background: '#252840',
+                  color:      '#EAE6DE',
+                  border:     `1px solid ${error ? '#EF4444' : '#2E3258'}`,
                 }}
               />
-              <button
-                type="button"
-                onClick={() => setShowPw(v => !v)}
+              <button type="button" onClick={() => setShowPw(v => !v)}
                 className="absolute right-3 top-1/2 -translate-y-1/2 w-8 h-8 flex items-center justify-center"
-                style={{ color: '#50546A' }}
-              >
-                {showPw ? <EyeOff size={18} /> : <Eye size={18} />}
+                style={{ color: '#50546A' }}>
+                {showPw ? <EyeOff size={18}/> : <Eye size={18}/>}
               </button>
             </div>
           </div>
 
-          {/* Error message */}
           {error && (
             <p className="text-[13px] font-semibold px-1" style={{ color: '#EF4444' }}>
               {error}
             </p>
           )}
 
-          {/* Submit */}
           <button
             onClick={handleLogin}
             disabled={loading}
             className="w-full py-3.5 rounded-full font-bold text-[15px] text-white disabled:opacity-50 transition-all active:scale-[0.97] flex items-center justify-center gap-2 mt-1"
-            style={{ background: 'linear-gradient(135deg,#5B4FCF,#3D3190)' }}
-          >
+            style={{ background: 'linear-gradient(135deg,#5B4FCF,#3D3190)' }}>
             {loading
-              ? <><Loader2 size={18} className="animate-spin" /> Verifying…</>
+              ? <><Loader2 size={18} className="animate-spin"/> Verifying…</>
               : 'Sign in to Admin'
             }
           </button>

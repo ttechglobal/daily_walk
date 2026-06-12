@@ -1,18 +1,16 @@
-// ── src/app/layout.js — v4 ──
-// Changes from v3:
-//   • SwUpdateBanner added (shows when new SW version is ready)
-//   • Fonts: Google Fonts links retained — SW now caches them offline
-//     (CacheFirst strategy in next.config.js handles both stylesheet + font files)
-//   • Script strategy for sw-register.js kept as afterInteractive
+// ── src/app/layout.js ──
+// v5 — Admin routes get clean layout (no BottomNav, Sidebar, AppInit, etc.)
+// All other routes get the full consumer app layout unchanged.
 
 import './globals.css'
-import Script         from 'next/script'
-import BottomNav      from '../components/BottomNav'
-import Sidebar        from '../components/Sidebar'
-import InstallPrompt  from '../components/InstallPrompt'
-import AppInit        from '../components/AppInit'
-import OfflineBanner  from '../components/OfflineBanner'
-import SwUpdateBanner from '../components/SwUpdateBanner'
+import Script          from 'next/script'
+import BottomNav       from '../components/BottomNav'
+import Sidebar         from '../components/Sidebar'
+import InstallPrompt   from '../components/InstallPrompt'
+import AppInit         from '../components/AppInit'
+import OfflineBanner   from '../components/OfflineBanner'
+import SwUpdateBanner  from '../components/SwUpdateBanner'
+import AdminLayoutShell from '../components/AdminLayoutShell'
 import { DarkModeProvider } from '../contexts/DarkModeContext'
 import { AuthGateProvider } from '../components/AuthGate'
 import { AuthProvider }     from '../contexts/AuthContext'
@@ -35,7 +33,6 @@ export const viewport = {
   themeColor:   '#5B4FCF',
 }
 
-// Inline dark mode script — must run before first paint to prevent flash
 const DARK_MODE_SCRIPT = `try{if(localStorage.getItem('dw_dark_mode')==='true'){document.documentElement.setAttribute('data-theme','dark');document.documentElement.classList.add('dark');}}catch(e){}`
 
 export default function RootLayout({ children }) {
@@ -43,15 +40,12 @@ export default function RootLayout({ children }) {
     <html lang="en" suppressHydrationWarning>
       <head>
         <script dangerouslySetInnerHTML={{ __html: DARK_MODE_SCRIPT }} />
-
-        {/* Google Fonts — preconnect for performance, SW will cache these for offline */}
         <link rel="preconnect" href="https://fonts.googleapis.com" />
         <link rel="preconnect" href="https://fonts.gstatic.com" crossOrigin="anonymous" />
         <link
           href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=Lora:ital,wght@0,400;0,600;0,700;1,400;1,600&display=swap"
           rel="stylesheet"
         />
-
         <link rel="manifest"         href="/manifest.json" />
         <link rel="icon"             href="/icons/favicon-32.png" sizes="32x32" />
         <link rel="apple-touch-icon" href="/icons/icon-192.png" />
@@ -64,42 +58,18 @@ export default function RootLayout({ children }) {
       <body style={{ margin: 0 }}>
         <DarkModeProvider>
           <AuthProvider>
-            <AuthGateProvider>
-              {/* SW update notification — shown when new version is deployed */}
-              <SwUpdateBanner />
-
-              <OfflineBanner />
-
-              <div
-                className="flex min-h-screen"
-                style={{ background: 'var(--bg, #FAF8F5)' }}
-              >
-                <Sidebar />
-
-                <div className="flex-1 min-w-0 flex justify-center md:justify-start">
-                  <div
-                    className="w-full min-w-0 max-w-[430px] md:max-w-none md:w-full relative flex flex-col min-h-screen"
-                    style={{ background: 'var(--bg, #FAF8F5)' }}
-                  >
-                    <main className="flex-1" style={{ background: 'var(--bg, #FAF8F5)' }}>
-                      {children}
-                    </main>
-
-                    <div className="md:hidden">
-                      <BottomNav />
-                    </div>
-                  </div>
-                </div>
-              </div>
-
-              {/* AppInit: background sync drain, pre-caching, eviction */}
-              <AppInit />
-              <InstallPrompt />
-            </AuthGateProvider>
+            {/*
+              AdminLayoutShell is a client component that reads the current
+              pathname and renders EITHER the consumer app chrome OR bare children
+              for /admin routes. This avoids double-wrapping providers and keeps
+              the root layout as a single server component.
+            */}
+            <AdminLayoutShell>
+              {children}
+            </AdminLayoutShell>
           </AuthProvider>
         </DarkModeProvider>
 
-        {/* SW registration — afterInteractive so it doesn't block FCP */}
         <Script src="/sw-register.js" strategy="afterInteractive" />
       </body>
     </html>
